@@ -18,6 +18,7 @@ import { hasWebAuthnCredential } from "@/lib/webauthn-credentials";
  * POST /api/auth/setup/confirm
  * 校验邮件 token_hash（须由用户点击按钮触发，避免预览消费）。
  * 成功后签发短时 setup-grant cookie；丢弃 Supabase Auth 会话。
+ * 按 IP 进程内限流（见 rate-limit.ts）；响应非中性，不加时序填充。
  */
 
 export async function POST(request: Request) {

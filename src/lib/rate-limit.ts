@@ -1,6 +1,13 @@
 /**
- * 简易内存限流（单实例 / 函数冷启动可重置）。
- * 生产可换 Redis；骨架阶段足以防连刷。
+ * 简易**进程内**内存限流。
+ *
+ * 局限（故意保留，本 PR 不加 DB 迁移）：
+ * - 按实例/isolate 各自计数；Vercel Serverless 多实例与冷启动会重置桶，
+ *   全局限流弱于单机。
+ * - 仅适合骨架期防连刷；生产若需跨实例强限流，应换 Redis / 库表
+ *   （登录与 register/options 已走 DB 限流）或 Vercel 防火墙。
+ *
+ * setup/request 与 setup/confirm 目前仍用本模块；见 docs/architecture.md。
  */
 
 export interface RateLimitResult {
