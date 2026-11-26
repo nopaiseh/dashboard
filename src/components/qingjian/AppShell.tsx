@@ -1,4 +1,4 @@
-import type { Counts } from "@/lib/ui/data";
+import type { Counts } from "@/lib/read";
 import type { NavTabId } from "@/lib/ui/labels";
 import { BottomNav } from "./BottomNav";
 import { TopNav } from "./TopNav";

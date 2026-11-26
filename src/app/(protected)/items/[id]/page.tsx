@@ -6,12 +6,12 @@ import { EventTimeline } from "@/components/qingjian/EventTimeline";
 import { SourceLink } from "@/components/qingjian/SourceLink";
 import {
   ProjectChip,
+  ReadChip,
   StatusChip,
   WarnChip,
 } from "@/components/qingjian/StatusChip";
-import { loadAgents, loadItemDetail } from "@/lib/ui/data";
+import { isValidUuid, loadAgents, loadItemDetail } from "@/lib/read";
 import { formatDueDate, formatShortDate } from "@/lib/ui/format";
-import { isValidItemId } from "@/lib/ui/item-id";
 import { INVALIDATED_APPROVAL_LABEL } from "@/lib/ui/labels";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
@@ -22,7 +22,7 @@ type PageProps = { params: Promise<{ id: string }> };
 export default async function ItemDetailPage({ params }: PageProps) {
   await connection();
   const { id } = await params;
-  if (!isValidItemId(id)) {
+  if (!isValidUuid(id)) {
     notFound();
   }
 
@@ -56,6 +56,9 @@ export default async function ItemDetailPage({ params }: PageProps) {
         <div className={"qj-kicker"}>
           <StatusChip status={item.status} />
           <ProjectChip project={item.project} />
+          {item.result_read != null ? (
+            <ReadChip read={item.result_read} />
+          ) : null}
           {item.invalidated_approval ? (
             <WarnChip>{INVALIDATED_APPROVAL_LABEL}</WarnChip>
           ) : null}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Counts, ItemWithMeta } from "@/lib/ui/data";
+import type { Counts, ItemWithMeta } from "@/lib/read";
 import { progressPercent } from "@/lib/ui/format";
 import { ItemList } from "./ItemList";
 import { ProgressBar } from "./ProgressBar";

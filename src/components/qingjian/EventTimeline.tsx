@@ -1,4 +1,4 @@
-import type { ItemEventRow } from "@/lib/types";
+import type { ItemEventPublic } from "@/lib/types";
 import { formatShortDate } from "@/lib/ui/format";
 import { ACTION_LABELS } from "@/lib/ui/labels";
 
@@ -7,7 +7,7 @@ export function EventTimeline({
   agentNameById,
   optionLabelByKey,
 }: {
-  events: ItemEventRow[];
+  events: ItemEventPublic[];
   agentNameById: Map<string, string>;
   optionLabelByKey: Map<string, string>;
 }) {

@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import Link from "next/link";
 import { AppShell } from "@/components/qingjian/AppShell";
-import { loadSisterCards } from "@/lib/ui/data";
+import { loadSisterCards } from "@/lib/read";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
 export const instant = false;

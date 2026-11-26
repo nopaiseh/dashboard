@@ -1,8 +1,8 @@
 import Link from "next/link";
-import type { ItemWithMeta } from "@/lib/ui/data";
+import type { ItemWithMeta } from "@/lib/read";
 import { formatDueDate, formatShortDate, sourceLinkLabel } from "@/lib/ui/format";
 import { INVALIDATED_APPROVAL_LABEL } from "@/lib/ui/labels";
-import { ProjectChip, StatusChip, WarnChip } from "./StatusChip";
+import { ProjectChip, ReadChip, StatusChip, WarnChip } from "./StatusChip";
 
 export function ItemList({
   items,
@@ -31,6 +31,9 @@ export function ItemList({
           <div className={"qj-itemHead"}>
             <StatusChip status={item.status} />
             <ProjectChip project={item.project} />
+            {item.result_read != null ? (
+              <ReadChip read={item.result_read} />
+            ) : null}
             <span className={"qj-itemTitle"}>{item.title}</span>
           </div>
           {item.invalidated_approval ? (

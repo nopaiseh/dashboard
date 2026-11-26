@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { ProgressBar } from "@/components/qingjian/ProgressBar";
-import { loadGoals } from "@/lib/ui/data";
+import { loadGoals } from "@/lib/read";
 import { progressPercent } from "@/lib/ui/format";
 import { loadShellData } from "@/lib/ui/page-helpers";
 

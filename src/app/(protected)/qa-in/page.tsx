@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { ItemList } from "@/components/qingjian/ItemList";
-import { loadItemsByKind } from "@/lib/ui/data";
+import { loadItemsByKind } from "@/lib/read";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
 export const instant = false;

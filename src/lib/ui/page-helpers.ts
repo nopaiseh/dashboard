@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSiteName } from "@/lib/env";
-import { loadCounts, type Counts } from "@/lib/ui/data";
+import { loadCounts, type Counts } from "@/lib/read";
 
 export async function loadShellData(): Promise<{
   siteName: string;

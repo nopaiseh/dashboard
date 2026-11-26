@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import type { Counts } from "@/lib/ui/data";
+import type { Counts } from "@/lib/read";
 import { formatHeaderDate } from "@/lib/ui/format";
 import { NAV_TABS, type NavTabId } from "@/lib/ui/labels";
 

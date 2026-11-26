@@ -7,7 +7,7 @@ import {
   loadLatestSummary,
   loadOpenApprovals,
   loadSisterCards,
-} from "@/lib/ui/data";
+} from "@/lib/read";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
 /** 与 layout 一致：全动态，避免 PPR 静态部分缺 nonce。 */
