@@ -4,6 +4,21 @@ import Link from "next/link";
 import { useId, useState, useTransition, type FormEvent } from "react";
 import { PasskeyError, registerWithPasskey } from "@/lib/ui/passkey-client";
 
+/**
+ * 登记失败文案：不泄漏服务端/浏览器细节。
+ * NotAllowedError 亦可能来自认证器不支持 resident keys，故不用「已取消」。
+ * 令牌被拒（register options/verify → 403）单独提示。
+ */
+export function setupRegistrationErrorMessage(err: unknown): string {
+  if (err instanceof PasskeyError && err.status === 403) {
+    return "令牌无效或已失效";
+  }
+  if (err instanceof Error && err.name === "NotAllowedError") {
+    return "未完成登记，请确认使用支持通行密钥的认证器，或重试";
+  }
+  return "注册未完成，请确认密码管理器支持通行密钥后重试";
+}
+
 export function SetupForm({ siteName }: { siteName: string }) {
   const tokenId = useId();
   const [token, setToken] = useState("");
@@ -24,15 +39,7 @@ export function SetupForm({ siteName }: { siteName: string }) {
         await registerWithPasskey(trimmed);
         setDone(true);
       } catch (err) {
-        if (err instanceof Error && err.name === "NotAllowedError") {
-          setError("已取消通行密钥登记");
-          return;
-        }
-        if (err instanceof PasskeyError) {
-          setError("登记失败，请重试");
-          return;
-        }
-        setError("登记失败，请重试");
+        setError(setupRegistrationErrorMessage(err));
       }
     });
   }

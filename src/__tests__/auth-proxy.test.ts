@@ -117,6 +117,35 @@ describe("unauthenticated access / proxy hardening", () => {
     expect((await proxy(agentReq)).status).toBe(200);
   });
 
+  it("does not treat /setupX, /setup/x or path-traversal variants as public", async () => {
+    const { proxy } = await import("@/proxy");
+    const paths = [
+      "/setupX",
+      "/setup/x",
+      "/setup/",
+      "/setup/../todo",
+      "/setup/%2e%2e/todo",
+      "/./setup/secret",
+    ];
+
+    for (const pathname of paths) {
+      const url = new URL(pathname, "http://localhost");
+      // Only exact /setup is public; normalized cousins must still require auth.
+      expect(url.pathname).not.toBe("/setup");
+      const nextRequest = {
+        nextUrl: url,
+        cookies: { get: () => undefined },
+        url: url.href,
+        headers: new Headers(),
+      } as unknown as import("next/server").NextRequest;
+      const res = await proxy(nextRequest);
+      expect(res.status, pathname).toBe(307);
+      expect(res.headers.get("location"), pathname).toBe(
+        "http://localhost/login",
+      );
+    }
+  });
+
   it("allows authenticated session cookie and sets security headers", async () => {
     const token = await createSessionToken();
     const { proxy } = await import("@/proxy");
