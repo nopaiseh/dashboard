@@ -1,0 +1,12 @@
+# 本地 / CLI 参考配置。生产项目 ref: ifirvlbeaookzhvvcdzs
+# 本仓库未接入 Supabase GitHub 集成；合并 PR 后不会自动对 prod 跑迁移。
+
+[project]
+id = "ifirvlbeaookzhvvcdzs"
+
+[db]
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
