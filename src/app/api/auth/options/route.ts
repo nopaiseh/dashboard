@@ -7,6 +7,7 @@ import {
 import { getServiceClient } from "@/lib/supabase/server";
 import { stepUpOptionsSchema } from "@/lib/validation";
 import { buildLoginOptions, type StoredCredential } from "@/lib/webauthn";
+import { requireRequest } from "@/lib/require-request";
 
 /**
  * GET /api/auth/options — 登录断言选项；库内按 IP 限流并清理过期挑战。
@@ -130,4 +131,3 @@ export async function POST(request: Request) {
     options,
   });
 }
-import { requireRequest } from "@/lib/require-request";

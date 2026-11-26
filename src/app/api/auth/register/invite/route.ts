@@ -7,6 +7,7 @@ import { assertSameOrigin } from "@/lib/origin";
 import { getServiceClient } from "@/lib/supabase/server";
 import { inviteSchema } from "@/lib/validation";
 import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
+import { requireRequest } from "@/lib/require-request";
 
 const INVITE_TTL_MS = 15 * 60 * 1000;
 
@@ -103,4 +104,3 @@ export async function POST(request: Request) {
     expires_at: expiresAt,
   });
 }
-import { requireRequest } from "@/lib/require-request";

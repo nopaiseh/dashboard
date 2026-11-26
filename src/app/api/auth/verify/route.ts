@@ -16,6 +16,7 @@ import {
 import { getServiceClient } from "@/lib/supabase/server";
 import { authVerifySchema } from "@/lib/validation";
 import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
+import { requireRequest } from "@/lib/require-request";
 
 export async function POST(request: Request) {
   await requireRequest();
@@ -105,4 +106,3 @@ export async function POST(request: Request) {
   );
   return response;
 }
-import { requireRequest } from "@/lib/require-request";

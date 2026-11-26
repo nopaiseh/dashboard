@@ -7,6 +7,7 @@ import {
   buildRegistrationOptions,
   type StoredCredential,
 } from "@/lib/webauthn";
+import { requireRequest } from "@/lib/require-request";
 
 /**
  * POST /api/auth/register/options
@@ -86,4 +87,3 @@ export async function POST(request: Request) {
 
   return jsonOk({ challenge_id: challengeId, options });
 }
-import { requireRequest } from "@/lib/require-request";

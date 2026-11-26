@@ -10,6 +10,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemRow } from "@/lib/types";
 import { decisionSchema } from "@/lib/validation";
 import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
+import { requireRequest } from "@/lib/require-request";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -134,4 +135,3 @@ export async function POST(request: Request, context: RouteContext) {
 
   return jsonOk(data);
 }
-import { requireRequest } from "@/lib/require-request";

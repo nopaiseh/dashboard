@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { jsonError, jsonOk } from "@/lib/http";
 import { assertSameOrigin } from "@/lib/origin";
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from "@/lib/session";
+import { requireRequest } from "@/lib/require-request";
 
 export async function POST(request: Request) {
   await requireRequest();
@@ -21,4 +22,3 @@ export async function GET() {
   await requireRequest();
   return jsonOk({ ok: true });
 }
-import { requireRequest } from "@/lib/require-request";

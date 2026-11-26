@@ -4,6 +4,7 @@ import { planAgentPatch } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemRow } from "@/lib/types";
 import { patchItemSchema } from "@/lib/validation";
+import { requireRequest } from "@/lib/require-request";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -106,4 +107,3 @@ export async function PATCH(request: Request, context: RouteContext) {
     content_reopened: plan.contentReopened,
   });
 }
-import { requireRequest } from "@/lib/require-request";

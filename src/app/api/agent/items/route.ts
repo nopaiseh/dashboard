@@ -3,6 +3,7 @@ import { clientIp, jsonError, jsonOk } from "@/lib/http";
 import { buildNewItemFields } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
 import { createItemSchema } from "@/lib/validation";
+import { requireRequest } from "@/lib/require-request";
 
 export async function POST(request: Request) {
   await requireRequest();
@@ -53,4 +54,3 @@ export async function POST(request: Request) {
 
   return jsonOk({ item }, { status: 201 });
 }
-import { requireRequest } from "@/lib/require-request";

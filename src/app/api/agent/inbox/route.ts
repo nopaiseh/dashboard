@@ -4,6 +4,7 @@ import { jsonError, jsonOk } from "@/lib/http";
 import { itemHasFinalDecision } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemEventRow, ItemRow, ItemStatus } from "@/lib/types";
+import { requireRequest } from "@/lib/require-request";
 
 export async function GET(request: Request) {
   await requireRequest();
@@ -62,4 +63,3 @@ export async function GET(request: Request) {
 
   return jsonOk({ since, items: results });
 }
-import { requireRequest } from "@/lib/require-request";

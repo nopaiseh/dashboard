@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth-guard";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
+import { requireRequest } from "@/lib/require-request";
 
 export async function GET(request: Request) {
   await requireRequest();
@@ -31,4 +32,3 @@ export async function GET(request: Request) {
 
   return jsonOk({ items: data ?? [] });
 }
-import { requireRequest } from "@/lib/require-request";

@@ -5,6 +5,7 @@ import {
   encodePublicKey,
   verifyRegistrationAttestation,
 } from "@/lib/webauthn";
+import { requireRequest } from "@/lib/require-request";
 
 /**
  * POST /api/auth/register/verify
@@ -69,4 +70,3 @@ export async function POST(request: Request) {
 
   return jsonOk({ ok: true, credential_id: credential.id });
 }
-import { requireRequest } from "@/lib/require-request";
