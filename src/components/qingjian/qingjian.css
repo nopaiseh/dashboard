@@ -261,6 +261,68 @@
   font-size: 0.875rem;
 }
 
+.qj-setupEntry {
+  margin: 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.8125rem;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.qj-setupEntry:hover {
+  color: var(--qj-green);
+}
+
+.qj-setupForm {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.25rem;
+  width: min(100%, 20rem);
+}
+
+.qj-setupField {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.qj-setupLabel {
+  font-size: 0.8125rem;
+  color: var(--qj-ink-muted);
+  letter-spacing: 0.02em;
+}
+
+.qj-setupInput {
+  appearance: none;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--qj-line);
+  border-radius: var(--qj-radius-sm);
+  background: var(--qj-surface);
+  color: var(--qj-ink);
+}
+
+.qj-setupInput:disabled {
+  opacity: 0.65;
+}
+
+.qj-setupStatus {
+  margin: 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.9375rem;
+  max-width: 18rem;
+}
+
+.qj-setupLink {
+  color: var(--qj-green);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .qj-fpIcon {
   width: 1.15rem;
   height: 1.15rem;

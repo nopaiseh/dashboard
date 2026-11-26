@@ -2,6 +2,8 @@
 
 import {
   startAuthentication,
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from "@simplewebauthn/browser";
 
@@ -52,6 +54,38 @@ export async function loginWithPasskey(): Promise<void> {
   if (verifyRes.status === 429) {
     throw new PasskeyError("locked", 429);
   }
+  if (!verifyRes.ok) {
+    throw new PasskeyError(await readError(verifyRes), verifyRes.status);
+  }
+}
+
+/** 首次登记：BOOTSTRAP_TOKEN → options → startRegistration → verify。 */
+export async function registerWithPasskey(token: string): Promise<void> {
+  const optRes = await fetch("/api/auth/register/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!optRes.ok) {
+    throw new PasskeyError(await readError(optRes), optRes.status);
+  }
+  const optBody = (await optRes.json()) as {
+    challenge_id: string;
+    options: PublicKeyCredentialCreationOptionsJSON;
+  };
+
+  const attestation = await startRegistration({
+    optionsJSON: optBody.options,
+  });
+
+  const verifyRes = await fetch("/api/auth/register/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      challenge_id: optBody.challenge_id,
+      attestation,
+    }),
+  });
   if (!verifyRes.ok) {
     throw new PasskeyError(await readError(verifyRes), verifyRes.status);
   }

@@ -90,7 +90,7 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.status).toBe(200);
   });
 
-  it("allows /login and agent api without session", async () => {
+  it("allows /login, /setup and agent api without session", async () => {
     const { proxy } = await import("@/proxy");
     const loginReq = {
       nextUrl: new URL("http://localhost/login"),
@@ -99,6 +99,14 @@ describe("unauthenticated access / proxy hardening", () => {
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
     expect((await proxy(loginReq)).status).toBe(200);
+
+    const setupReq = {
+      nextUrl: new URL("http://localhost/setup"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/setup",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    expect((await proxy(setupReq)).status).toBe(200);
 
     const agentReq = {
       nextUrl: new URL("http://localhost/api/agent/items"),

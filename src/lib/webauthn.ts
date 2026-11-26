@@ -56,7 +56,7 @@ export async function buildRegistrationOptions(
       transports: c.transports as AuthenticatorTransport[],
     })),
     authenticatorSelection: {
-      residentKey: "preferred",
+      residentKey: "required",
       userVerification: "required",
     },
     attestationType: "none",
