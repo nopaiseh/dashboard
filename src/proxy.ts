@@ -14,7 +14,12 @@ import {
 } from "@/lib/session";
 import { isSessionSecretConfigured } from "@/lib/env";
 
-const PUBLIC_PATHS = new Set(["/login", "/robots.txt", "/favicon.ico"]);
+const PUBLIC_PATHS = new Set([
+  "/login",
+  "/setup",
+  "/robots.txt",
+  "/favicon.ico",
+]);
 
 const PUBLIC_API_PREFIXES = [
   "/api/auth/options",

@@ -1,12 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { LOCKOUT_MESSAGE } from "@/lib/ui/labels";
 import { loginWithPasskey, PasskeyError } from "@/lib/ui/passkey-client";
 import { FingerprintIcon } from "./FingerprintIcon";
 
-export function LoginForm({ siteName }: { siteName: string }) {
+export function LoginForm({
+  siteName,
+  showSetupLink = false,
+}: {
+  siteName: string;
+  /** 仅在服务端确认尚无凭据时为 true。 */
+  showSetupLink?: boolean;
+}) {
   const router = useRouter();
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +64,11 @@ export function LoginForm({ siteName }: { siteName: string }) {
               <p className={"qj-loginError"} role="alert">
                 {error}
               </p>
+            ) : null}
+            {showSetupLink ? (
+              <Link href="/setup" className={"qj-setupEntry"}>
+                首次登记通行密钥
+              </Link>
             ) : null}
           </>
         )}
