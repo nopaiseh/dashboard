@@ -1,5 +1,5 @@
-import { hashAgentToken, safeEqualHex } from "@/lib/crypto";
-import { getBootstrapToken } from "@/lib/env";
+import { matchesBootstrapToken } from "@/lib/bootstrap-token";
+import { hashAgentToken } from "@/lib/crypto";
 import { clientIp, jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
 import { registerOptionsSchema } from "@/lib/validation";
@@ -10,7 +10,7 @@ import {
 
 /**
  * POST /api/auth/register/options
- * 无令牌一律拒绝。首次用 BOOTSTRAP_TOKEN；之后用新设备一次性令牌。
+ * 无令牌一律拒绝。首次用合格 BOOTSTRAP_TOKEN；已有凭据后 bootstrap 失效。
  * 校验通过后立即作废令牌，并将授权绑定到挑战码。
  */
 export async function POST(request: Request) {
@@ -31,24 +31,22 @@ export async function POST(request: Request) {
   const rawToken = parsed.data.token;
   const tokenHash = hashAgentToken(rawToken);
 
-  let mode: "bootstrap" | "one_time" | null = null;
-  try {
-    const bootstrap = getBootstrapToken();
-    if (safeEqualHex(tokenHash, hashAgentToken(bootstrap))) {
-      mode = "bootstrap";
-    }
-  } catch {
-    // BOOTSTRAP_TOKEN 未配置时只能走 one_time
-  }
-
-  if (!mode) {
-    mode = "one_time";
-  }
-
   const supabase = getServiceClient();
-  const { data: existing } = await supabase
+  const { data: existing, error: credError } = await supabase
     .from("webauthn_credentials")
     .select("credential_id, public_key, counter, transports");
+
+  if (credError) {
+    return jsonError(500, "unavailable");
+  }
+
+  const hasCredentials = (existing?.length ?? 0) > 0;
+
+  // 已有凭据时服务端直接禁止 bootstrap（RPC 内再查一遍）
+  let mode: "bootstrap" | "one_time" = "one_time";
+  if (!hasCredentials && matchesBootstrapToken(rawToken)) {
+    mode = "bootstrap";
+  }
 
   const options = await buildRegistrationOptions(
     (existing ?? []) as StoredCredential[],

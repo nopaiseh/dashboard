@@ -25,7 +25,7 @@
 
 ## 注册与认证
 
-1. **首次登记**：必须带 `BOOTSTRAP_TOKEN`（环境变量，只存哈希比对）。`POST /api/auth/register/options` 无令牌 → 403。校验通过后 RPC `authorize_and_create_registration_challenge` **立即作废**启动令牌（写 `bootstrap_consumed_at`）并创建 `authorized` 挑战。
+1. **首次登记**：必须带 `BOOTSTRAP_TOKEN`。要求至少 **32 字节**随机（不足视为未配置并拒绝）；生成示例：`openssl rand -base64 48`。比对：先各自 sha256，再用 `timingSafeEqual`（避免明文长度泄露）。`POST /api/auth/register/options` 无令牌 → 403。校验通过后 RPC **立即作废**启动令牌（写 `bootstrap_consumed_at`）并创建 `authorized` 挑战。**只要 `webauthn_credentials` 已有任何凭据，bootstrap 一律失效**（服务端与 RPC 事务内双重检查），不依赖人工删除环境变量。
 2. **verify**：校验 attestation 后 RPC `complete_webauthn_registration` 在同一事务复查授权、写入凭据、关闭注册。
 3. **新设备**：已登录 + 现场 passkey → `POST /api/auth/register/invite` 签发短时效一次性令牌（只回传一次明文，库内仅哈希）。之后用该令牌走 register/options（`one_time` 模式，options 时作废）。
 4. **登录**：passkey → 会话 cookie `xjg_session`（httpOnly / Secure / SameSite=Strict，闲置 12h）。失败锁定逻辑集中在 `evaluateLoginLockout`（现状：IP+全站各 5 次 / 15 分钟；日后可改为 IP+凭据锁定）。
@@ -63,7 +63,7 @@
 | `SUPABASE_URL` | Supabase API URL（服务器） |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role；仅服务器 |
 | `SESSION_SECRET` | 会话 JWT HMAC；缺失则拒绝所有鉴权 |
-| `BOOTSTRAP_TOKEN` | 首次注册启动令牌；用后作废 |
+| `BOOTSTRAP_TOKEN` | 首次注册启动令牌（≥32 字节；`openssl rand -base64 48`）；先哈希再恒定时间比对；有凭据后自动失效；用后作废 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
 | `SITE_NAME` | 登录页站名 |
 

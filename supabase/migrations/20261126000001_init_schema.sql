@@ -278,6 +278,10 @@ BEGIN
   END IF;
 
   IF p_mode = 'bootstrap' THEN
+    -- 只要已有任何凭据，BOOTSTRAP_TOKEN 一律失效（不依赖人工删环境变量）
+    IF EXISTS (SELECT 1 FROM public.webauthn_credentials LIMIT 1) THEN
+      RAISE EXCEPTION 'bootstrap disabled: credentials already exist';
+    END IF;
     IF v_reg.bootstrap_consumed_at IS NOT NULL THEN
       RAISE EXCEPTION 'bootstrap already consumed';
     END IF;

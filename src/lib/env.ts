@@ -22,11 +22,6 @@ export function getSessionSecret(): string {
   return required("SESSION_SECRET");
 }
 
-/** 首次注册启动令牌（明文仅存于环境变量；库中只记是否已消耗）。 */
-export function getBootstrapToken(): string {
-  return required("BOOTSTRAP_TOKEN");
-}
-
 export function getWebAuthnRpID(): string {
   return optional("WEBAUTHN_RP_ID", "desk.nopaiseh.com");
 }
