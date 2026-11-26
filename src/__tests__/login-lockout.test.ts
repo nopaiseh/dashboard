@@ -2,15 +2,15 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   LOGIN_LOCK_MINUTES,
   LOGIN_MAX_FAILURES,
-  anyLocked,
   clearedAttemptState,
   evaluateLoginLockout,
   isLocked,
+  nextAlertCountState,
   nextFailureState,
 } from "@/lib/login-lockout";
 
 describe("login lockout (centralized)", () => {
-  it(`locks after ${LOGIN_MAX_FAILURES} consecutive failures for ${LOGIN_LOCK_MINUTES} minutes`, () => {
+  it(`locks IP after ${LOGIN_MAX_FAILURES} consecutive failures for ${LOGIN_LOCK_MINUTES} minutes`, () => {
     const now = new Date("2025-06-01T12:00:00.000Z");
     let state = null;
     for (let i = 0; i < LOGIN_MAX_FAILURES - 1; i += 1) {
@@ -31,7 +31,7 @@ describe("login lockout (centralized)", () => {
     expect(isLocked(state, unlockedAt)).toBe(false);
   });
 
-  it("evaluateLoginLockout locks on IP or credential, not global", () => {
+  it("evaluateLoginLockout only locks on IP, never credential/global", () => {
     const now = new Date("2025-06-01T12:00:00.000Z");
     const lockedIp = nextFailureState(
       {
@@ -44,67 +44,52 @@ describe("login lockout (centralized)", () => {
       "9.9.9.9",
       now,
     );
-    expect(
-      evaluateLoginLockout(
-        lockedIp,
-        clearedAttemptState("credential", "cred-a"),
-        now,
-      ).locked,
-    ).toBe(true);
+    expect(evaluateLoginLockout(lockedIp, now).locked).toBe(true);
 
-    const lockedCred = nextFailureState(
-      {
-        scope: "credential",
-        scope_key: "cred-a",
-        failed_count: LOGIN_MAX_FAILURES - 1,
-        locked_until: null,
-      },
-      "credential",
-      "cred-a",
-      now,
-    );
     expect(
-      evaluateLoginLockout(
-        clearedAttemptState("ip", "9.9.9.9"),
-        lockedCred,
-        now,
-      ).locked,
-    ).toBe(true);
-
-    // 全站「锁定」状态不进入决策（策略：只告警）
-    expect(
-      evaluateLoginLockout(
-        clearedAttemptState("ip", "9.9.9.9"),
-        clearedAttemptState("credential", "cred-a"),
-        now,
-      ).locked,
+      evaluateLoginLockout(clearedAttemptState("ip", "9.9.9.9"), now).locked,
     ).toBe(false);
 
+    // 即便凭据行带有历史 locked_until，决策入口也不再读它
     expect(
-      anyLocked(
-        [
-          clearedAttemptState("ip", "9.9.9.9"),
-          clearedAttemptState("credential", "cred-a"),
-        ],
-        now,
-      ),
+      evaluateLoginLockout(clearedAttemptState("ip", "1.1.1.1"), now).locked,
     ).toBe(false);
   });
 
-  it("IP and credential counters are independent", () => {
-    const now = new Date("2025-06-01T12:00:00.000Z");
-    let ip = null;
-    for (let i = 0; i < LOGIN_MAX_FAILURES; i += 1) {
-      ip = nextFailureState(ip, "ip", "1.1.1.1", now);
+  it("credential alert counting never sets locked_until; multi-IP fails do not lock credential", () => {
+    let cred: ReturnType<typeof clearedAttemptState> | null = null;
+    let alerts = 0;
+    // 模拟换多个 IP 对同一凭据连续失败（远超阈值）
+    for (let i = 0; i < LOGIN_MAX_FAILURES * 3; i += 1) {
+      const result = nextAlertCountState(cred, "credential", "cred-owner");
+      cred = result.state;
+      if (result.alert) {
+        alerts += 1;
+      }
+      expect(cred.locked_until).toBeNull();
+      expect(isLocked(cred)).toBe(false);
     }
-    expect(isLocked(ip, now)).toBe(true);
+    expect(alerts).toBe(3);
+    // IP 各自独立，未达阈值则 evaluate 不锁
+    expect(
+      evaluateLoginLockout(clearedAttemptState("ip", "10.0.0.1")).locked,
+    ).toBe(false);
+    expect(
+      evaluateLoginLockout(clearedAttemptState("ip", "10.0.0.2")).locked,
+    ).toBe(false);
+  });
 
-    let cred = null;
-    for (let i = 0; i < LOGIN_MAX_FAILURES - 1; i += 1) {
-      cred = nextFailureState(cred, "credential", "cred-x", now);
+  it("global alert counting never locks", () => {
+    let state = clearedAttemptState("global", "all");
+    let alert = false;
+    for (let i = 0; i < LOGIN_MAX_FAILURES; i += 1) {
+      const r = nextAlertCountState(state, "global", "all");
+      state = r.state;
+      alert = r.alert;
     }
-    expect(isLocked(cred, now)).toBe(false);
-    expect(evaluateLoginLockout(ip, cred, now).locked).toBe(true);
+    expect(alert).toBe(true);
+    expect(state.locked_until).toBeNull();
+    expect(isLocked(state)).toBe(false);
   });
 });
 
@@ -166,6 +151,36 @@ describe("login-service fail closed", () => {
     expect(errSpy).toHaveBeenCalled();
   });
 
+  it("recordLoginFailure alerts on credential_alert without locking", async () => {
+    vi.doMock("server-only", () => ({}));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { recordLoginFailure } = await import("@/lib/login-service");
+    const supabase = {
+      rpc: async () => ({
+        data: {
+          locked: false,
+          global_count: 1,
+          global_alert: false,
+          credential_count: 5,
+          credential_alert: true,
+        },
+        error: null,
+      }),
+    };
+
+    const result = await recordLoginFailure(
+      supabase as never,
+      "1.2.3.4",
+      "cred-owner",
+    );
+    expect(result.locked).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("credential login failure"),
+      expect.any(Object),
+    );
+  });
+
   it("recordLoginFailure alerts on global_alert without treating as lock alone", async () => {
     vi.doMock("server-only", () => ({}));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -173,7 +188,13 @@ describe("login-service fail closed", () => {
     const { recordLoginFailure } = await import("@/lib/login-service");
     const supabase = {
       rpc: async () => ({
-        data: { locked: false, global_count: 5, global_alert: true },
+        data: {
+          locked: false,
+          global_count: 5,
+          global_alert: true,
+          credential_count: 0,
+          credential_alert: false,
+        },
         error: null,
       }),
     };

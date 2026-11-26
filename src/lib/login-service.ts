@@ -46,29 +46,18 @@ async function saveAttempt(
   );
 }
 
+/** 只检查 IP 锁定；凭据不参与锁定决策。 */
 export async function assertNotLocked(
   supabase: SupabaseClient,
   ip: string,
-  credentialId?: string | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const loads: Array<Promise<LoadResult>> = [
-    loadAttempt(supabase, "ip", ip),
-  ];
-  if (credentialId) {
-    loads.push(loadAttempt(supabase, "credential", credentialId));
-  }
-
-  const results = await Promise.all(loads);
-  if (results.some((r) => !r.ok)) {
+  const ipLoad = await loadAttempt(supabase, "ip", ip);
+  if (!ipLoad.ok) {
     console.error("assertNotLocked: lock status read failed; fail closed");
     return { ok: false, error: LOCKED_ERROR };
   }
 
-  const ipAttempt = results[0]!.ok ? results[0].attempt : null;
-  const credentialAttempt =
-    credentialId && results[1]?.ok ? results[1].attempt : null;
-
-  const result = evaluateLoginLockout(ipAttempt, credentialAttempt);
+  const result = evaluateLoginLockout(ipLoad.attempt);
   if (result.locked) {
     return { ok: false, error: result.reason ?? LOCKED_ERROR };
   }
@@ -93,23 +82,32 @@ export async function recordLoginFailure(
     return { locked: true };
   }
   const payload =
-    data != null && typeof data === "object" ? (data as Record<string, unknown>) : null;
+    data != null && typeof data === "object"
+      ? (data as Record<string, unknown>)
+      : null;
   const locked = Boolean(payload && "locked" in payload && payload.locked);
 
-  const globalCount =
-    payload && typeof payload.global_count === "number"
-      ? payload.global_count
-      : null;
   const globalAlert = Boolean(payload && payload.global_alert);
-  if (
-    globalAlert ||
-    (globalCount != null && globalCount >= LOGIN_MAX_FAILURES)
-  ) {
-    console.error("global login failure threshold reached (alert only, no lock)", {
-      global_count: globalCount,
-      ip,
-      credential_id: credentialId ?? null,
-    });
+  const credentialAlert = Boolean(payload && payload.credential_alert);
+  if (globalAlert) {
+    console.error(
+      "global login failure threshold reached (alert only, no lock)",
+      {
+        global_count: payload?.global_count ?? null,
+        ip,
+        credential_id: credentialId ?? null,
+      },
+    );
+  }
+  if (credentialAlert) {
+    console.error(
+      "credential login failure threshold reached (alert only, no lock)",
+      {
+        credential_count: payload?.credential_count ?? null,
+        ip,
+        credential_id: credentialId ?? null,
+      },
+    );
   }
 
   return { locked };

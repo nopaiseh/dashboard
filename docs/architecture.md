@@ -2,7 +2,7 @@
 
 私人事务面板后端骨架。部署目标：Vercel（函数区 `sin1` / 新加坡），域名 `desk.nopaiseh.com`。数据库为独立 Supabase 项目 `ifirvlbeaookzhvvcdzs`。浏览器端不持有任何数据库密钥；全部数据访问经 Next.js Route Handlers 使用 **service role**。
 
-> 注意：当前仓库**未**接入 Supabase GitHub 集成。合并 PR 后迁移**不会**自动上 prod，需人工在目标项目执行迁移。
+> 注意：本仓库已开 Supabase「Deploy to production」（分支 `main`）。合并到 `main` 后迁移会自动上 prod。
 
 ## 表结构
 
@@ -16,7 +16,7 @@
 | `webauthn_credentials` | 本人 passkey |
 | `webauthn_registration` | 单行：`open` **默认 false**；`one_time_token_hash`；`bootstrap_consumed_at` |
 | `webauthn_challenges` | 短时 challenge；注册挑战带 `authorized=true` |
-| `login_attempts` | IP / 凭据锁定；全站只告警；`auth_options` 限流计数 |
+| `login_attempts` | 只按 IP 锁定；凭据 / 全站只告警；`auth_options` 限流计数 |
 | `stale_items` | open 且 7 天无活动（`security_invoker`） |
 
 全部表 RLS 开启，不给 anon/authenticated 策略。`item_events` 对 service_role 收回 UPDATE/DELETE/TRUNCATE。函数均 `SET search_path = public, pg_temp`。
@@ -29,7 +29,7 @@
 2. **中途失败恢复**：若 options 成功但 verify 失败且库中尚无凭据，同一 `BOOTSTRAP_TOKEN` **仍可用**（可重试 options/verify）。同一令牌可开出多个挑战，但 **complete 时 `FOR UPDATE` 注册配置行：bootstrap 要求尚无凭据，成功后删除其余注册挑战**，故只能成功写入一次。若已写入凭据，bootstrap 永久失效，加设备走 invite。轮换：更换环境变量中的 `BOOTSTRAP_TOKEN`，并确认无凭据（或清库后重来）。
 3. **verify**：RPC `complete_webauthn_registration` 事务内锁注册配置、按 `registration_mode` 复查、写入凭据、关闭注册、清除其它注册挑战。
 4. **新设备**：已登录 + passkey → `POST /api/auth/register/invite`。
-5. **登录**：会话 cookie 闲置 12h，绝对上限 7 天（`iat` 首次签发，滑动续期不改）；锁定逻辑集中 `evaluateLoginLockout`（IP + 凭据分别锁 15 分钟，全站失败只告警）。
+5. **登录**：会话 cookie 闲置 12h，绝对上限 7 天（`iat` 首次签发，滑动续期不改）；锁定逻辑集中 `evaluateLoginLockout`（只按 IP 锁 15 分钟；凭据与全站失败只告警——options 未登录可拿到凭据 ID，按凭据锁会被换 IP 锁死主人）。
 6. **决定 step-up**：须带 `content_hash`；挑战抢占；`apply_item_decision` 事务条件更新；前端只见通用错误。
 
 ## 姐妹接口

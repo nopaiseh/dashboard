@@ -1,5 +1,5 @@
 # 本地 / CLI 参考配置。生产项目 ref: ifirvlbeaookzhvvcdzs
-# 本仓库未接入 Supabase GitHub 集成；合并 PR 后不会自动对 prod 跑迁移。
+# 本仓库已开 Supabase「Deploy to production」（分支 main）；合并到 main 即自动对 prod 跑迁移。
 
 [project]
 id = "ifirvlbeaookzhvvcdzs"

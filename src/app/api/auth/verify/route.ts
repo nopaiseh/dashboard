@@ -72,11 +72,6 @@ export async function POST(request: Request) {
     return rejectFailure(supabase, ip);
   }
 
-  const credLock = await assertNotLocked(supabase, ip, credentialId);
-  if (!credLock.ok) {
-    return jsonError(429, credLock.error);
-  }
-
   const { data: credential } = await supabase
     .from("webauthn_credentials")
     .select("*")
