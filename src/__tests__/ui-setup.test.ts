@@ -20,25 +20,37 @@ vi.mock("next/navigation", () => ({
 
 import {
   SetupAlreadyRegistered,
-  SetupForm,
+  SetupEmailForm,
+  SetupPasskeyForm,
 } from "@/components/qingjian/SetupForm";
 import { LoginForm } from "@/components/qingjian/LoginForm";
 
 describe("setup page UI states", () => {
-  it("SetupForm has one main, one h1, labeled BOOTSTRAP_TOKEN input", () => {
+  it("SetupEmailForm has one main, one h1, labeled email input", () => {
     const html = renderToStaticMarkup(
-      createElement(SetupForm, { siteName: "玄机阁" }),
+      createElement(SetupEmailForm, { siteName: "玄机阁" }),
     );
     expect(html.match(/<main/g)?.length ?? 0).toBe(1);
     expect(html.match(/<h1/g)?.length ?? 0).toBe(1);
     expect(html).toContain("玄机阁");
-    expect(html).toContain("BOOTSTRAP_TOKEN");
-    expect(html).toContain("登记通行密钥");
-    expect(html).toContain('type="password"');
+    expect(html).toContain("邮箱");
+    expect(html).toContain("发送登录链接");
+    expect(html).toContain('type="email"');
     expect(html).toContain("qj-login");
     expect(html).toContain("qj-setupInput");
+    expect(html).not.toContain("BOOTSTRAP_TOKEN");
     expect(html).not.toContain("style=");
     expect(html).not.toContain("credential_id");
+    expect(html).not.toContain("已注册");
+  });
+
+  it("SetupPasskeyForm shows register CTA without token input", () => {
+    const html = renderToStaticMarkup(
+      createElement(SetupPasskeyForm, { siteName: "玄机阁" }),
+    );
+    expect(html).toContain("登记通行密钥");
+    expect(html).not.toContain("BOOTSTRAP_TOKEN");
+    expect(html).not.toContain('type="password"');
     expect(html).not.toContain("已注册");
   });
 
@@ -93,6 +105,9 @@ describe("setup / login pages already-registered gating", () => {
     vi.doMock("@/lib/webauthn-credentials", () => ({
       hasWebAuthnCredential: async () => true,
     }));
+    vi.doMock("@/lib/setup-grant", () => ({
+      hasValidSetupGrant: async () => false,
+    }));
 
     const { default: SetupPage } = await import("@/app/setup/page");
     const element = await SetupPage();
@@ -103,7 +118,7 @@ describe("setup / login pages already-registered gating", () => {
     expect(html).not.toContain("credential_id");
   });
 
-  it("SetupPage renders registration form when no credential", async () => {
+  it("SetupPage renders email form when no credential and no grant", async () => {
     vi.doMock("next/server", () => ({
       connection: async () => undefined,
     }));
@@ -113,12 +128,38 @@ describe("setup / login pages already-registered gating", () => {
     vi.doMock("@/lib/webauthn-credentials", () => ({
       hasWebAuthnCredential: async () => false,
     }));
+    vi.doMock("@/lib/setup-grant", () => ({
+      hasValidSetupGrant: async () => false,
+    }));
 
     const { default: SetupPage } = await import("@/app/setup/page");
     const element = await SetupPage();
     const html = renderToStaticMarkup(element);
-    expect(html).toContain("BOOTSTRAP_TOKEN");
+    expect(html).toContain("邮箱");
+    expect(html).toContain("发送登录链接");
+    expect(html).not.toContain("BOOTSTRAP_TOKEN");
+    expect(html).not.toContain("已注册");
+  });
+
+  it("SetupPage renders passkey form when grant is valid", async () => {
+    vi.doMock("next/server", () => ({
+      connection: async () => undefined,
+    }));
+    vi.doMock("@/lib/env", () => ({
+      getSiteName: () => "测试阁",
+    }));
+    vi.doMock("@/lib/webauthn-credentials", () => ({
+      hasWebAuthnCredential: async () => false,
+    }));
+    vi.doMock("@/lib/setup-grant", () => ({
+      hasValidSetupGrant: async () => true,
+    }));
+
+    const { default: SetupPage } = await import("@/app/setup/page");
+    const element = await SetupPage();
+    const html = renderToStaticMarkup(element);
     expect(html).toContain("登记通行密钥");
+    expect(html).not.toContain("发送登录链接");
     expect(html).not.toContain("已注册");
   });
 

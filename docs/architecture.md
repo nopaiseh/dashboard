@@ -14,7 +14,7 @@
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
 | `goals` / `daily_summaries` | 目标与每日小结 |
 | `webauthn_credentials` | 本人 passkey |
-| `webauthn_registration` | 单行：`open` **默认 false**；`one_time_token_hash`；`bootstrap_consumed_at` |
+| `webauthn_registration` | 单行：`open` **默认 false**；`one_time_token_hash`；`bootstrap_consumed_at`（首次登记成功时写入） |
 | `webauthn_challenges` | 短时 challenge；注册挑战带 `authorized=true` |
 | `login_attempts` | 只按 IP 锁定；凭据 / 全站只告警；`auth_options` 限流计数 |
 | `stale_items` | open 且 7 天无活动（`security_invoker`） |
@@ -25,12 +25,23 @@
 
 ## 注册与认证
 
-1. **首次登记**：必须带 `BOOTSTRAP_TOKEN`（≥32 字节；`openssl rand -base64 48`）。比对：先 sha256 再 `timingSafeEqual`。`POST /api/auth/register/options` 无令牌 → 403；按 IP 库内限流。options 创建 `authorized` 挑战并写入 `registration_mode`（`bootstrap` / `invite`）；**`bootstrap_consumed_at` 仅在 verify 成功写入凭据时设置**。**只要已有任何凭据，bootstrap 一律失效**（options + complete RPC）。
-2. **中途失败恢复**：若 options 成功但 verify 失败且库中尚无凭据，同一 `BOOTSTRAP_TOKEN` **仍可用**（可重试 options/verify）。同一令牌可开出多个挑战，但 **complete 时 `FOR UPDATE` 注册配置行：bootstrap 要求尚无凭据，成功后删除其余注册挑战**，故只能成功写入一次。若已写入凭据，bootstrap 永久失效，加设备走 invite。轮换：更换环境变量中的 `BOOTSTRAP_TOKEN`，并确认无凭据（或清库后重来）。
-3. **verify**：RPC `complete_webauthn_registration` 事务内锁注册配置、按 `registration_mode` 复查、写入凭据、关闭注册、清除其它注册挑战。
-4. **新设备**：已登录 + passkey → `POST /api/auth/register/invite`。
+1. **首次登记（魔法链接）**：`/setup` 收集邮箱 → `POST /api/auth/setup/request`。仅当邮箱与 `OWNER_EMAIL` 大小写不敏感匹配时，经 Supabase Auth `signInWithOtp`（`shouldCreateUser: false`）发信；**始终返回同一中性文案**，并按 IP 限流。邮件链接落到 `/setup/confirm?token_hash=…&type=email`；**页面仅展示确认按钮，须 POST 后再 `verifyOtp`**（避免聊天/邮件预览消费 token）。校验通过后签发约 **10 分钟**、httpOnly、signed 的 `xjg_setup_grant` cookie。
+2. **WebAuthn 登记**：持有效 setup-grant 且库中**尚无任何凭据**时，`POST /api/auth/register/options` 以 `bootstrap` 模式创建 `authorized` 挑战；`verify` 成功写入凭据后**清除 grant**。有凭据后 bootstrap 永久失效（fail closed）。`pubKeyCredParams` **仅** ES256 (`-7`) 与 RS256 (`-257`)，禁止 ML-DSA-44 (`-48`)。`residentKey` 仍为 `required`。
+3. **中途失败恢复**：options 成功但 verify 失败且尚无凭据时，同一 setup-grant 在过期前可重试。complete RPC 对注册配置行 `FOR UPDATE`，成功后删除其余注册挑战。
+4. **新设备**：已登录 + passkey → `POST /api/auth/register/invite`（一次性令牌，与首次登记无关）。
 5. **登录**：会话 cookie 闲置 12h，绝对上限 7 天（`iat` 首次签发，滑动续期不改）；锁定逻辑集中 `evaluateLoginLockout`（只按 IP 锁 15 分钟；凭据与全站失败只告警——options 未登录可拿到凭据 ID，按凭据锁会被换 IP 锁死主人）。
 6. **决定 step-up**：须带 `content_hash`；挑战抢占；`apply_item_decision` 事务条件更新；前端只见通用错误。
+
+### Supabase Auth 仪表盘配置（合并后由本人操作；本 PR 不改远程配置）
+
+| 项 | 要求 |
+|----|------|
+| Email provider | 开启 |
+| 允许新用户注册 / signups | **关闭** |
+| Site URL | `https://desk.nopaiseh.com` |
+| Redirect URLs | 含 `https://desk.nopaiseh.com/**`（至少 `/setup/confirm`） |
+| Magic Link 邮件模板 | 使用 `token_hash`，例如链到 `{{ .SiteURL }}/setup/confirm?token_hash={{ .TokenHash }}&type=email` |
+| 用户 | 预先在 Auth 中创建与 `OWNER_EMAIL` 相同的用户（因 `shouldCreateUser: false` + 禁止注册） |
 
 ## 姐妹接口
 
@@ -64,11 +75,14 @@
 | 变量 | 用途 |
 |------|------|
 | `SUPABASE_URL` | Supabase API URL（服务器） |
-| `SUPABASE_SERVICE_ROLE_KEY` | service role；仅服务器 |
-| `SESSION_SECRET` | 会话 JWT HMAC；≥32 字节，不足则拒绝 |
-| `BOOTSTRAP_TOKEN` | 首次注册（≥32 字节；`openssl rand -base64 48`）；无凭据可重试；有凭据后失效 |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role；仅服务器；业务 DB |
+| `SUPABASE_ANON_KEY` 或 `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 仅 Auth OTP（`signInWithOtp` / `verifyOtp`） |
+| `SESSION_SECRET` | 会话 JWT 与 setup-grant HMAC；≥32 字节，不足则拒绝 |
+| `OWNER_EMAIL` | 唯一允许首次登记魔法链接的邮箱；服务器专用 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
 | `SITE_NAME` | 登录页站名 |
+
+已移除：`BOOTSTRAP_TOKEN`（改由 `OWNER_EMAIL` + setup-grant 承担首次登记授权）。
 
 ## 技术栈
 

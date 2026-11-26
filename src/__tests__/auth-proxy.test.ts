@@ -90,7 +90,7 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.status).toBe(200);
   });
 
-  it("allows /login, /setup and agent api without session", async () => {
+  it("allows /login, /setup, /setup/confirm and agent api without session", async () => {
     const { proxy } = await import("@/proxy");
     const loginReq = {
       nextUrl: new URL("http://localhost/login"),
@@ -107,6 +107,22 @@ describe("unauthenticated access / proxy hardening", () => {
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
     expect((await proxy(setupReq)).status).toBe(200);
+
+    const confirmReq = {
+      nextUrl: new URL("http://localhost/setup/confirm"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/setup/confirm",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    expect((await proxy(confirmReq)).status).toBe(200);
+
+    const setupApiReq = {
+      nextUrl: new URL("http://localhost/api/auth/setup/request"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/auth/setup/request",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    expect((await proxy(setupApiReq)).status).toBe(200);
 
     const agentReq = {
       nextUrl: new URL("http://localhost/api/agent/items"),
