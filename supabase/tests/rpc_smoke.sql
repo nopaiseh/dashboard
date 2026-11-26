@@ -173,6 +173,66 @@ BEGIN
 END;
 $$;
 
+-- 4) 结果已读回执：仅负责姐妹可标记；open 不可标记；幂等
+DO $$
+DECLARE
+  v_item public.items%ROWTYPE;
+  v_sqlstate text;
+BEGIN
+  UPDATE public.items
+  SET status = 'approved', result_read_at = NULL
+  WHERE id = '11111111-1111-4111-8111-111111111111';
+
+  BEGIN
+    PERFORM public.mark_item_result_read(
+      '11111111-1111-4111-8111-111111111111',
+      'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    );
+    RAISE EXCEPTION 'expected forbidden for other agent';
+  EXCEPTION
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      IF v_sqlstate IS DISTINCT FROM 'XJ403' THEN
+        RAISE EXCEPTION 'expected XJ403 for other agent, got %', v_sqlstate;
+      END IF;
+  END;
+
+  v_item := public.mark_item_result_read(
+    '11111111-1111-4111-8111-111111111111',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  );
+  IF v_item.result_read_at IS NULL THEN
+    RAISE EXCEPTION 'expected result_read_at after mark';
+  END IF;
+
+  v_item := public.mark_item_result_read(
+    '11111111-1111-4111-8111-111111111111',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  );
+  IF v_item.result_read_at IS NULL THEN
+    RAISE EXCEPTION 'idempotent mark should keep result_read_at';
+  END IF;
+
+  UPDATE public.items
+  SET status = 'open', result_read_at = NULL
+  WHERE id = '11111111-1111-4111-8111-111111111111';
+
+  BEGIN
+    PERFORM public.mark_item_result_read(
+      '11111111-1111-4111-8111-111111111111',
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    );
+    RAISE EXCEPTION 'expected conflict for open item';
+  EXCEPTION
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      IF v_sqlstate IS DISTINCT FROM 'XJ409' THEN
+        RAISE EXCEPTION 'expected XJ409 for open item, got %', v_sqlstate;
+      END IF;
+  END;
+END;
+$$;
+
 ROLLBACK;
 
 \echo OK rpc_smoke

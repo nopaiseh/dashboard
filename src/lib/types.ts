@@ -46,6 +46,8 @@ export interface ItemRow {
   created_at: string;
   updated_at: string;
   last_activity_at: string;
+  /** 姐妹确认已读本人决定的时间；open 时通常为 null。 */
+  result_read_at: string | null;
 }
 
 export interface ItemEventRow {
@@ -56,11 +58,15 @@ export interface ItemEventRow {
   action: ItemAction;
   option_key: string | null;
   reply_text: string | null;
-  credential_id: string | null;
+  /** 服务端写入；读接口 / UI 不得查出此列。 */
+  credential_id?: string | null;
   verified_at: string | null;
   content_hash: string | null;
   created_at: string;
 }
+
+/** 给详情时间线等：不含 credential_id。 */
+export type ItemEventPublic = Omit<ItemEventRow, "credential_id">;
 
 export interface SessionPayload {
   sub: "owner";
