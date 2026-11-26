@@ -1,4 +1,10 @@
-import { jsonError, jsonOk } from "@/lib/http";
+import { NextResponse } from "next/server";
+import { jsonError } from "@/lib/http";
+import {
+  SETUP_GRANT_COOKIE_NAME,
+  clearedSetupGrantCookieOptions,
+  hasValidSetupGrant,
+} from "@/lib/setup-grant";
 import { getServiceClient } from "@/lib/supabase/server";
 import { registerVerifySchema } from "@/lib/validation";
 import {
@@ -10,6 +16,7 @@ import { requireRequest } from "@/lib/require-request";
 /**
  * POST /api/auth/register/verify
  * 校验 attestation 后由 RPC 在同一事务复查授权、写入凭据、关闭注册。
+ * bootstrap（首次）挑战另须有效 setup-grant；成功后清除 grant。
  */
 
 export async function POST(request: Request) {
@@ -40,6 +47,14 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid challenge");
   }
 
+  const isBootstrap = preview.registration_mode === "bootstrap";
+  if (isBootstrap) {
+    const grantOk = await hasValidSetupGrant();
+    if (!grantOk) {
+      return jsonError(403, "registration denied");
+    }
+  }
+
   let verification;
   try {
     verification = await verifyRegistrationAttestation(
@@ -68,5 +83,16 @@ export async function POST(request: Request) {
     return jsonError(403, "registration denied");
   }
 
-  return jsonOk({ ok: true, credential_id: credential.id });
+  const response = NextResponse.json({
+    ok: true,
+    credential_id: credential.id,
+  });
+  if (isBootstrap) {
+    response.cookies.set(
+      SETUP_GRANT_COOKIE_NAME,
+      "",
+      clearedSetupGrantCookieOptions(),
+    );
+  }
+  return response;
 }

@@ -90,7 +90,7 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.status).toBe(200);
   });
 
-  it("allows /login, /setup and agent api without session", async () => {
+  it("allows /login, /setup, /setup/confirm and agent api without session", async () => {
     const { proxy } = await import("@/proxy");
     const loginReq = {
       nextUrl: new URL("http://localhost/login"),
@@ -108,6 +108,22 @@ describe("unauthenticated access / proxy hardening", () => {
     } as unknown as import("next/server").NextRequest;
     expect((await proxy(setupReq)).status).toBe(200);
 
+    const confirmReq = {
+      nextUrl: new URL("http://localhost/setup/confirm"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/setup/confirm",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    expect((await proxy(confirmReq)).status).toBe(200);
+
+    const setupApiReq = {
+      nextUrl: new URL("http://localhost/api/auth/setup/request"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/auth/setup/request",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    expect((await proxy(setupApiReq)).status).toBe(200);
+
     const agentReq = {
       nextUrl: new URL("http://localhost/api/agent/items"),
       cookies: { get: () => undefined },
@@ -117,11 +133,12 @@ describe("unauthenticated access / proxy hardening", () => {
     expect((await proxy(agentReq)).status).toBe(200);
   });
 
-  it("does not treat /setupX, /setup/x or path-traversal variants as public", async () => {
+  it("does not treat /setupX, /setup/foo or path-traversal variants as public", async () => {
     const { proxy } = await import("@/proxy");
     const paths = [
       "/setupX",
       "/setup/x",
+      "/setup/foo",
       "/setup/",
       "/setup/../todo",
       "/setup/%2e%2e/todo",
@@ -130,8 +147,9 @@ describe("unauthenticated access / proxy hardening", () => {
 
     for (const pathname of paths) {
       const url = new URL(pathname, "http://localhost");
-      // Only exact /setup is public; normalized cousins must still require auth.
+      // Only exact /setup and /setup/confirm are public pages.
       expect(url.pathname).not.toBe("/setup");
+      expect(url.pathname).not.toBe("/setup/confirm");
       const nextRequest = {
         nextUrl: url,
         cookies: { get: () => undefined },
@@ -144,6 +162,31 @@ describe("unauthenticated access / proxy hardening", () => {
         "http://localhost/login",
       );
     }
+  });
+
+  it("rejects unauthenticated /setup/foo with 307 to login", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/setup/foo"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/setup/foo",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("http://localhost/login");
+  });
+
+  it("does not treat /api/auth/setupX as public (trailing slash prefix)", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/api/auth/setupX"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/auth/setupX",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(401);
   });
 
   it("allows authenticated session cookie and sets security headers", async () => {

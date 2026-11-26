@@ -30,6 +30,12 @@ describe("register verify dual challenge", () => {
       error: null,
     });
 
+    vi.doMock("@/lib/setup-grant", () => ({
+      hasValidSetupGrant: async () => true,
+      SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
+      clearedSetupGrantCookieOptions: () => ({ maxAge: 0 }),
+    }));
+
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: () => ({

@@ -29,10 +29,23 @@ describe("register verify API", () => {
         challenge: "chal",
         purpose: "register",
         authorized: true,
+        registration_mode: "bootstrap",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
       },
       error: null,
     });
+
+    vi.doMock("@/lib/setup-grant", () => ({
+      hasValidSetupGrant: async () => true,
+      SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
+      clearedSetupGrantCookieOptions: () => ({
+        httpOnly: true,
+        secure: true,
+        sameSite: "strict",
+        path: "/",
+        maxAge: 0,
+      }),
+    }));
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({

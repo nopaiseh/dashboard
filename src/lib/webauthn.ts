@@ -15,6 +15,13 @@ import {
   getWebAuthnRpName,
 } from "@/lib/env";
 
+/**
+ * 仅允许 ES256 / RS256。
+ * SimpleWebAuthn 14 在 Node≥24.7 默认会把 ML-DSA-44 (-48) 排在首位，
+ * Proton Pass 等会按该 alg 登记，随后 navigator.credentials.get 失败。
+ */
+export const REGISTRATION_SUPPORTED_ALGORITHM_IDS = [-7, -257] as const;
+
 export interface StoredCredential {
   credential_id: string;
   public_key: string;
@@ -60,6 +67,7 @@ export async function buildRegistrationOptions(
       userVerification: "required",
     },
     attestationType: "none",
+    supportedAlgorithmIDs: [...REGISTRATION_SUPPORTED_ALGORITHM_IDS],
   });
 }
 
@@ -99,6 +107,7 @@ export async function verifyRegistrationAttestation(
     expectedOrigin: origin,
     expectedRPID: rpID,
     requireUserVerification: true,
+    supportedAlgorithmIDs: [...REGISTRATION_SUPPORTED_ALGORITHM_IDS],
   });
 }
 
