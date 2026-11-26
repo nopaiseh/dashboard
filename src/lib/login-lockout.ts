@@ -1,13 +1,22 @@
 /**
- * 登录锁定逻辑集中于此，便于日后改为「按 IP+凭据锁定、全站只报警」。
- * 当前策略（暂不改）：IP 与全站各自计数，连续失败 5 次锁 15 分钟。
+ * 登录锁定逻辑集中于此。
+ * 策略：只按 IP 失败达阈值后锁 15 分钟；
+ * 凭据（credential）与全站（global）只计数告警，不参与锁定
+ * （options 未登录可拿到凭据 ID，按凭据锁会被换 IP 锁死主人）。
  */
 
 export const LOGIN_MAX_FAILURES = 5;
 export const LOGIN_LOCK_MINUTES = 15;
 
+export type LoginAttemptScope =
+  | "ip"
+  | "credential"
+  | "global"
+  | "auth_options"
+  | "register_options";
+
 export interface LoginAttemptState {
-  scope: "ip" | "global" | "auth_options";
+  scope: LoginAttemptScope;
   scope_key: string;
   failed_count: number;
   locked_until: string | null;
@@ -23,9 +32,10 @@ export function isLocked(
   return new Date(attempt.locked_until).getTime() > now.getTime();
 }
 
+/** IP 失败计数（可锁定）。credential / global 请用 nextAlertCountState。 */
 export function nextFailureState(
   previous: LoginAttemptState | null | undefined,
-  scope: "ip" | "global",
+  scope: "ip",
   scopeKey: string,
   now: Date = new Date(),
 ): LoginAttemptState {
@@ -57,8 +67,42 @@ export function nextFailureState(
   };
 }
 
+/**
+ * 凭据 / 全站：只递增计数，达阈值归零并标记应告警，永不写 locked_until。
+ */
+export function nextAlertCountState(
+  previous: LoginAttemptState | null | undefined,
+  scope: "credential" | "global",
+  scopeKey: string,
+): { state: LoginAttemptState; alert: boolean } {
+  const prevCount = previous?.failed_count && previous.failed_count > 0
+    ? previous.failed_count
+    : 0;
+  const failedCount = prevCount + 1;
+  if (failedCount >= LOGIN_MAX_FAILURES) {
+    return {
+      state: {
+        scope,
+        scope_key: scopeKey,
+        failed_count: 0,
+        locked_until: null,
+      },
+      alert: true,
+    };
+  }
+  return {
+    state: {
+      scope,
+      scope_key: scopeKey,
+      failed_count: failedCount,
+      locked_until: null,
+    },
+    alert: false,
+  };
+}
+
 export function clearedAttemptState(
-  scope: "ip" | "global",
+  scope: "ip" | "credential" | "global",
   scopeKey: string,
 ): LoginAttemptState {
   return {
@@ -69,23 +113,15 @@ export function clearedAttemptState(
   };
 }
 
-export function anyLocked(
-  attempts: Array<LoginAttemptState | null | undefined>,
-  now: Date = new Date(),
-): boolean {
-  return attempts.some((a) => isLocked(a, now));
-}
-
 /**
- * 集中入口：根据 IP / 全站当前状态判断是否应拒绝本次登录尝试。
- * 日后改策略只动此函数（及 nextFailureState）。
+ * 集中入口：仅根据 IP 状态判断是否应拒绝本次登录尝试。
+ * 凭据 / 全站计数不参与锁定（只告警）。
  */
 export function evaluateLoginLockout(
   ipAttempt: LoginAttemptState | null | undefined,
-  globalAttempt: LoginAttemptState | null | undefined,
   now: Date = new Date(),
 ): { locked: boolean; reason?: string } {
-  if (anyLocked([ipAttempt, globalAttempt], now)) {
+  if (isLocked(ipAttempt, now)) {
     return { locked: true, reason: "locked: too many failed login attempts" };
   }
   return { locked: false };

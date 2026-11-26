@@ -18,6 +18,18 @@ import { authVerifySchema } from "@/lib/validation";
 import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
 import { requireRequest } from "@/lib/require-request";
 
+async function rejectFailure(
+  supabase: ReturnType<typeof getServiceClient>,
+  ip: string,
+  credentialId?: string | null,
+) {
+  const failure = await recordLoginFailure(supabase, ip, credentialId);
+  if (failure.locked) {
+    return jsonError(429, "locked: too many failed login attempts");
+  }
+  return jsonError(401, "authentication failed");
+}
+
 export async function POST(request: Request) {
   await requireRequest();
   const origin = assertSameOrigin(request);
@@ -51,15 +63,13 @@ export async function POST(request: Request) {
     "login",
   );
   if (!challengeRow) {
-    await recordLoginFailure(supabase, ip);
-    return jsonError(401, "authentication failed");
+    return rejectFailure(supabase, ip);
   }
 
   const assertion = parsed.data.assertion as { id?: string };
   const credentialId = assertion?.id;
   if (!credentialId) {
-    await recordLoginFailure(supabase, ip);
-    return jsonError(401, "authentication failed");
+    return rejectFailure(supabase, ip);
   }
 
   const { data: credential } = await supabase
@@ -69,8 +79,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (!credential) {
-    await recordLoginFailure(supabase, ip);
-    return jsonError(401, "authentication failed");
+    return rejectFailure(supabase, ip, credentialId);
   }
 
   let verification;
@@ -81,13 +90,11 @@ export async function POST(request: Request) {
       credential as StoredCredential,
     );
   } catch {
-    await recordLoginFailure(supabase, ip);
-    return jsonError(401, "authentication failed");
+    return rejectFailure(supabase, ip, credentialId);
   }
 
   if (!verification.verified) {
-    await recordLoginFailure(supabase, ip);
-    return jsonError(401, "authentication failed");
+    return rejectFailure(supabase, ip, credentialId);
   }
 
   await supabase
@@ -95,7 +102,7 @@ export async function POST(request: Request) {
     .update({ counter: verification.authenticationInfo.newCounter })
     .eq("credential_id", credentialId);
 
-  await recordLoginSuccess(supabase, ip);
+  await recordLoginSuccess(supabase, ip, credentialId);
 
   const token = await createSessionToken();
   const response = NextResponse.json({ ok: true });

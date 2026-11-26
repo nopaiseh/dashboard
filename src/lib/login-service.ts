@@ -9,18 +9,28 @@ import {
   type LoginAttemptState,
 } from "@/lib/login-lockout";
 
+const LOCKED_ERROR = "locked: too many failed login attempts";
+
+type LoadResult =
+  | { ok: true; attempt: LoginAttemptState | null }
+  | { ok: false };
+
 async function loadAttempt(
   supabase: SupabaseClient,
-  scope: "ip" | "global",
+  scope: "ip" | "credential" | "global",
   scopeKey: string,
-): Promise<LoginAttemptState | null> {
-  const { data } = await supabase
+): Promise<LoadResult> {
+  const { data, error } = await supabase
     .from("login_attempts")
     .select("scope, scope_key, failed_count, locked_until")
     .eq("scope", scope)
     .eq("scope_key", scopeKey)
     .maybeSingle();
-  return (data as LoginAttemptState | null) ?? null;
+  if (error) {
+    console.error("loadAttempt failed", { scope, scopeKey, error });
+    return { ok: false };
+  }
+  return { ok: true, attempt: (data as LoginAttemptState | null) ?? null };
 }
 
 async function saveAttempt(
@@ -36,17 +46,20 @@ async function saveAttempt(
   );
 }
 
+/** 只检查 IP 锁定；凭据不参与锁定决策。 */
 export async function assertNotLocked(
   supabase: SupabaseClient,
   ip: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const [ipAttempt, globalAttempt] = await Promise.all([
-    loadAttempt(supabase, "ip", ip),
-    loadAttempt(supabase, "global", "all"),
-  ]);
-  const result = evaluateLoginLockout(ipAttempt, globalAttempt);
+  const ipLoad = await loadAttempt(supabase, "ip", ip);
+  if (!ipLoad.ok) {
+    console.error("assertNotLocked: lock status read failed; fail closed");
+    return { ok: false, error: LOCKED_ERROR };
+  }
+
+  const result = evaluateLoginLockout(ipLoad.attempt);
   if (result.locked) {
-    return { ok: false, error: result.reason ?? "locked" };
+    return { ok: false, error: result.reason ?? LOCKED_ERROR };
   }
   return { ok: true };
 }
@@ -55,9 +68,11 @@ export async function assertNotLocked(
 export async function recordLoginFailure(
   supabase: SupabaseClient,
   ip: string,
+  credentialId?: string | null,
 ): Promise<{ locked: boolean }> {
   const { data, error } = await supabase.rpc("record_login_failure_atomic", {
     p_ip: ip,
+    p_credential_id: credentialId ?? null,
     p_max_failures: LOGIN_MAX_FAILURES,
     p_lock_minutes: LOGIN_LOCK_MINUTES,
   });
@@ -66,20 +81,48 @@ export async function recordLoginFailure(
     console.error("record_login_failure_atomic failed", error);
     return { locked: true };
   }
-  const locked =
-    data != null &&
-    typeof data === "object" &&
-    "locked" in (data as object) &&
-    Boolean((data as { locked: unknown }).locked);
+  const payload =
+    data != null && typeof data === "object"
+      ? (data as Record<string, unknown>)
+      : null;
+  const locked = Boolean(payload && "locked" in payload && payload.locked);
+
+  const globalAlert = Boolean(payload && payload.global_alert);
+  const credentialAlert = Boolean(payload && payload.credential_alert);
+  if (globalAlert) {
+    console.error(
+      "global login failure threshold reached (alert only, no lock)",
+      {
+        global_count: payload?.global_count ?? null,
+        ip,
+        credential_id: credentialId ?? null,
+      },
+    );
+  }
+  if (credentialAlert) {
+    console.error(
+      "credential login failure threshold reached (alert only, no lock)",
+      {
+        credential_count: payload?.credential_count ?? null,
+        ip,
+        credential_id: credentialId ?? null,
+      },
+    );
+  }
+
   return { locked };
 }
 
 export async function recordLoginSuccess(
   supabase: SupabaseClient,
   ip: string,
+  credentialId?: string | null,
 ): Promise<void> {
-  await Promise.all([
-    saveAttempt(supabase, clearedAttemptState("ip", ip)),
-    saveAttempt(supabase, clearedAttemptState("global", "all")),
-  ]);
+  const tasks = [saveAttempt(supabase, clearedAttemptState("ip", ip))];
+  if (credentialId) {
+    tasks.push(
+      saveAttempt(supabase, clearedAttemptState("credential", credentialId)),
+    );
+  }
+  await Promise.all(tasks);
 }
