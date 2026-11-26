@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -104,12 +104,15 @@ describe("ReadError boundary UI", () => {
 describe("AppShell landmark", () => {
   it("wraps content in a single main", () => {
     const html = renderToStaticMarkup(
-      createElement(AppShell, {
-        active: "today" as const,
-        counts: null,
-        siteName: "玄机阁",
-        children: createElement("p", null, "内容"),
-      }),
+      createElement(
+        AppShell,
+        {
+          active: "today",
+          counts: null,
+          siteName: "玄机阁",
+        } as ComponentProps<typeof AppShell>,
+        createElement("p", null, "内容"),
+      ),
     );
     expect(html).toContain("<main class=\"qj-wrap\"");
     expect(html.match(/<main/g)?.length ?? 0).toBe(1);
