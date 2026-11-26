@@ -223,7 +223,7 @@ describe("field encryption", () => {
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({
       itemId: ITEM_B,
-      code: "item_decrypt_failed",
+      code: "field_decrypt_failed",
     });
     expect(JSON.stringify(reports[0])).not.toMatch(/ok|secret|KEY/);
   });
@@ -382,5 +382,32 @@ describe("backfill plan idempotency", () => {
     expect(() => decryptItemSensitiveFields(sealed)).toThrow(
       /not configured|FIELD_ENCRYPTION_KEY/,
     );
+  });
+
+  it("unknown envelope key version degrades the row only", () => {
+    const sealed = encryptItemSensitiveFields({
+      id: ITEM_A,
+      title: "secret",
+      body: "",
+      source_url: null,
+    });
+    const reports: Array<Record<string, unknown>> = [];
+    setFieldDecryptFailureReporter((info) => {
+      reports.push(info);
+    });
+    // Keyring loads (v2 present) but envelope is v1 → unknown_key_version.
+    setEnv({
+      FIELD_ENCRYPTION_KEY_V2: KEY_V2,
+      FIELD_ENCRYPTION_KEY_CURRENT: "2",
+      CONTENT_HASH_KEY: HASH_KEY,
+      NODE_ENV: "test",
+    });
+    const out = decryptItemSensitiveFields(sealed);
+    expect(out.decrypt_failed).toBe(true);
+    expect(out.title).toBe("[无法解密]");
+    expect(reports[0]).toMatchObject({
+      itemId: ITEM_A,
+      code: "unknown_key_version",
+    });
   });
 });

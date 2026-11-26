@@ -42,16 +42,20 @@ const ENVELOPE_RE = new RegExp(
 export type SensitiveColumn = "title" | "body" | "source_url";
 
 export class FieldEncryptionError extends Error {
-  constructor(message: string) {
+  /** Stable machine code for logs / UI (e.g. unknown_key_version). */
+  readonly code: string;
+
+  constructor(message: string, code = "field_decrypt_failed") {
     super(message);
     this.name = "FieldEncryptionError";
+    this.code = code;
   }
 }
 
 /** Missing / invalid keyring — must not be swallowed by per-row degrade. */
 export class FieldEncryptionConfigError extends FieldEncryptionError {
   constructor(message: string) {
-    super(message);
+    super(message, "field_encryption_config");
     this.name = "FieldEncryptionConfigError";
   }
 }
@@ -320,8 +324,10 @@ export function decryptField(stored: string, ctx: FieldContext): string {
   const ring = requireKeyring();
   const key = ring.keys.get(envelope.version);
   if (!key) {
-    throw new FieldEncryptionConfigError(
+    // Keyring loaded OK but this envelope version is absent → degrade this row only.
+    throw new FieldEncryptionError(
       `no decryption key for envelope version v${envelope.version}`,
+      "unknown_key_version",
     );
   }
 
@@ -428,10 +434,14 @@ export function decryptItemSensitiveFields<T extends SensitiveItemFields>(
     if (err instanceof FieldEncryptionConfigError) {
       throw err;
     }
+    const code =
+      err instanceof FieldEncryptionError
+        ? err.code
+        : "item_decrypt_failed";
     reportFieldDecryptFailure({
       itemId: row.id,
       column: "item",
-      code: "item_decrypt_failed",
+      code,
     });
     return {
       ...row,

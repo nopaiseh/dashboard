@@ -13,7 +13,7 @@
  *   npx tsx scripts/encrypt-existing-fields.ts --encrypt-only
  *   npx tsx scripts/encrypt-existing-fields.ts --rehash-only
  *   npx tsx scripts/encrypt-existing-fields.ts --encrypt-only --execute
- *   npx tsx scripts/encrypt-existing-fields.ts --rehash-only --execute --batch-size=50
+ *   # --rehash-only --execute 会被拒绝（事件表方案待定，仅允许 dry-run）
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -21,40 +21,15 @@ import {
   loadContentHashKey,
   resetContentHashKeyCache,
 } from "../src/lib/content-hash";
+import { parseBackfillArgs } from "../src/lib/crypto/backfill-cli";
 import {
   planItemBackfill,
   type BackfillItemRow,
-  type BackfillMode,
 } from "../src/lib/crypto/backfill-plan";
 import {
   encryptField,
   resetFieldKeyringCache,
 } from "../src/lib/crypto/fields-core";
-
-function parseArgs(argv: string[]) {
-  let dryRun = true;
-  let batchSize = 100;
-  let encryptOnly = false;
-  let rehashOnly = false;
-  for (const arg of argv) {
-    if (arg === "--execute") dryRun = false;
-    if (arg === "--dry-run") dryRun = true;
-    if (arg === "--encrypt-only") encryptOnly = true;
-    if (arg === "--rehash-only") rehashOnly = true;
-    const batch = /^--batch-size=(\d+)$/.exec(arg);
-    if (batch) {
-      batchSize = Number.parseInt(batch[1], 10);
-      if (!Number.isFinite(batchSize) || batchSize < 1) {
-        throw new Error("--batch-size must be a positive integer");
-      }
-    }
-  }
-  if (encryptOnly === rehashOnly) {
-    throw new Error("specify exactly one of --encrypt-only or --rehash-only");
-  }
-  const mode: BackfillMode = encryptOnly ? "encrypt" : "rehash";
-  return { dryRun, batchSize, mode };
-}
 
 async function casUpdateItem(
   supabase: SupabaseClient,
@@ -108,7 +83,7 @@ async function casUpdateItem(
 }
 
 async function main(): Promise<void> {
-  const { dryRun, batchSize, mode } = parseArgs(process.argv.slice(2));
+  const { dryRun, batchSize, mode } = parseBackfillArgs(process.argv.slice(2));
   resetFieldKeyringCache();
   resetContentHashKeyCache();
 

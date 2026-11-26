@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import type { ItemOption, ItemRow } from "@/lib/types";
 import { ALLOWED_DECISIONS_BY_KIND } from "@/lib/types";
+import { decisionActionsBlocked } from "@/lib/ui/decision-disabled";
 import {
   decideWithPasskey,
   PasskeyError,
@@ -27,7 +28,10 @@ function useIsMobileNarrow(): boolean {
 export function DecisionPanel({
   item,
 }: {
-  item: Pick<ItemRow, "id" | "kind" | "status" | "title" | "options" | "content_hash">;
+  item: Pick<
+    ItemRow,
+    "id" | "kind" | "status" | "title" | "options" | "content_hash" | "decrypt_failed"
+  >;
 }) {
   const router = useRouter();
   const mobile = useIsMobileNarrow();
@@ -38,6 +42,8 @@ export function DecisionPanel({
   const [error, setError] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const { blocked: decryptBlocked, reason: decryptBlockReason } =
+    decisionActionsBlocked(item);
 
   if (item.status !== "open") {
     return null;
@@ -47,6 +53,10 @@ export function DecisionPanel({
     options.find((o) => o.key === optionKey)?.label ?? null;
 
   function runDecision(action: DecisionAction) {
+    if (decryptBlocked) {
+      setError(decryptBlockReason);
+      return;
+    }
     setError(null);
     startTransition(async () => {
       try {
@@ -76,12 +86,18 @@ export function DecisionPanel({
   }
 
   function onApproveClick() {
+    if (decryptBlocked) {
+      setError(decryptBlockReason);
+      return;
+    }
     if (mobile) {
       setSheetOpen(true);
       return;
     }
     runDecision("approve");
   }
+
+  const actionsDisabled = pending || decryptBlocked;
 
   return (
     <div>
@@ -100,6 +116,7 @@ export function DecisionPanel({
                   value={opt.key}
                   checked={picked}
                   onChange={() => setOptionKey(opt.key)}
+                  disabled={decryptBlocked}
                 />
                 {opt.label}
               </label>
@@ -121,7 +138,14 @@ export function DecisionPanel({
           onChange={(e) => setReplyText(e.target.value)}
           placeholder="写下回复…"
           maxLength={5000}
+          disabled={decryptBlocked}
         />
+      ) : null}
+
+      {decryptBlocked && decryptBlockReason ? (
+        <p className={`${"qj-banner"} ${"qj-bannerError"}`} role="status">
+          {decryptBlockReason}
+        </p>
       ) : null}
 
       {error ? (
@@ -136,13 +160,19 @@ export function DecisionPanel({
             type="button"
             className={"qj-btn"}
             onClick={onApproveClick}
-            disabled={pending}
+            disabled={actionsDisabled}
+            title={decryptBlockReason ?? undefined}
+            aria-disabled={actionsDisabled}
           >
             <span className={"qj-btnRow"}>
               <FingerprintIcon />
               批准
             </span>
-            <span className={"qj-btnHint"}>需通行密钥确认</span>
+            <span className={"qj-btnHint"}>
+              {decryptBlocked
+                ? decryptBlockReason
+                : "需通行密钥确认"}
+            </span>
           </button>
         ) : null}
         {allowed.has("reject") ? (
@@ -150,13 +180,19 @@ export function DecisionPanel({
             type="button"
             className={`${"qj-btn"} ${"qj-btnDanger"}`}
             onClick={() => runDecision("reject")}
-            disabled={pending}
+            disabled={actionsDisabled}
+            title={decryptBlockReason ?? undefined}
+            aria-disabled={actionsDisabled}
           >
             <span className={"qj-btnRow"}>
               <FingerprintIcon />
               驳回
             </span>
-            <span className={"qj-btnHint"}>需通行密钥确认</span>
+            <span className={"qj-btnHint"}>
+              {decryptBlocked
+                ? decryptBlockReason
+                : "需通行密钥确认"}
+            </span>
           </button>
         ) : null}
         {allowed.has("reply") ? (
@@ -164,19 +200,25 @@ export function DecisionPanel({
             type="button"
             className={`${"qj-btn"} ${"qj-btnGhost"}`}
             onClick={() => runDecision("reply")}
-            disabled={pending || !replyText.trim()}
+            disabled={actionsDisabled || !replyText.trim()}
+            title={decryptBlockReason ?? undefined}
+            aria-disabled={actionsDisabled || !replyText.trim()}
           >
             <span className={"qj-btnRow"}>
               <FingerprintIcon />
               回复
             </span>
-            <span className={"qj-btnHint"}>需通行密钥确认</span>
+            <span className={"qj-btnHint"}>
+              {decryptBlocked
+                ? decryptBlockReason
+                : "需通行密钥确认"}
+            </span>
           </button>
         ) : null}
       </div>
 
       <ConfirmSheet
-        open={sheetOpen}
+        open={sheetOpen && !decryptBlocked}
         title={item.title}
         optionLabel={selectedLabel}
         busy={pending}
