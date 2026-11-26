@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { getSiteName } from "@/lib/env";
 
 /** 需动态渲染以接收 proxy 注入的 CSP nonce。 */
@@ -7,7 +8,9 @@ export const instant = false;
  * 登录页：除站名外不透露其它内容。
  * 实际 passkey 交互由前端另做；此处仅占位。
  */
-export default function LoginPage() {
+export default async function LoginPage() {
+  await connection();
+
   let siteName = "玄机阁";
   try {
     siteName = getSiteName();
