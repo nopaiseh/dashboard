@@ -1,6 +1,11 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { jsonError, jsonOk } from "@/lib/http";
 import { planAgentPatch } from "@/lib/items-logic";
+import {
+  isPgConflict,
+  isPgForbidden,
+  isPgNotFound,
+} from "@/lib/pg-errors";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemRow } from "@/lib/types";
 import { patchItemSchema } from "@/lib/validation";
@@ -80,18 +85,13 @@ export async function PATCH(request: Request, context: RouteContext) {
   });
 
   if (error) {
-    const msg = error.message ?? "";
-    if (
-      msg.includes("conflict") ||
-      msg.includes("conditional update failed") ||
-      msg.includes("status changed")
-    ) {
+    if (isPgConflict(error)) {
       return jsonError(409, "conflict");
     }
-    if (msg.includes("forbidden") || msg.includes("not allowed")) {
+    if (isPgForbidden(error)) {
       return jsonError(403, "forbidden");
     }
-    if (msg.includes("not found")) {
+    if (isPgNotFound(error)) {
       return jsonError(404, "item not found");
     }
     console.error("apply_agent_item_patch failed", error);

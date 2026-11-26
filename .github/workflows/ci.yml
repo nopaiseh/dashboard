@@ -14,6 +14,22 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dashboard
+          POSTGRES_PASSWORD: dashboard
+          POSTGRES_DB: dashboard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dashboard -d dashboard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dashboard:dashboard@127.0.0.1:5432/dashboard
     steps:
       - uses: actions/checkout@v5
 
@@ -24,6 +40,20 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Prepare Postgres roles + migrate
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            pg_isready -h 127.0.0.1 -p 5432 -U dashboard && break
+            sleep 2
+          done
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261126000001_init_schema.sql
 
       - name: Lint
         run: npm run lint
@@ -39,6 +69,7 @@ jobs:
           WEBAUTHN_ORIGIN: https://desk.nopaiseh.com
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: test-placeholder-not-a-real-key
+          DATABASE_URL: postgresql://dashboard:dashboard@127.0.0.1:5432/dashboard
 
       - name: Build
         run: npm run build

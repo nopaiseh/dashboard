@@ -4,6 +4,7 @@ import { jsonError, jsonOk } from "@/lib/http";
 import { itemHasFinalDecision } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemEventRow, ItemRow, ItemStatus } from "@/lib/types";
+import { inboxQuerySchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 export async function GET(request: Request) {
@@ -20,7 +21,16 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const since = url.searchParams.get("since");
+  const sinceRaw = url.searchParams.get("since");
+  const parsed = inboxQuerySchema.safeParse({
+    since: sinceRaw === null || sinceRaw === "" ? undefined : sinceRaw,
+  });
+  if (!parsed.success) {
+    return jsonError(400, "invalid query", {
+      details: parsed.error.flatten(),
+    });
+  }
+  const since = parsed.data.since;
 
   let query = supabase
     .from("items")

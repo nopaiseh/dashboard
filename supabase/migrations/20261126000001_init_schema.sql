@@ -191,6 +191,11 @@ CREATE TABLE public.webauthn_challenges (
   purpose text NOT NULL CHECK (purpose IN ('login', 'register', 'step_up')),
   item_id uuid REFERENCES public.items (id) ON DELETE CASCADE,
   authorized boolean NOT NULL DEFAULT false,
+  -- 注册挑战：bootstrap（首次）或 invite（新设备）；其它 purpose 为 NULL
+  registration_mode text CHECK (
+    registration_mode IS NULL
+    OR registration_mode IN ('bootstrap', 'invite')
+  ),
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -254,7 +259,7 @@ CREATE TRIGGER goals_set_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 
--- 作废令牌并绑定授权到注册挑战（同一事务）
+-- 校验令牌并绑定授权到注册挑战（同一事务）；挑战记录 registration_mode
 CREATE OR REPLACE FUNCTION public.authorize_and_create_registration_challenge(
   p_challenge text,
   p_expires_at timestamptz,
@@ -269,6 +274,7 @@ AS $$
 DECLARE
   v_reg public.webauthn_registration%ROWTYPE;
   v_id uuid;
+  v_reg_mode text;
 BEGIN
   SELECT * INTO v_reg
   FROM public.webauthn_registration
@@ -276,37 +282,44 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'registration config missing';
+    RAISE EXCEPTION 'registration config missing'
+      USING ERRCODE = 'XJ404';
   END IF;
 
   IF p_mode = 'bootstrap' THEN
     -- 只要已有任何凭据，BOOTSTRAP_TOKEN 一律失效
     IF EXISTS (SELECT 1 FROM public.webauthn_credentials LIMIT 1) THEN
-      RAISE EXCEPTION 'bootstrap disabled: credentials already exist';
+      RAISE EXCEPTION 'bootstrap disabled: credentials already exist'
+        USING ERRCODE = 'XJ403';
     END IF;
     -- 无凭据时允许重试（中途失败不永久作废）；consumed 仅在 verify 成功时写入
+    v_reg_mode := 'bootstrap';
   ELSIF p_mode = 'one_time' THEN
     IF v_reg.one_time_token_hash IS NULL
        OR v_reg.one_time_token_hash IS DISTINCT FROM p_token_hash THEN
-      RAISE EXCEPTION 'invalid one-time token';
+      RAISE EXCEPTION 'invalid one-time token'
+        USING ERRCODE = 'XJ403';
     END IF;
     IF v_reg.one_time_token_expires_at IS NOT NULL
        AND v_reg.one_time_token_expires_at < now() THEN
-      RAISE EXCEPTION 'one-time token expired';
+      RAISE EXCEPTION 'one-time token expired'
+        USING ERRCODE = 'XJ403';
     END IF;
     UPDATE public.webauthn_registration
     SET one_time_token_hash = NULL,
         one_time_token_expires_at = NULL,
         updated_at = now()
     WHERE id = 1;
+    v_reg_mode := 'invite';
   ELSE
-    RAISE EXCEPTION 'invalid mode';
+    RAISE EXCEPTION 'invalid mode'
+      USING ERRCODE = 'XJ403';
   END IF;
 
   INSERT INTO public.webauthn_challenges (
-    challenge, purpose, expires_at, authorized
+    challenge, purpose, expires_at, authorized, registration_mode
   )
-  VALUES (p_challenge, 'register', p_expires_at, true)
+  VALUES (p_challenge, 'register', p_expires_at, true, v_reg_mode)
   RETURNING id INTO v_id;
 
   RETURN v_id;
@@ -314,6 +327,7 @@ END;
 $$;
 
 -- 复查授权、写入凭据、关闭注册（同一事务）
+-- 锁住注册配置行；bootstrap 要求尚无凭据；成功后删除其余注册挑战
 CREATE OR REPLACE FUNCTION public.complete_webauthn_registration(
   p_challenge_id uuid,
   p_credential_id text,
@@ -329,6 +343,17 @@ AS $$
 DECLARE
   v_ch public.webauthn_challenges%ROWTYPE;
 BEGIN
+  -- 串行化注册完成，防止同一令牌多挑战并发写入
+  PERFORM 1
+  FROM public.webauthn_registration
+  WHERE id = 1
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'registration config missing'
+      USING ERRCODE = 'XJ404';
+  END IF;
+
   DELETE FROM public.webauthn_challenges
   WHERE id = p_challenge_id
     AND purpose = 'register'
@@ -337,7 +362,18 @@ BEGIN
   RETURNING * INTO v_ch;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'invalid or unauthorized registration challenge';
+    RAISE EXCEPTION 'invalid or unauthorized registration challenge'
+      USING ERRCODE = 'XJ403';
+  END IF;
+
+  IF v_ch.registration_mode = 'bootstrap' THEN
+    IF EXISTS (SELECT 1 FROM public.webauthn_credentials LIMIT 1) THEN
+      RAISE EXCEPTION 'bootstrap disabled: credentials already exist'
+        USING ERRCODE = 'XJ409';
+    END IF;
+  ELSIF v_ch.registration_mode IS DISTINCT FROM 'invite' THEN
+    RAISE EXCEPTION 'invalid registration mode'
+      USING ERRCODE = 'XJ403';
   END IF;
 
   INSERT INTO public.webauthn_credentials (
@@ -351,9 +387,17 @@ BEGIN
   SET open = false,
       one_time_token_hash = NULL,
       one_time_token_expires_at = NULL,
-      bootstrap_consumed_at = COALESCE(bootstrap_consumed_at, now()),
+      bootstrap_consumed_at = CASE
+        WHEN v_ch.registration_mode = 'bootstrap'
+          THEN COALESCE(bootstrap_consumed_at, now())
+        ELSE bootstrap_consumed_at
+      END,
       updated_at = now()
   WHERE id = 1;
+
+  -- 成功后作废其余所有注册挑战（含并发开出的）
+  DELETE FROM public.webauthn_challenges
+  WHERE purpose = 'register';
 END;
 $$;
 
@@ -425,23 +469,28 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'item not found';
+    RAISE EXCEPTION 'item not found'
+      USING ERRCODE = 'XJ404';
   END IF;
 
   IF v_item.status IS DISTINCT FROM 'open' THEN
-    RAISE EXCEPTION 'item is not open';
+    RAISE EXCEPTION 'item is not open'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   IF v_item.content_hash IS DISTINCT FROM p_expected_content_hash THEN
-    RAISE EXCEPTION 'content_hash mismatch';
+    RAISE EXCEPTION 'content_hash mismatch'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   -- kind 允许的决定
   IF v_item.kind = 'approval' AND p_action NOT IN ('approve', 'reject') THEN
-    RAISE EXCEPTION 'action not allowed for kind';
+    RAISE EXCEPTION 'action not allowed for kind'
+      USING ERRCODE = 'XJ403';
   ELSIF v_item.kind IN ('todo', 'question_to_user', 'question_from_user', 'waiting')
         AND p_action IS DISTINCT FROM 'reply' THEN
-    RAISE EXCEPTION 'action not allowed for kind';
+    RAISE EXCEPTION 'action not allowed for kind'
+      USING ERRCODE = 'XJ403';
   END IF;
 
   IF p_option_key IS NOT NULL THEN
@@ -450,7 +499,8 @@ BEGIN
     FROM jsonb_array_elements(COALESCE(v_item.options, '[]'::jsonb)) AS opt;
 
     IF v_keys IS NULL OR NOT (p_option_key = ANY (v_keys)) THEN
-      RAISE EXCEPTION 'invalid option_key';
+      RAISE EXCEPTION 'invalid option_key'
+        USING ERRCODE = 'XJ403';
     END IF;
   END IF;
 
@@ -464,7 +514,8 @@ BEGIN
   RETURNING * INTO v_item;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'conditional update failed';
+    RAISE EXCEPTION 'conditional update failed'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   INSERT INTO public.item_events (
@@ -633,16 +684,19 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'item not found';
+    RAISE EXCEPTION 'item not found'
+      USING ERRCODE = 'XJ404';
   END IF;
 
   IF v_item.agent_id IS DISTINCT FROM p_agent_id THEN
-    RAISE EXCEPTION 'forbidden: item belongs to another agent';
+    RAISE EXCEPTION 'forbidden: item belongs to another agent'
+      USING ERRCODE = 'XJ403';
   END IF;
 
   IF v_item.status IS DISTINCT FROM p_expected_status
      OR v_item.content_hash IS DISTINCT FROM p_expected_content_hash THEN
-    RAISE EXCEPTION 'conflict: status or content changed';
+    RAISE EXCEPTION 'conflict: status or content changed'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   -- 审批仍 open 时禁止标 done
@@ -650,13 +704,15 @@ BEGIN
      AND p_new_status = 'done'
      AND v_item.kind = 'approval'
      AND v_item.status = 'open' THEN
-    RAISE EXCEPTION 'not allowed: open approval may only be withdrawn';
+    RAISE EXCEPTION 'not allowed: open approval may only be withdrawn'
+      USING ERRCODE = 'XJ403';
   END IF;
 
   IF p_set_status
      AND p_new_status IS NOT NULL
      AND p_new_status NOT IN ('done', 'withdrawn', 'open') THEN
-    RAISE EXCEPTION 'not allowed status';
+    RAISE EXCEPTION 'not allowed status'
+      USING ERRCODE = 'XJ403';
   END IF;
 
   UPDATE public.items
@@ -682,7 +738,8 @@ BEGIN
   RETURNING * INTO v_item;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'conflict: conditional update failed';
+    RAISE EXCEPTION 'conflict: conditional update failed'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   INSERT INTO public.item_events (
@@ -694,13 +751,94 @@ BEGIN
   RETURNING * INTO v_event;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'failed to write event';
+    RAISE EXCEPTION 'failed to write event'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   RETURN jsonb_build_object(
     'item', to_jsonb(v_item),
     'event', to_jsonb(v_event)
   );
+END;
+$$;
+
+-- 单 scope 原子失败计数（与 nextFailureState 对齐：阈值内累加，达阈锁住并清零计数）
+CREATE OR REPLACE FUNCTION public._bump_login_failure(
+  p_scope text,
+  p_scope_key text,
+  p_max_failures int,
+  p_lock_minutes int
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row public.login_attempts%ROWTYPE;
+  v_next int;
+BEGIN
+  INSERT INTO public.login_attempts (scope, scope_key, failed_count, locked_until, updated_at)
+  VALUES (p_scope, p_scope_key, 0, NULL, now())
+  ON CONFLICT (scope, scope_key) DO NOTHING;
+
+  SELECT * INTO v_row
+  FROM public.login_attempts
+  WHERE scope = p_scope AND scope_key = p_scope_key
+  FOR UPDATE;
+
+  IF v_row.locked_until IS NOT NULL AND v_row.locked_until > now() THEN
+    RETURN true;
+  END IF;
+
+  IF v_row.locked_until IS NOT NULL AND v_row.locked_until <= now() THEN
+    v_next := 1;
+  ELSIF v_row.failed_count > 0 THEN
+    v_next := v_row.failed_count + 1;
+  ELSE
+    v_next := 1;
+  END IF;
+
+  IF v_next >= p_max_failures THEN
+    UPDATE public.login_attempts
+    SET failed_count = 0,
+        locked_until = now() + make_interval(mins => p_lock_minutes),
+        updated_at = now()
+    WHERE id = v_row.id;
+    RETURN true;
+  END IF;
+
+  UPDATE public.login_attempts
+  SET failed_count = v_next,
+      locked_until = NULL,
+      updated_at = now()
+  WHERE id = v_row.id;
+  RETURN false;
+END;
+$$;
+
+-- 登录失败计数：单事务原子 upsert/increment（策略参数与 TS 对齐：5 次 / 15 分钟）
+CREATE OR REPLACE FUNCTION public.record_login_failure_atomic(
+  p_ip text,
+  p_max_failures int DEFAULT 5,
+  p_lock_minutes int DEFAULT 15
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_ip_locked boolean;
+  v_global_locked boolean;
+BEGIN
+  v_ip_locked := public._bump_login_failure(
+    'ip', p_ip, p_max_failures, p_lock_minutes
+  );
+  v_global_locked := public._bump_login_failure(
+    'global', 'all', p_max_failures, p_lock_minutes
+  );
+  RETURN jsonb_build_object('locked', (v_ip_locked OR v_global_locked));
 END;
 $$;
 
@@ -723,6 +861,8 @@ BEGIN
         'rate_limit_register_options',
         'set_registration_one_time_token',
         'apply_agent_item_patch',
+        'record_login_failure_atomic',
+        '_bump_login_failure',
         'forbid_item_events_mutation',
         'set_updated_at'
       )

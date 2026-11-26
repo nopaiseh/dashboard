@@ -118,3 +118,34 @@ export const inviteSchema = z
     challenge_id: z.string().uuid(),
   })
   .strict();
+
+export const inboxQuerySchema = z
+  .object({
+    since: z.string().datetime().optional(),
+  })
+  .strict();
+
+export const itemsQuerySchema = z
+  .object({
+    kind: z
+      .enum([
+        "approval",
+        "todo",
+        "question_to_user",
+        "question_from_user",
+        "waiting",
+      ])
+      .optional(),
+    agent: z.string().uuid().optional(),
+    status: z
+      .enum([
+        "open",
+        "approved",
+        "rejected",
+        "replied",
+        "done",
+        "withdrawn",
+      ])
+      .optional(),
+  })
+  .strict();

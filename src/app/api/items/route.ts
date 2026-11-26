@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth-guard";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
+import { itemsQuerySchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 export async function GET(request: Request) {
@@ -11,9 +12,17 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const kind = url.searchParams.get("kind");
-  const agent = url.searchParams.get("agent");
-  const status = url.searchParams.get("status");
+  const parsed = itemsQuerySchema.safeParse({
+    kind: url.searchParams.get("kind") || undefined,
+    agent: url.searchParams.get("agent") || undefined,
+    status: url.searchParams.get("status") || undefined,
+  });
+  if (!parsed.success) {
+    return jsonError(400, "invalid query", {
+      details: parsed.error.flatten(),
+    });
+  }
+  const { kind, agent, status } = parsed.data;
 
   const supabase = getServiceClient();
   let query = supabase

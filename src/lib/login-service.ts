@@ -4,8 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   clearedAttemptState,
   evaluateLoginLockout,
-  isLocked,
-  nextFailureState,
+  LOGIN_LOCK_MINUTES,
+  LOGIN_MAX_FAILURES,
   type LoginAttemptState,
 } from "@/lib/login-lockout";
 
@@ -51,23 +51,26 @@ export async function assertNotLocked(
   return { ok: true };
 }
 
+/** 经 RPC 原子 upsert/increment，避免并发读改写丢计数。 */
 export async function recordLoginFailure(
   supabase: SupabaseClient,
   ip: string,
 ): Promise<{ locked: boolean }> {
-  const [ipPrev, globalPrev] = await Promise.all([
-    loadAttempt(supabase, "ip", ip),
-    loadAttempt(supabase, "global", "all"),
-  ]);
-  const ipNext = nextFailureState(ipPrev, "ip", ip);
-  const globalNext = nextFailureState(globalPrev, "global", "all");
-  await Promise.all([
-    saveAttempt(supabase, ipNext),
-    saveAttempt(supabase, globalNext),
-  ]);
-  return {
-    locked: isLocked(ipNext) || isLocked(globalNext),
-  };
+  const { data, error } = await supabase.rpc("record_login_failure_atomic", {
+    p_ip: ip,
+    p_max_failures: LOGIN_MAX_FAILURES,
+    p_lock_minutes: LOGIN_LOCK_MINUTES,
+  });
+  if (error) {
+    console.error("record_login_failure_atomic failed", error);
+    return { locked: false };
+  }
+  const locked =
+    data != null &&
+    typeof data === "object" &&
+    "locked" in (data as object) &&
+    Boolean((data as { locked: unknown }).locked);
+  return { locked };
 }
 
 export async function recordLoginSuccess(

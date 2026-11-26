@@ -1,4 +1,4 @@
-import { computeContentHash } from "@/lib/content-hash";
+import { computeContentHash, normalizeDueAt } from "@/lib/content-hash";
 import {
   assertAgentMaySetStatus,
   assertAgentOwnsItem,
@@ -65,7 +65,7 @@ export function buildNewItemFields(
   const body = (input.body ?? "").trim();
   const options = input.options ?? [];
   const kind = input.kind;
-  const due_at = input.due_at ?? null;
+  const due_at = normalizeDueAt(input.due_at ?? null);
   const source_url = input.source_url ?? null;
   return {
     kind,
@@ -143,13 +143,31 @@ export function planAgentPatch(
     };
   }
 
+  const contentFieldsPresent =
+    patch.title !== undefined ||
+    patch.body !== undefined ||
+    patch.options !== undefined ||
+    patch.kind !== undefined ||
+    patch.source_url !== undefined ||
+    patch.due_at !== undefined;
+
+  if (contentFieldsPresent && patch.status === "withdrawn") {
+    return {
+      ok: false,
+      status: 400,
+      error: "cannot change content and withdraw in one request",
+    };
+  }
+
   const title = patch.title !== undefined ? patch.title.trim() : item.title;
   const body = patch.body !== undefined ? patch.body.trim() : item.body;
   const options = patch.options !== undefined ? patch.options : item.options;
   const kind = patch.kind !== undefined ? patch.kind : item.kind;
   const source_url =
     patch.source_url !== undefined ? patch.source_url : item.source_url;
-  const due_at = patch.due_at !== undefined ? patch.due_at : item.due_at;
+  const due_at = normalizeDueAt(
+    patch.due_at !== undefined ? patch.due_at : item.due_at,
+  );
 
   const reopened = contentChanged(item, {
     kind,
@@ -199,7 +217,8 @@ export function planAgentPatch(
         body: patch.body !== undefined ? body : null,
         options: patch.options !== undefined ? options : null,
         project: patch.project !== undefined ? patch.project : null,
-        due_at: patch.due_at !== undefined ? patch.due_at : undefined,
+        due_at:
+          patch.due_at !== undefined ? normalizeDueAt(patch.due_at) : undefined,
         source_url:
           patch.source_url !== undefined ? patch.source_url : undefined,
         kind: patch.kind !== undefined ? patch.kind : null,

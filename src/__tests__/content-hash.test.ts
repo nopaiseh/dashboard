@@ -44,6 +44,18 @@ describe("content_hash", () => {
     expect(computeContentHash({ ...base, kind: "todo" })).not.toBe(original);
   });
 
+  it("normalizes due_at Z vs +00:00 so create/read hashes match", () => {
+    const withZ = computeContentHash({
+      ...base,
+      due_at: "2026-06-15T12:00:00.000Z",
+    });
+    const withOffset = computeContentHash({
+      ...base,
+      due_at: "2026-06-15T12:00:00.000+00:00",
+    });
+    expect(withZ).toBe(withOffset);
+  });
+
   it("marks prior approval invalid when content changes", () => {
     const original = computeContentHash(base);
     const changed = computeContentHash({

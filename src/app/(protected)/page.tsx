@@ -1,3 +1,6 @@
+/** 受保护布局已动态；显式声明避免静态壳缺 nonce。 */
+export const instant = false;
+
 export default function HomePage() {
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center gap-3 px-6 py-16">

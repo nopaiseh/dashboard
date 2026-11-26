@@ -59,11 +59,46 @@ describe("agent PATCH API / concurrency", () => {
     }
   });
 
+  it("keeps hash stable when DB returns due_at as +00:00", () => {
+    const created = item({
+      due_at: "2026-06-15T12:00:00.000Z",
+      status: "approved",
+    });
+    // 模拟 PostgREST 读回 timestamptz
+    const fromDb = item({
+      ...created,
+      due_at: "2026-06-15T12:00:00.000+00:00",
+      content_hash: created.content_hash,
+      status: "approved",
+    });
+    const planned = planAgentPatch(fromDb.agent_id, fromDb, {
+      project: "same-content",
+    });
+    expect(planned.ok).toBe(true);
+    if (planned.ok) {
+      expect(planned.plan.contentReopened).toBe(false);
+      expect(planned.plan.setStatus).toBe(false);
+      expect(planned.plan.newContentHash).toBe(created.content_hash);
+    }
+  });
+
+  it("rejects content change combined with withdrawn", () => {
+    const planned = planAgentPatch(
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      item({ status: "open", kind: "approval" }),
+      { title: "new", status: "withdrawn" },
+    );
+    expect(planned.ok).toBe(false);
+    if (!planned.ok) {
+      expect(planned.status).toBe(400);
+    }
+  });
+
   it("returns 409 when RPC reports concurrent status conflict", async () => {
     const existing = item({ status: "open" });
     const rpc = vi.fn().mockResolvedValue({
       data: null,
-      error: { message: "conflict: status or content changed" },
+      error: { code: "XJ409", message: "conflict: status or content changed" },
     });
 
     vi.doMock("@/lib/agent-service", () => ({
