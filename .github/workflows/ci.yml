@@ -53,7 +53,10 @@ jobs:
           PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
           PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
           PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
-          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261126000001_init_schema.sql
+          for f in supabase/migrations/*.sql; do
+            echo "Applying $f"
+            PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
 
       - name: Lint
         run: npm run lint

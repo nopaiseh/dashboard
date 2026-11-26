@@ -1,13 +1,21 @@
 /**
- * 登录锁定逻辑集中于此，便于日后改为「按 IP+凭据锁定、全站只报警」。
- * 当前策略（暂不改）：IP 与全站各自计数，连续失败 5 次锁 15 分钟。
+ * 登录锁定逻辑集中于此。
+ * 策略：按 IP 与按凭据（credential id）分别计数，各自失败达阈值后锁 15 分钟；
+ * 全站（global）失败计数只告警，不参与锁定决策。
  */
 
 export const LOGIN_MAX_FAILURES = 5;
 export const LOGIN_LOCK_MINUTES = 15;
 
+export type LoginAttemptScope =
+  | "ip"
+  | "credential"
+  | "global"
+  | "auth_options"
+  | "register_options";
+
 export interface LoginAttemptState {
-  scope: "ip" | "global" | "auth_options";
+  scope: LoginAttemptScope;
   scope_key: string;
   failed_count: number;
   locked_until: string | null;
@@ -25,7 +33,7 @@ export function isLocked(
 
 export function nextFailureState(
   previous: LoginAttemptState | null | undefined,
-  scope: "ip" | "global",
+  scope: "ip" | "credential" | "global",
   scopeKey: string,
   now: Date = new Date(),
 ): LoginAttemptState {
@@ -58,7 +66,7 @@ export function nextFailureState(
 }
 
 export function clearedAttemptState(
-  scope: "ip" | "global",
+  scope: "ip" | "credential" | "global",
   scopeKey: string,
 ): LoginAttemptState {
   return {
@@ -77,15 +85,15 @@ export function anyLocked(
 }
 
 /**
- * 集中入口：根据 IP / 全站当前状态判断是否应拒绝本次登录尝试。
- * 日后改策略只动此函数（及 nextFailureState）。
+ * 集中入口：根据 IP / 凭据当前状态判断是否应拒绝本次登录尝试。
+ * 全站计数不参与锁定（只告警）。
  */
 export function evaluateLoginLockout(
   ipAttempt: LoginAttemptState | null | undefined,
-  globalAttempt: LoginAttemptState | null | undefined,
+  credentialAttempt: LoginAttemptState | null | undefined,
   now: Date = new Date(),
 ): { locked: boolean; reason?: string } {
-  if (anyLocked([ipAttempt, globalAttempt], now)) {
+  if (anyLocked([ipAttempt, credentialAttempt], now)) {
     return { locked: true, reason: "locked: too many failed login attempts" };
   }
   return { locked: false };

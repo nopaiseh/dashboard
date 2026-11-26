@@ -102,22 +102,66 @@ BEGIN
 END;
 $$;
 
--- 3) 登录失败原子计数：5 次后锁定
+-- 3) 登录失败原子计数：IP 5 次后锁定；credential 独立计数；global 只告警不锁
 DELETE FROM public.login_attempts;
 DO $$
 DECLARE
   i int;
   v jsonb;
+  v_cred_locked boolean;
+  v_global_alert_count int := 0;
 BEGIN
+  -- IP 单独：前 4 次不锁
   FOR i IN 1..4 LOOP
-    v := public.record_login_failure_atomic('1.2.3.4', 5, 15);
+    v := public.record_login_failure_atomic('1.2.3.4', NULL, 5, 15);
     IF (v->>'locked')::boolean THEN
-      RAISE EXCEPTION 'should not lock before 5th failure';
+      RAISE EXCEPTION 'should not lock before 5th IP failure';
+    END IF;
+    IF COALESCE((v->>'global_alert')::boolean, false) THEN
+      v_global_alert_count := v_global_alert_count + 1;
     END IF;
   END LOOP;
-  v := public.record_login_failure_atomic('1.2.3.4', 5, 15);
+
+  v := public.record_login_failure_atomic('1.2.3.4', NULL, 5, 15);
   IF NOT (v->>'locked')::boolean THEN
-    RAISE EXCEPTION 'should lock on 5th failure';
+    RAISE EXCEPTION 'should lock on 5th IP failure';
+  END IF;
+  IF COALESCE((v->>'global_alert')::boolean, false) THEN
+    v_global_alert_count := v_global_alert_count + 1;
+  END IF;
+
+  -- 第 5 次 global 应触发告警（与 IP 锁定同拍）
+  IF v_global_alert_count < 1 THEN
+    RAISE EXCEPTION 'expected at least one global_alert after 5 failures';
+  END IF;
+
+  -- credential 独立：另一 IP + 凭据，凭据单独锁
+  DELETE FROM public.login_attempts WHERE scope IN ('ip', 'credential', 'global');
+  FOR i IN 1..4 LOOP
+    v := public.record_login_failure_atomic('9.9.9.9', 'cred-smoke', 5, 15);
+    IF (v->>'locked')::boolean THEN
+      RAISE EXCEPTION 'should not lock before 5th credential failure';
+    END IF;
+  END LOOP;
+  v := public.record_login_failure_atomic('9.9.9.9', 'cred-smoke', 5, 15);
+  IF NOT (v->>'locked')::boolean THEN
+    RAISE EXCEPTION 'should lock on 5th credential/IP failure';
+  END IF;
+
+  SELECT (locked_until IS NOT NULL AND locked_until > now())
+  INTO v_cred_locked
+  FROM public.login_attempts
+  WHERE scope = 'credential' AND scope_key = 'cred-smoke';
+  IF NOT COALESCE(v_cred_locked, false) THEN
+    RAISE EXCEPTION 'credential scope should be locked';
+  END IF;
+
+  -- global 永不写 locked_until
+  IF EXISTS (
+    SELECT 1 FROM public.login_attempts
+    WHERE scope = 'global' AND locked_until IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'global scope must not set locked_until';
   END IF;
 END;
 $$;
