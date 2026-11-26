@@ -104,6 +104,9 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const typed = decryptItemSensitiveFields(item as ItemRow);
+  if (typed.decrypt_failed) {
+    return jsonError(422, "item fields could not be decrypted");
+  }
   const allowed = assertDecisionAllowed(
     typed.kind,
     parsed.data.action,

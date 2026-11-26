@@ -5,7 +5,10 @@ import {
   authenticateAgentToken,
   extractBearerToken,
 } from "@/lib/agent-auth";
-import { computeContentHash } from "@/lib/content-hash";
+import {
+  computeContentHash,
+  computeLegacyContentHash,
+} from "@/lib/content-hash";
 import { hashAgentToken } from "@/lib/crypto";
 import { planAgentPatch } from "@/lib/items-logic";
 import type { ItemRow } from "@/lib/types";
@@ -126,6 +129,39 @@ describe("agent authorization rules", () => {
     if (result.ok) {
       expect(result.plan.setStatus).toBe(false);
       expect(result.plan.newStatus).toBeNull();
+    }
+  });
+
+  it("preserves stored content_hash when plaintext content is unchanged", () => {
+    const legacyHash = computeLegacyContentHash({
+      kind: "approval",
+      title: "title",
+      body: "body",
+      options: [{ key: "a", label: "A" }],
+      source_url: null,
+      due_at: null,
+    });
+    const item = sampleItem({
+      status: "approved",
+      content_hash: legacyHash,
+    });
+    const result = planAgentPatch(item.agent_id, item, {
+      status: "done",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.plan.contentReopened).toBe(false);
+      expect(result.plan.newContentHash).toBe(legacyHash);
+      expect(result.plan.newContentHash).not.toBe(
+        computeContentHash({
+          kind: item.kind,
+          title: item.title,
+          body: item.body,
+          options: item.options,
+          source_url: item.source_url,
+          due_at: item.due_at,
+        }),
+      );
     }
   });
 

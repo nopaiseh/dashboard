@@ -1,25 +1,30 @@
 /**
- * One-off backfill: encrypt items.title / body / source_url with AAD, and
- * recompute content_hash as HMAC-SHA256 (CONTENT_HASH_KEY). Also rewrites
- * matching item_events.content_hash values.
+ * One-off backfill for item field encryption / content_hash HMAC.
+ *
+ * Exactly one mode required:
+ *   --encrypt-only   encrypt title/body/source_url with AAD (leave content_hash)
+ *   --rehash-only    recompute items.content_hash as HMAC
+ *                    (also attempts item_events.content_hash rewrite — 待定，
+ *                     append-only 触发器可能阻止；等阁主拍板)
  *
  * Default is --dry-run (no writes). Does NOT run against production from CI.
  *
  * Usage:
- *   npx tsx scripts/encrypt-existing-fields.ts              # dry-run
- *   npx tsx scripts/encrypt-existing-fields.ts --execute    # write
- *   npx tsx scripts/encrypt-existing-fields.ts --execute --batch-size=50
- *
- * Requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, field encryption keyring,
- * and CONTENT_HASH_KEY. Idempotent + CAS: skips already-migrated rows; updates
- * only when columns still equal the values read (compare-and-set).
+ *   npx tsx scripts/encrypt-existing-fields.ts --encrypt-only
+ *   npx tsx scripts/encrypt-existing-fields.ts --rehash-only
+ *   npx tsx scripts/encrypt-existing-fields.ts --encrypt-only --execute
+ *   npx tsx scripts/encrypt-existing-fields.ts --rehash-only --execute --batch-size=50
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { loadContentHashKey, resetContentHashKeyCache } from "../src/lib/content-hash";
+import {
+  loadContentHashKey,
+  resetContentHashKeyCache,
+} from "../src/lib/content-hash";
 import {
   planItemBackfill,
   type BackfillItemRow,
+  type BackfillMode,
 } from "../src/lib/crypto/backfill-plan";
 import {
   encryptField,
@@ -29,9 +34,13 @@ import {
 function parseArgs(argv: string[]) {
   let dryRun = true;
   let batchSize = 100;
+  let encryptOnly = false;
+  let rehashOnly = false;
   for (const arg of argv) {
     if (arg === "--execute") dryRun = false;
     if (arg === "--dry-run") dryRun = true;
+    if (arg === "--encrypt-only") encryptOnly = true;
+    if (arg === "--rehash-only") rehashOnly = true;
     const batch = /^--batch-size=(\d+)$/.exec(arg);
     if (batch) {
       batchSize = Number.parseInt(batch[1], 10);
@@ -40,7 +49,11 @@ function parseArgs(argv: string[]) {
       }
     }
   }
-  return { dryRun, batchSize };
+  if (encryptOnly === rehashOnly) {
+    throw new Error("specify exactly one of --encrypt-only or --rehash-only");
+  }
+  const mode: BackfillMode = encryptOnly ? "encrypt" : "rehash";
+  return { dryRun, batchSize, mode };
 }
 
 async function casUpdateItem(
@@ -70,22 +83,32 @@ async function casUpdateItem(
     return "cas_skipped";
   }
 
-  // Rewrite event hashes that still carry the previous content_hash.
-  const { error: eventError } = await supabase
-    .from("item_events")
-    .update({ content_hash: plan.patch.content_hash })
-    .eq("item_id", row.id)
-    .eq("content_hash", plan.previousContentHash);
+  // --rehash-only: attempt item_events rewrite (待定：表有只追加触发器，可能失败)
+  if (
+    plan.mode === "rehash" &&
+    plan.previousContentHash &&
+    plan.patch.content_hash
+  ) {
+    const { error: eventError } = await supabase
+      .from("item_events")
+      .update({ content_hash: plan.patch.content_hash })
+      .eq("item_id", row.id)
+      .eq("content_hash", plan.previousContentHash);
 
-  if (eventError) {
-    throw new Error(`failed to rewrite item_events hashes for id=${row.id}`);
+    if (eventError) {
+      console.error(
+        `[encrypt-existing-fields] item_events hash rewrite failed for id=${row.id} (pending owner decision on append-only trigger)`,
+        { code: (eventError as { code?: string }).code ?? "unknown" },
+      );
+      // Do not abort items.content_hash migration; events rewrite is 待定.
+    }
   }
 
   return "updated";
 }
 
 async function main(): Promise<void> {
-  const { dryRun, batchSize } = parseArgs(process.argv.slice(2));
+  const { dryRun, batchSize, mode } = parseArgs(process.argv.slice(2));
   resetFieldKeyringCache();
   resetContentHashKeyCache();
 
@@ -94,15 +117,25 @@ async function main(): Promise<void> {
   if (!url || !key) {
     throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
   }
-  if (!loadContentHashKey()) {
-    throw new Error("CONTENT_HASH_KEY is required");
-  }
 
-  // Touch keyring early so missing keys fail before any DB work.
-  encryptField("__probe__", {
-    itemId: "00000000-0000-4000-8000-000000000000",
-    column: "title",
-  });
+  if (mode === "rehash" && !loadContentHashKey()) {
+    throw new Error("CONTENT_HASH_KEY is required for --rehash-only");
+  }
+  if (mode === "encrypt") {
+    encryptField("__probe__", {
+      itemId: "00000000-0000-4000-8000-000000000000",
+      column: "title",
+    });
+  } else {
+    // rehash still decrypts fields → need encryption keyring too
+    encryptField("__probe__", {
+      itemId: "00000000-0000-4000-8000-000000000000",
+      column: "title",
+    });
+    if (!loadContentHashKey()) {
+      throw new Error("CONTENT_HASH_KEY is required for --rehash-only");
+    }
+  }
 
   const supabase = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -116,7 +149,7 @@ async function main(): Promise<void> {
   let skippedCas = 0;
 
   console.log(
-    `[encrypt-existing-fields] mode=${dryRun ? "dry-run" : "execute"} batchSize=${batchSize}`,
+    `[encrypt-existing-fields] mode=${mode} dryRun=${dryRun} batchSize=${batchSize}`,
   );
 
   for (;;) {
@@ -135,7 +168,7 @@ async function main(): Promise<void> {
 
     for (const row of rows) {
       scanned += 1;
-      const plan = planItemBackfill(row);
+      const plan = planItemBackfill(row, mode);
       if (plan.action === "skip") {
         skippedMigrated += 1;
         continue;
@@ -143,7 +176,7 @@ async function main(): Promise<void> {
 
       wouldUpdate += 1;
       if (dryRun) {
-        console.log(`[dry-run] would migrate item id=${row.id}`);
+        console.log(`[dry-run] would ${mode} item id=${row.id}`);
         continue;
       }
 
@@ -154,7 +187,7 @@ async function main(): Promise<void> {
         continue;
       }
       updated += 1;
-      console.log(`[execute] migrated item id=${row.id}`);
+      console.log(`[execute] ${mode} item id=${row.id}`);
     }
 
     offset += rows.length;
@@ -162,7 +195,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `[encrypt-existing-fields] done scanned=${scanned} skippedMigrated=${skippedMigrated} skippedCas=${skippedCas} wouldUpdate=${wouldUpdate} updated=${updated}`,
+    `[encrypt-existing-fields] done mode=${mode} scanned=${scanned} skippedMigrated=${skippedMigrated} skippedCas=${skippedCas} wouldUpdate=${wouldUpdate} updated=${updated}`,
   );
 }
 

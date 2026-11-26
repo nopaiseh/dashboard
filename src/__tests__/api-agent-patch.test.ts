@@ -95,6 +95,69 @@ describe("agent PATCH API / concurrency", () => {
     }
   });
 
+  it("returns 422 when item sensitive fields cannot be decrypted", async () => {
+    const existing = item({ status: "open" });
+    const otherId = "22222222-2222-4222-8222-222222222222";
+    const { encryptItemSensitiveFields } = await import("@/lib/crypto/fields");
+    const sealed = encryptItemSensitiveFields({
+      id: otherId,
+      title: existing.title,
+      body: existing.body,
+      source_url: existing.source_url,
+    });
+    // Ciphertext bound to otherId → decrypt for existing.id fails.
+    const broken = {
+      ...existing,
+      title: sealed.title,
+      body: sealed.body,
+      source_url: sealed.source_url,
+    };
+
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: { agentId: existing.agent_id, tokenHash: "h" },
+      }),
+    }));
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: broken, error: null }),
+            }),
+          }),
+        }),
+        rpc: vi.fn(),
+      }),
+    }));
+
+    const { PATCH } = await import("@/app/api/agent/items/[id]/route");
+    const res = await PATCH(
+      new Request(
+        "http://localhost/api/agent/items/11111111-1111-4111-8111-111111111111",
+        {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer tok",
+          },
+          body: JSON.stringify({ project: "x" }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: "11111111-1111-4111-8111-111111111111",
+        }),
+      },
+    );
+
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/could not be decrypted/i);
+  });
+
   it("returns 409 when RPC reports concurrent status conflict", async () => {
     const existing = item({ status: "open" });
     const rpc = vi.fn().mockResolvedValue({

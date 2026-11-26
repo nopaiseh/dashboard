@@ -178,23 +178,21 @@ export function planAgentPatch(
     patch.due_at !== undefined ? patch.due_at : item.due_at,
   );
 
-  const reopened = contentChanged(item, {
+  const nextHashFields = {
     kind,
     title,
     body,
     options,
     source_url,
     due_at,
-  });
+  };
+  const reopened = contentChanged(item, nextHashFields);
 
-  const newContentHash = computeContentHash({
-    kind,
-    title,
-    body,
-    options,
-    source_url,
-    due_at,
-  });
+  // 明文内容未变时保留库里原 hash（含过渡期旧 SHA），避免仅改状态就写新 HMAC
+  // 导致历史批准事件被误判作废。
+  const newContentHash = reopened
+    ? computeContentHash(nextHashFields)
+    : item.content_hash;
 
   let setStatus = false;
   let newStatus: ItemStatus | null = null;

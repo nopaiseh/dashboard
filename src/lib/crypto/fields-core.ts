@@ -22,9 +22,11 @@ import {
  *   2) FIELD_ENCRYPTION_KEY_V1 / _V2 / … + FIELD_ENCRYPTION_KEY_CURRENT=1|2|…
  *   3) FIELD_ENCRYPTION_KEYS='{"1":"<b64>","2":"<b64>"}' + FIELD_ENCRYPTION_KEY_CURRENT=2
  *
- * FIELD_ENCRYPTION_STRICT=1 disables legacy plaintext fallback and no-AAD decrypt.
+ * FIELD_ENCRYPTION_STRICT=1 disables legacy plaintext fallback.
  * Never log keys or plaintext. Production fails closed if no key is configured
  * (except `next build`, which uses the same placeholder pattern as other secrets).
+ * Config errors (missing/wrong keys) always throw; only per-row ciphertext
+ * failure is degraded on read paths (Vercel structured console.error).
  */
 
 const ALGORITHM = "aes-256-gcm";
@@ -43,6 +45,14 @@ export class FieldEncryptionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "FieldEncryptionError";
+  }
+}
+
+/** Missing / invalid keyring — must not be swallowed by per-row degrade. */
+export class FieldEncryptionConfigError extends FieldEncryptionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "FieldEncryptionConfigError";
   }
 }
 
@@ -85,18 +95,20 @@ export function isFieldEncryptionStrict(): boolean {
 export function parseKeyBase64(raw: string, label: string): Buffer {
   const normalized = raw.trim().replace(/\s+/g, "");
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
-    throw new FieldEncryptionError(`${label} is not valid base64`);
+    throw new FieldEncryptionConfigError(`${label} is not valid base64`);
   }
   const buf = Buffer.from(normalized, "base64");
   if (buf.length !== KEY_BYTES) {
-    throw new FieldEncryptionError(
+    throw new FieldEncryptionConfigError(
       `${label} must decode to exactly ${KEY_BYTES} bytes (got ${buf.length})`,
     );
   }
   // Round-trip: reject inputs Node would accept with ignored characters.
   const reencoded = buf.toString("base64");
   if (reencoded !== normalized) {
-    throw new FieldEncryptionError(`${label} is not strict base64 (round-trip mismatch)`);
+    throw new FieldEncryptionConfigError(
+      `${label} is not strict base64 (round-trip mismatch)`,
+    );
   }
   return buf;
 }
@@ -106,7 +118,7 @@ function parseCurrentVersion(raw: string | undefined, fallback: number): number 
   const normalized = raw.startsWith("v") ? raw.slice(1) : raw;
   const n = Number.parseInt(normalized, 10);
   if (!Number.isInteger(n) || n < 1) {
-    throw new FieldEncryptionError(
+    throw new FieldEncryptionConfigError(
       "FIELD_ENCRYPTION_KEY_CURRENT must be a positive integer (e.g. 1 or v1)",
     );
   }
@@ -131,10 +143,10 @@ function collectJsonKeys(): Map<number, Buffer> {
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    throw new FieldEncryptionError("FIELD_ENCRYPTION_KEYS must be valid JSON");
+    throw new FieldEncryptionConfigError("FIELD_ENCRYPTION_KEYS must be valid JSON");
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new FieldEncryptionError(
+    throw new FieldEncryptionConfigError(
       "FIELD_ENCRYPTION_KEYS must be a JSON object of version → base64 key",
     );
   }
@@ -142,12 +154,12 @@ function collectJsonKeys(): Map<number, Buffer> {
   for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
     const version = Number.parseInt(k.startsWith("v") ? k.slice(1) : k, 10);
     if (!Number.isInteger(version) || version < 1) {
-      throw new FieldEncryptionError(
+      throw new FieldEncryptionConfigError(
         `FIELD_ENCRYPTION_KEYS has invalid version key: ${k}`,
       );
     }
     if (typeof v !== "string") {
-      throw new FieldEncryptionError(
+      throw new FieldEncryptionConfigError(
         `FIELD_ENCRYPTION_KEYS[${k}] must be a base64 string`,
       );
     }
@@ -174,7 +186,7 @@ export function loadFieldKeyring(): Keyring | null {
     const fromSingle = parseKeyBase64(single, "FIELD_ENCRYPTION_KEY");
     const existingV1 = keys.get(1);
     if (existingV1 && !existingV1.equals(fromSingle)) {
-      throw new FieldEncryptionError(
+      throw new FieldEncryptionConfigError(
         "FIELD_ENCRYPTION_KEY and FIELD_ENCRYPTION_KEY_V1 are both set but differ",
       );
     }
@@ -183,7 +195,7 @@ export function loadFieldKeyring(): Keyring | null {
 
   if (keys.size === 0) {
     if (isProductionRuntime()) {
-      throw new FieldEncryptionError(
+      throw new FieldEncryptionConfigError(
         "FIELD_ENCRYPTION_KEY (or FIELD_ENCRYPTION_KEY_V* / FIELD_ENCRYPTION_KEYS) is required in production",
       );
     }
@@ -201,7 +213,7 @@ export function loadFieldKeyring(): Keyring | null {
     keys.has(1) ? 1 : Math.min(...keys.keys()),
   );
   if (!keys.has(currentVersion)) {
-    throw new FieldEncryptionError(
+    throw new FieldEncryptionConfigError(
       `FIELD_ENCRYPTION_KEY_CURRENT=${currentVersion} has no matching key in the keyring`,
     );
   }
@@ -218,7 +230,7 @@ export function resetFieldKeyringCache(): void {
 function requireKeyring(): Keyring {
   const ring = loadFieldKeyring();
   if (!ring) {
-    throw new FieldEncryptionError(
+    throw new FieldEncryptionConfigError(
       "FIELD_ENCRYPTION_KEY is not configured; cannot encrypt or decrypt fields",
     );
   }
@@ -270,7 +282,9 @@ export function encryptField(plaintext: string, ctx: FieldContext): string {
   const version = ring.currentVersion;
   const key = ring.keys.get(version);
   if (!key) {
-    throw new FieldEncryptionError("current encryption key missing from keyring");
+    throw new FieldEncryptionConfigError(
+      "current encryption key missing from keyring",
+    );
   }
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, iv);
@@ -287,26 +301,9 @@ export function encryptField(plaintext: string, ctx: FieldContext): string {
   return `v${version}:${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`;
 }
 
-function decipherWith(
-  key: Buffer,
-  envelope: ParsedEnvelope,
-  aad: string | null,
-): string {
-  const decipher = createDecipheriv(ALGORITHM, key, envelope.iv);
-  if (aad !== null) {
-    decipher.setAAD(Buffer.from(aad, "utf8"));
-  }
-  decipher.setAuthTag(envelope.tag);
-  return Buffer.concat([
-    decipher.update(envelope.ciphertext),
-    decipher.final(),
-  ]).toString("utf8");
-}
-
 /**
  * Decrypt a stored field.
- * - Valid envelope → AES-GCM with AAD; if that fails and not strict, retry without AAD
- *   (pre-AAD ciphertext from an earlier revision).
+ * - Valid envelope → AES-GCM with AAD (required).
  * - Non-envelope → legacy plaintext passthrough unless FIELD_ENCRYPTION_STRICT.
  */
 export function decryptField(stored: string, ctx: FieldContext): string {
@@ -323,22 +320,21 @@ export function decryptField(stored: string, ctx: FieldContext): string {
   const ring = requireKeyring();
   const key = ring.keys.get(envelope.version);
   if (!key) {
-    throw new FieldEncryptionError(
+    throw new FieldEncryptionConfigError(
       `no decryption key for envelope version v${envelope.version}`,
     );
   }
 
   const aad = buildFieldAad(ctx.itemId, ctx.column, envelope.version);
   try {
-    return decipherWith(key, envelope, aad);
+    const decipher = createDecipheriv(ALGORITHM, key, envelope.iv);
+    decipher.setAAD(Buffer.from(aad, "utf8"));
+    decipher.setAuthTag(envelope.tag);
+    return Buffer.concat([
+      decipher.update(envelope.ciphertext),
+      decipher.final(),
+    ]).toString("utf8");
   } catch {
-    if (!isFieldEncryptionStrict()) {
-      try {
-        return decipherWith(key, envelope, null);
-      } catch {
-        // fall through
-      }
-    }
     throw new FieldEncryptionError(
       "field decryption failed (tampered, wrong key, or AAD mismatch)",
     );
@@ -389,50 +385,31 @@ type DecryptFailureReporter = (info: {
 
 let decryptFailureReporter: DecryptFailureReporter | null = null;
 
-/** Inject reporter (tests / Sentry wiring). Never pass plaintext or keys. */
+/** Inject reporter for tests. Never pass plaintext or keys. */
 export function setFieldDecryptFailureReporter(
   reporter: DecryptFailureReporter | null,
 ): void {
   decryptFailureReporter = reporter;
 }
 
+/** Structured Vercel/runtime log — no plaintext, keys, or ciphertext. */
 export function reportFieldDecryptFailure(info: {
   itemId: string;
   column: SensitiveColumn | "item";
   code: string;
 }): void {
-  // Structured log only — no plaintext, no keys, no ciphertext.
   console.error("[field-crypto] decrypt failed", {
     itemId: info.itemId,
     column: info.column,
     code: info.code,
   });
   decryptFailureReporter?.(info);
-  const g = globalThis as {
-    Sentry?: {
-      captureMessage?: (
-        message: string,
-        context?: { level?: string; extra?: Record<string, unknown> },
-      ) => void;
-    };
-  };
-  try {
-    g.Sentry?.captureMessage?.("item_field_decrypt_failed", {
-      level: "error",
-      extra: {
-        itemId: info.itemId,
-        column: info.column,
-        code: info.code,
-      },
-    });
-  } catch {
-    // Never let observability break reads.
-  }
 }
 
 /**
  * Decrypt title / body / source_url after DB read.
- * On failure: degrade this row only (placeholder + decrypt_failed), report, do not throw.
+ * Per-row ciphertext failure → placeholder + decrypt_failed (reads only).
+ * Config errors (missing/invalid keys) always rethrow.
  */
 export function decryptItemSensitiveFields<T extends SensitiveItemFields>(
   row: T,
@@ -447,7 +424,10 @@ export function decryptItemSensitiveFields<T extends SensitiveItemFields>(
         column: "source_url",
       }),
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof FieldEncryptionConfigError) {
+      throw err;
+    }
     reportFieldDecryptFailure({
       itemId: row.id,
       column: "item",

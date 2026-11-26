@@ -14,6 +14,7 @@ export {
   encryptField,
   encryptItemSensitiveFields,
   encryptNullableField,
+  FieldEncryptionConfigError,
   FieldEncryptionError,
   isEncryptedEnvelope,
   isFieldEncryptionStrict,

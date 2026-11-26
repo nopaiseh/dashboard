@@ -77,18 +77,20 @@
 - **信封格式**：`v{N}:{iv_b64}:{tag_b64}:{ciphertext_b64}`（每值随机 12 字节 IV；GCM tag；密文段可为**空**——空字符串 `body`）。
 - **AAD**：`items:{id}:{column}:v{N}`，防止跨行/跨列调换密文。新建事项时在应用层 `randomUUID()` 预生成 `id` 再加密后插入。
 - **content_hash**：`HMAC-SHA256(CONTENT_HASH_KEY, JSON.stringify([kind, title, body, options, source_url, due_at]))`（密钥与字段加密分离）。过渡期 `matchesStoredContentHash` 仍接受旧版纯 SHA-256，避免 PATCH/决定误判；`FIELD_ENCRYPTION_STRICT=1` 后只接受 HMAC。
-- **遗留明文**：非严格模式下无信封则原样返回；回填 `scripts/encrypt-existing-fields.ts`（默认 `--dry-run`）加密字段、重算 HMAC，并改写对应 `item_events.content_hash`；CAS（按读到的旧值条件更新）；幂等跳过已迁移行。**切勿未审阅对生产执行。**
-- **密钥环**：`FIELD_ENCRYPTION_KEY` / `FIELD_ENCRYPTION_KEY_Vn` / `FIELD_ENCRYPTION_KEYS` + `FIELD_ENCRYPTION_KEY_CURRENT`；`KEY` 与 `KEY_V1` 同时设置且值不同 → 报错。密钥须严格 base64、恰好 32 字节。
-- **单行解密失败**：该行占位（`[无法解密]` + `decrypt_failed`）并上报 Sentry（若存在）/日志，**不含**明文或密钥；不拖垮整页。
+- **遗留明文**：非严格模式下无信封则原样返回。回填 `scripts/encrypt-existing-fields.ts`（默认 `--dry-run`）须指定 `--encrypt-only` 或 `--rehash-only`；CAS；幂等。**切勿未审阅对生产执行。**
+- **密钥环**：`FIELD_ENCRYPTION_KEY` / `FIELD_ENCRYPTION_KEY_Vn` / `FIELD_ENCRYPTION_KEYS` + `FIELD_ENCRYPTION_KEY_CURRENT`；`KEY` 与 `KEY_V1` 同时设置且值不同 → 报错。密钥须严格 base64、恰好 32 字节。配置错误一律抛出，不吞掉。
+- **单行解密失败（读路径）**：该行占位（`[无法解密]` + `decrypt_failed`）+ Vercel 结构化 `console.error`（无明文/密钥）；不拖垮整页。PATCH / 决定接口对 `decrypt_failed` 返回 **422**。
+- **PATCH**：明文内容未变时保留原 `content_hash`（不重写 HMAC），避免仅改状态导致旧批准失效。
 - **生产缺密钥**：`FIELD_ENCRYPTION_KEY*` 与 `CONTENT_HASH_KEY` 运行时 fail closed；`next build` 允许占位。
 - **无 schema 迁移**：列类型仍为 `text`；合并**不会**改库结构。
+- **item_events content_hash 重算**：`--rehash-only` 会尝试改写事件表，但表有只追加触发器——**待定，等阁主拍板**（本 PR 不加放开触发器的迁移）。
 
 ### 部署顺序（合并后由本人操作）
 
 1. 在 Vercel 配置 `FIELD_ENCRYPTION_KEY`（或密钥环）与 `CONTENT_HASH_KEY`（**本 PR 不改 Vercel**）
 2. 合并本 PR
-3. 本地/受控环境对目标库跑回填 `--dry-run`，审阅输出
-4. 批准后 `--execute` 回填（CAS + 事件 hash）
+3. `--encrypt-only --dry-run` → 审阅 → `--execute`
+4. `--rehash-only --dry-run` → 审阅 → `--execute`（事件表改写待定）
 5. 确认无遗留明文后设置 `FIELD_ENCRYPTION_STRICT=1`
 
 ## 环境变量

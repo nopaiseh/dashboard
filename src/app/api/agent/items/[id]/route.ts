@@ -58,9 +58,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(404, "item not found");
   }
 
+  const decrypted = decryptItemSensitiveFields(existing as ItemRow);
+  if (decrypted.decrypt_failed) {
+    return jsonError(422, "item fields could not be decrypted");
+  }
+
   const planned = planAgentPatch(
     auth.agent.agentId,
-    decryptItemSensitiveFields(existing as ItemRow),
+    decrypted,
     parsed.data,
   );
   if (!planned.ok) {

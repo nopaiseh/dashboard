@@ -313,7 +313,15 @@ describe("content_hash HMAC", () => {
 });
 
 describe("backfill plan idempotency", () => {
-  it("migrates plaintext then skips on second plan", () => {
+  it("encrypt-only then skips; rehash-only then skips", () => {
+    const legacyHash = computeLegacyContentHash({
+      kind: "todo",
+      title: "Hello",
+      body: "",
+      options: [],
+      source_url: null,
+      due_at: null,
+    });
     const row = {
       id: ITEM_A,
       title: "Hello",
@@ -322,23 +330,29 @@ describe("backfill plan idempotency", () => {
       kind: "todo",
       options: [],
       due_at: null as string | null,
-      content_hash: computeLegacyContentHash({
-        kind: "todo",
-        title: "Hello",
-        body: "",
-        options: [],
-        source_url: null,
-        due_at: null,
-      }),
+      content_hash: legacyHash,
     };
 
-    const first = planItemBackfill(row);
-    expect(first.action).toBe("update");
-    if (first.action !== "update") return;
+    const enc1 = planItemBackfill(row, "encrypt");
+    expect(enc1.action).toBe("update");
+    if (enc1.action !== "update") return;
+    expect(enc1.mode).toBe("encrypt");
+    expect(isEncryptedEnvelope(enc1.patch.title!)).toBe(true);
+    expect(isEncryptedEnvelope(enc1.patch.body!)).toBe(true);
+    expect(enc1.patch.content_hash).toBeUndefined();
 
-    expect(isEncryptedEnvelope(first.patch.title)).toBe(true);
-    expect(isEncryptedEnvelope(first.patch.body)).toBe(true);
-    expect(first.patch.content_hash).toBe(
+    const afterEncrypt = {
+      ...row,
+      title: enc1.patch.title!,
+      body: enc1.patch.body!,
+      source_url: enc1.patch.source_url ?? null,
+    };
+    expect(planItemBackfill(afterEncrypt, "encrypt").action).toBe("skip");
+
+    const rehash1 = planItemBackfill(afterEncrypt, "rehash");
+    expect(rehash1.action).toBe("update");
+    if (rehash1.action !== "update") return;
+    expect(rehash1.patch.content_hash).toBe(
       computeContentHash({
         kind: "todo",
         title: "Hello",
@@ -349,17 +363,24 @@ describe("backfill plan idempotency", () => {
       }),
     );
 
-    const migrated = {
-      ...row,
-      title: first.patch.title,
-      body: first.patch.body,
-      source_url: first.patch.source_url,
-      content_hash: first.patch.content_hash,
+    const afterRehash = {
+      ...afterEncrypt,
+      content_hash: rehash1.patch.content_hash!,
     };
-    const second = planItemBackfill(migrated);
-    expect(second).toEqual({ action: "skip", reason: "already_migrated" });
+    expect(planItemBackfill(afterRehash, "rehash").action).toBe("skip");
+    expect(planItemBackfill(afterRehash, "encrypt").action).toBe("skip");
+  });
 
-    // Third pass still skip (idempotent).
-    expect(planItemBackfill(migrated).action).toBe("skip");
+  it("config errors are not swallowed by per-row degrade", () => {
+    const sealed = encryptItemSensitiveFields({
+      id: ITEM_A,
+      title: "secret",
+      body: "",
+      source_url: null,
+    });
+    setEnv({ NODE_ENV: "test" }); // clear encryption key
+    expect(() => decryptItemSensitiveFields(sealed)).toThrow(
+      /not configured|FIELD_ENCRYPTION_KEY/,
+    );
   });
 });
