@@ -58,4 +58,17 @@ describe("hasWebAuthnCredential", () => {
     );
     expect(await hasWebAuthnCredential()).toBe(true);
   });
+
+  it("fail-closes to true when getServiceClient throws (missing env)", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => {
+        throw new Error("Missing required environment variable: SUPABASE_URL");
+      },
+    }));
+
+    const { hasWebAuthnCredential } = await import(
+      "@/lib/webauthn-credentials"
+    );
+    expect(await hasWebAuthnCredential()).toBe(true);
+  });
 });

@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useId, useState, useTransition, type FormEvent } from "react";
-import { PasskeyError, registerWithPasskey } from "@/lib/ui/passkey-client";
+import { registerWithPasskey } from "@/lib/ui/passkey-client";
+
+/** 仅用户取消（NotAllowedError）显示「已取消」；其它失败用中性文案，不泄漏细节。 */
+export function setupRegistrationErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.name === "NotAllowedError") {
+    return "已取消";
+  }
+  return "注册未完成，请确认密码管理器支持通行密钥后重试";
+}
 
 export function SetupForm({ siteName }: { siteName: string }) {
   const tokenId = useId();
@@ -24,15 +32,7 @@ export function SetupForm({ siteName }: { siteName: string }) {
         await registerWithPasskey(trimmed);
         setDone(true);
       } catch (err) {
-        if (err instanceof Error && err.name === "NotAllowedError") {
-          setError("已取消通行密钥登记");
-          return;
-        }
-        if (err instanceof PasskeyError) {
-          setError("登记失败，请重试");
-          return;
-        }
-        setError("登记失败，请重试");
+        setError(setupRegistrationErrorMessage(err));
       }
     });
   }
