@@ -72,10 +72,14 @@ describe("setup page UI states", () => {
 });
 
 describe("setupRegistrationErrorMessage", () => {
-  it("shows 已取消 only for NotAllowedError (user cancel)", () => {
-    const err = new Error("user cancelled");
+  it("shows neutral authenticator hint for NotAllowedError (not 已取消)", () => {
+    const err = new Error("user cancelled or resident key unsupported");
     err.name = "NotAllowedError";
-    expect(setupRegistrationErrorMessage(err)).toBe("已取消");
+    expect(setupRegistrationErrorMessage(err)).toBe(
+      "未完成登记，请确认使用支持通行密钥的认证器，或重试",
+    );
+    expect(setupRegistrationErrorMessage(err)).not.toBe("已取消");
+    expect(setupRegistrationErrorMessage(err)).not.toContain("resident");
   });
 
   it("shows neutral message for NotSupportedError (no resident keys)", () => {
@@ -88,7 +92,16 @@ describe("setupRegistrationErrorMessage", () => {
     expect(setupRegistrationErrorMessage(err)).not.toContain("NotSupported");
   });
 
-  it("shows neutral message for PasskeyError and other failures without leaking details", () => {
+  it("shows 令牌无效或已失效 for token-rejected PasskeyError (403)", () => {
+    const denied = new PasskeyError("registration denied", 403);
+    expect(setupRegistrationErrorMessage(denied)).toBe("令牌无效或已失效");
+    expect(setupRegistrationErrorMessage(denied)).not.toContain(
+      "registration denied",
+    );
+    expect(setupRegistrationErrorMessage(denied)).not.toContain("403");
+  });
+
+  it("shows neutral message for other PasskeyError/failures without leaking details", () => {
     const passkey = new PasskeyError("secret server detail", 500);
     expect(setupRegistrationErrorMessage(passkey)).toBe(
       "注册未完成，请确认密码管理器支持通行密钥后重试",
