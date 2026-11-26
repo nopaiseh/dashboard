@@ -88,6 +88,7 @@ export function buildNewItemFields(
     created_at: nowIso,
     updated_at: nowIso,
     last_activity_at: nowIso,
+    result_read_at: null,
   };
 }
 
