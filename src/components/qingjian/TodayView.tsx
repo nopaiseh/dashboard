@@ -29,7 +29,7 @@ export function TodayView({
   return (
     <>
       <section className={"qj-hero"} aria-labelledby="daily-summary">
-        <h2 id="daily-summary">每日小结</h2>
+        <h1 id="daily-summary">每日小结</h1>
         <p>
           {summary?.trim() ||
             "今天还没有小结。各栏件数见下方卡片，可先处理待批与待办。"}

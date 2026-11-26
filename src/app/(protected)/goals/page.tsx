@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { ProgressBar } from "@/components/qingjian/ProgressBar";
-import { loadGoals, type GoalRow } from "@/lib/ui/data";
+import { loadGoals } from "@/lib/ui/data";
 import { progressPercent } from "@/lib/ui/format";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
@@ -10,12 +10,7 @@ export const instant = false;
 export default async function GoalsPage() {
   await connection();
   const { siteName, counts } = await loadShellData();
-  let goals: Array<GoalRow & { agent_name: string | null }> = [];
-  try {
-    goals = await loadGoals();
-  } catch {
-    goals = [];
-  }
+  const goals = await loadGoals();
 
   return (
     <AppShell active="goals" counts={counts} siteName={siteName}>

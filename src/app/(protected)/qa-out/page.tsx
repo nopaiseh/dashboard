@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { ItemList } from "@/components/qingjian/ItemList";
-import { loadItemsByKind, type ItemWithMeta } from "@/lib/ui/data";
+import { loadItemsByKind } from "@/lib/ui/data";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
 export const instant = false;
@@ -9,13 +9,7 @@ export const instant = false;
 export default async function QaOutPage() {
   await connection();
   const { siteName, counts } = await loadShellData();
-  let items: ItemWithMeta[] = [];
-  try {
-    // 你问的：含已回复，便于看读取状态（读取字段待接口）
-    items = await loadItemsByKind("question_from_user");
-  } catch {
-    items = [];
-  }
+  const items = await loadItemsByKind("question_from_user");
 
   return (
     <AppShell active="qa-out" counts={counts} siteName={siteName}>

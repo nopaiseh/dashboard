@@ -281,6 +281,7 @@
   box-shadow: var(--qj-shadow);
 }
 
+.qj-hero h1,
 .qj-hero h2 {
   margin: 0 0 0.45rem;
   font-size: 1.05rem;
@@ -919,4 +920,48 @@
 
 .qj-desktopTabs .qj-tabSec {
   opacity: 0.92;
+}
+
+/* Read error boundary */
+.qj-error {
+  min-height: 60dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem 1.25rem;
+  text-align: center;
+}
+
+.qj-errorTitle {
+  margin: 0;
+  font-family: var(--qj-font-display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--qj-ink);
+}
+
+.qj-errorHint {
+  margin: 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.9375rem;
+}
+
+.qj-errorRetry {
+  appearance: none;
+  margin-top: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.55rem 1.15rem;
+  border: 0;
+  border-radius: var(--qj-radius-sm);
+  background: var(--qj-green);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.qj-errorRetry:hover {
+  background: var(--qj-green-deep);
 }

@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import Link from "next/link";
 import { AppShell } from "@/components/qingjian/AppShell";
-import { loadSisterCards, type SisterCard } from "@/lib/ui/data";
+import { loadSisterCards } from "@/lib/ui/data";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
 export const instant = false;
@@ -9,12 +9,7 @@ export const instant = false;
 export default async function SistersPage() {
   await connection();
   const { siteName, counts } = await loadShellData();
-  let sisters: SisterCard[] = [];
-  try {
-    sisters = await loadSisterCards();
-  } catch {
-    sisters = [];
-  }
+  const sisters = await loadSisterCards();
 
   return (
     <AppShell active="sisters" counts={counts} siteName={siteName}>

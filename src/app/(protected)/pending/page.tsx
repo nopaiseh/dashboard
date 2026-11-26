@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { ItemList } from "@/components/qingjian/ItemList";
-import { loadItemsByKind, type ItemWithMeta } from "@/lib/ui/data";
+import { loadItemsByKind } from "@/lib/ui/data";
 import { ONE_BY_ONE_HINT } from "@/lib/ui/labels";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
@@ -10,12 +10,7 @@ export const instant = false;
 export default async function PendingPage() {
   await connection();
   const { siteName, counts } = await loadShellData();
-  let items: ItemWithMeta[] = [];
-  try {
-    items = await loadItemsByKind("approval", "open");
-  } catch {
-    items = [];
-  }
+  const items = await loadItemsByKind("approval", "open");
 
   return (
     <AppShell active="pending" counts={counts} siteName={siteName}>

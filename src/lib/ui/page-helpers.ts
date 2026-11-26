@@ -14,18 +14,7 @@ export async function loadShellData(): Promise<{
     siteName = "玄机阁";
   }
 
-  let counts: Counts = {
-    approval: 0,
-    todo: 0,
-    question_to_user: 0,
-    question_from_user: 0,
-    waiting: 0,
-    held: 0,
-  };
-  try {
-    counts = await loadCounts();
-  } catch {
-    // 构建或密钥占位时允许空数据
-  }
+  // 读失败必须抛出，由 error.tsx 处理；禁止吞掉后显示「0 待批」假空态
+  const counts = await loadCounts();
   return { siteName, counts };
 }

@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { ItemList } from "@/components/qingjian/ItemList";
-import { loadHeldItems, type ItemWithMeta } from "@/lib/ui/data";
+import { loadHeldItems } from "@/lib/ui/data";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
 export const instant = false;
@@ -9,12 +9,7 @@ export const instant = false;
 export default async function HeldPage() {
   await connection();
   const { siteName, counts } = await loadShellData();
-  let items: ItemWithMeta[] = [];
-  try {
-    items = await loadHeldItems();
-  } catch {
-    items = [];
-  }
+  const items = await loadHeldItems();
 
   return (
     <AppShell active="held" counts={counts} siteName={siteName}>

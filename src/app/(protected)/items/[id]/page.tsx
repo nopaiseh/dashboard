@@ -11,6 +11,7 @@ import {
 } from "@/components/qingjian/StatusChip";
 import { loadAgents, loadItemDetail } from "@/lib/ui/data";
 import { formatDueDate, formatShortDate } from "@/lib/ui/format";
+import { isValidItemId } from "@/lib/ui/item-id";
 import { INVALIDATED_APPROVAL_LABEL } from "@/lib/ui/labels";
 import { loadShellData } from "@/lib/ui/page-helpers";
 
@@ -21,13 +22,16 @@ type PageProps = { params: Promise<{ id: string }> };
 export default async function ItemDetailPage({ params }: PageProps) {
   await connection();
   const { id } = await params;
-  const { siteName, counts } = await loadShellData();
+  if (!isValidItemId(id)) {
+    notFound();
+  }
 
-  const detail = await safeDetail(id);
+  const { siteName, counts } = await loadShellData();
+  const detail = await loadItemDetail(id);
   if (!detail) notFound();
 
   const { item, events } = detail;
-  const agents = await safeAgents();
+  const agents = await loadAgents();
   const agentNameById = new Map(agents.map((a) => [a.id, a.name]));
   const optionLabelByKey = new Map(
     (item.options ?? []).map((o) => [o.key, o.label]),
@@ -94,20 +98,4 @@ export default async function ItemDetailPage({ params }: PageProps) {
       </article>
     </AppShell>
   );
-}
-
-async function safeDetail(id: string) {
-  try {
-    return await loadItemDetail(id);
-  } catch {
-    return null;
-  }
-}
-
-async function safeAgents() {
-  try {
-    return await loadAgents();
-  } catch {
-    return [];
-  }
 }
