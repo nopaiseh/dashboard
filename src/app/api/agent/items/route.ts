@@ -37,6 +37,7 @@ export async function POST(request: Request) {
   }
 
   const nowIso = new Date().toISOString();
+  // Pre-generate id so AES-GCM AAD can bind items:{id}:{column}:vN before insert.
   const fields = buildNewItemFields(auth.agent.agentId, parsed.data, nowIso);
   const encrypted = encryptItemSensitiveFields(fields);
 

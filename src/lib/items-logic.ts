@@ -1,4 +1,9 @@
-import { computeContentHash, normalizeDueAt } from "@/lib/content-hash";
+import { randomUUID } from "node:crypto";
+import {
+  computeContentHash,
+  matchesStoredContentHash,
+  normalizeDueAt,
+} from "@/lib/content-hash";
 import {
   assertAgentMaySetStatus,
   assertAgentOwnsItem,
@@ -60,6 +65,8 @@ export function buildNewItemFields(
   agentId: string,
   input: CreateItemInput,
   nowIso: string,
+  /** Pre-generated id so AAD can bind before insert. */
+  itemId: string = randomUUID(),
 ) {
   const title = input.title.trim();
   const body = (input.body ?? "").trim();
@@ -68,6 +75,7 @@ export function buildNewItemFields(
   const due_at = normalizeDueAt(input.due_at ?? null);
   const source_url = input.source_url ?? null;
   return {
+    id: itemId,
     kind,
     agent_id: agentId,
     project: input.project ?? "",
@@ -103,8 +111,8 @@ function contentChanged(
     due_at: string | null;
   },
 ): boolean {
-  const hash = computeContentHash(next);
-  return hash !== item.content_hash;
+  // Accept HMAC or legacy SHA during transition so patches don't false-reopen.
+  return !matchesStoredContentHash(item.content_hash, next);
 }
 
 /**

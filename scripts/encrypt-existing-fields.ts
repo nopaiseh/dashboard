@@ -1,5 +1,7 @@
 /**
- * One-off backfill: encrypt legacy plaintext items.title / body / source_url.
+ * One-off backfill: encrypt items.title / body / source_url with AAD, and
+ * recompute content_hash as HMAC-SHA256 (CONTENT_HASH_KEY). Also rewrites
+ * matching item_events.content_hash values.
  *
  * Default is --dry-run (no writes). Does NOT run against production from CI.
  *
@@ -8,25 +10,21 @@
  *   npx tsx scripts/encrypt-existing-fields.ts --execute    # write
  *   npx tsx scripts/encrypt-existing-fields.ts --execute --batch-size=50
  *
- * Requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and a field encryption
- * keyring (see docs/architecture.md / .env.example). Idempotent: skips rows
- * whose fields already look like ciphertext envelopes.
+ * Requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, field encryption keyring,
+ * and CONTENT_HASH_KEY. Idempotent + CAS: skips already-migrated rows; updates
+ * only when columns still equal the values read (compare-and-set).
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { loadContentHashKey, resetContentHashKeyCache } from "../src/lib/content-hash";
+import {
+  planItemBackfill,
+  type BackfillItemRow,
+} from "../src/lib/crypto/backfill-plan";
 import {
   encryptField,
-  encryptNullableField,
-  isEncryptedEnvelope,
   resetFieldKeyringCache,
 } from "../src/lib/crypto/fields-core";
-
-type ItemRow = {
-  id: string;
-  title: string;
-  body: string;
-  source_url: string | null;
-};
 
 function parseArgs(argv: string[]) {
   let dryRun = true;
@@ -45,27 +43,66 @@ function parseArgs(argv: string[]) {
   return { dryRun, batchSize };
 }
 
-function needsEncrypt(row: ItemRow): boolean {
-  if (!isEncryptedEnvelope(row.title)) return true;
-  if (!isEncryptedEnvelope(row.body)) return true;
-  if (row.source_url !== null && !isEncryptedEnvelope(row.source_url)) {
-    return true;
+async function casUpdateItem(
+  supabase: SupabaseClient,
+  row: BackfillItemRow,
+  plan: Extract<ReturnType<typeof planItemBackfill>, { action: "update" }>,
+): Promise<"updated" | "cas_skipped"> {
+  let query = supabase
+    .from("items")
+    .update(plan.patch)
+    .eq("id", row.id)
+    .eq("title", plan.expected.title)
+    .eq("body", plan.expected.body)
+    .eq("content_hash", plan.expected.content_hash);
+
+  if (plan.expected.source_url === null) {
+    query = query.is("source_url", null);
+  } else {
+    query = query.eq("source_url", plan.expected.source_url);
   }
-  return false;
+
+  const { data, error } = await query.select("id");
+  if (error) {
+    throw new Error(`failed CAS update item id=${row.id}`);
+  }
+  if (!data || data.length === 0) {
+    return "cas_skipped";
+  }
+
+  // Rewrite event hashes that still carry the previous content_hash.
+  const { error: eventError } = await supabase
+    .from("item_events")
+    .update({ content_hash: plan.patch.content_hash })
+    .eq("item_id", row.id)
+    .eq("content_hash", plan.previousContentHash);
+
+  if (eventError) {
+    throw new Error(`failed to rewrite item_events hashes for id=${row.id}`);
+  }
+
+  return "updated";
 }
 
 async function main(): Promise<void> {
   const { dryRun, batchSize } = parseArgs(process.argv.slice(2));
   resetFieldKeyringCache();
+  resetContentHashKeyCache();
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
     throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
   }
+  if (!loadContentHashKey()) {
+    throw new Error("CONTENT_HASH_KEY is required");
+  }
 
   // Touch keyring early so missing keys fail before any DB work.
-  encryptField("__probe__");
+  encryptField("__probe__", {
+    itemId: "00000000-0000-4000-8000-000000000000",
+    column: "title",
+  });
 
   const supabase = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -75,7 +112,8 @@ async function main(): Promise<void> {
   let scanned = 0;
   let wouldUpdate = 0;
   let updated = 0;
-  let skipped = 0;
+  let skippedMigrated = 0;
+  let skippedCas = 0;
 
   console.log(
     `[encrypt-existing-fields] mode=${dryRun ? "dry-run" : "execute"} batchSize=${batchSize}`,
@@ -84,7 +122,7 @@ async function main(): Promise<void> {
   for (;;) {
     const { data, error } = await supabase
       .from("items")
-      .select("id, title, body, source_url")
+      .select("id, title, body, source_url, kind, options, due_at, content_hash")
       .order("id", { ascending: true })
       .range(offset, offset + batchSize - 1);
 
@@ -92,43 +130,31 @@ async function main(): Promise<void> {
       throw new Error(`failed to load items batch at offset ${offset}`);
     }
 
-    const rows = (data ?? []) as ItemRow[];
+    const rows = (data ?? []) as BackfillItemRow[];
     if (rows.length === 0) break;
 
     for (const row of rows) {
       scanned += 1;
-      if (!needsEncrypt(row)) {
-        skipped += 1;
+      const plan = planItemBackfill(row);
+      if (plan.action === "skip") {
+        skippedMigrated += 1;
         continue;
       }
-
-      const patch = {
-        title: isEncryptedEnvelope(row.title)
-          ? row.title
-          : encryptField(row.title),
-        body: isEncryptedEnvelope(row.body) ? row.body : encryptField(row.body),
-        source_url:
-          row.source_url === null || isEncryptedEnvelope(row.source_url)
-            ? row.source_url
-            : encryptNullableField(row.source_url),
-      };
 
       wouldUpdate += 1;
       if (dryRun) {
-        console.log(`[dry-run] would encrypt item id=${row.id}`);
+        console.log(`[dry-run] would migrate item id=${row.id}`);
         continue;
       }
 
-      const { error: updateError } = await supabase
-        .from("items")
-        .update(patch)
-        .eq("id", row.id);
-
-      if (updateError) {
-        throw new Error(`failed to update item id=${row.id}`);
+      const result = await casUpdateItem(supabase, row, plan);
+      if (result === "cas_skipped") {
+        skippedCas += 1;
+        console.log(`[execute] CAS skipped item id=${row.id} (row changed)`);
+        continue;
       }
       updated += 1;
-      console.log(`[execute] encrypted item id=${row.id}`);
+      console.log(`[execute] migrated item id=${row.id}`);
     }
 
     offset += rows.length;
@@ -136,7 +162,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `[encrypt-existing-fields] done scanned=${scanned} skipped=${skipped} wouldUpdate=${wouldUpdate} updated=${updated}`,
+    `[encrypt-existing-fields] done scanned=${scanned} skippedMigrated=${skippedMigrated} skippedCas=${skippedCas} wouldUpdate=${wouldUpdate} updated=${updated}`,
   );
 }
 

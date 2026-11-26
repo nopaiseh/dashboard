@@ -57,6 +57,8 @@ export interface ItemWithMeta extends ItemRow {
   invalidated_approval: boolean;
   /** null = 不适用（仍 open）；true/false = 已读/待读 */
   result_read: boolean | null;
+  /** 该行敏感字段解密失败（占位文案）；不影响其它行。 */
+  decrypt_failed?: boolean;
 }
 
 export interface Counts {
@@ -146,6 +148,7 @@ function attachMeta(
       agent_area: agent?.area ?? "",
       invalidated_approval: invalidatedIds.has(item.id),
       result_read: resultReadFlag(item),
+      decrypt_failed: item.decrypt_failed === true ? true : undefined,
     };
   });
 }

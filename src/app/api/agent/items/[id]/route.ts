@@ -76,8 +76,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     p_new_content_hash: plan.newContentHash,
     p_set_status: plan.setStatus,
     p_new_status: plan.newStatus,
-    p_title: plan.fields.title === null ? null : encryptField(plan.fields.title),
-    p_body: plan.fields.body === null ? null : encryptField(plan.fields.body),
+    p_title:
+      plan.fields.title === null
+        ? null
+        : encryptField(plan.fields.title, { itemId: id, column: "title" }),
+    p_body:
+      plan.fields.body === null
+        ? null
+        : encryptField(plan.fields.body, { itemId: id, column: "body" }),
     p_options: plan.fields.options,
     p_project: plan.fields.project,
     p_due_at: plan.fields.due_at === undefined ? null : plan.fields.due_at,
@@ -85,7 +91,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     p_source_url:
       plan.fields.source_url === undefined
         ? null
-        : encryptNullableField(plan.fields.source_url),
+        : encryptNullableField(plan.fields.source_url, {
+            itemId: id,
+            column: "source_url",
+          }),
     p_touch_source_url: plan.fields.source_url !== undefined,
     p_kind: plan.fields.kind,
     p_event_action: plan.eventAction,

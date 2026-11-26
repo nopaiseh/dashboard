@@ -6,6 +6,7 @@ import "server-only";
  * without pulling `server-only`.
  */
 export {
+  buildFieldAad,
   decryptField,
   decryptItemSensitiveFields,
   decryptItemsSensitiveFields,
@@ -15,7 +16,15 @@ export {
   encryptNullableField,
   FieldEncryptionError,
   isEncryptedEnvelope,
+  isFieldEncryptionStrict,
   loadFieldKeyring,
+  parseEnvelope,
+  parseKeyBase64,
+  reportFieldDecryptFailure,
   resetFieldKeyringCache,
+  setFieldDecryptFailureReporter,
+  type DecryptItemResult,
+  type FieldContext,
+  type SensitiveColumn,
   type SensitiveItemFields,
 } from "@/lib/crypto/fields-core";
