@@ -70,6 +70,21 @@
 - `source_url` 仅 https；`due_at` 为 ISO datetime；标题/正文/选项有长度与数量上限；选项 key 唯一；zod `.strict()`。
 - WebAuthn `assertion` / `attestation` 的 `id`、`rawId` 最长 **1364** 字符（1023 字节凭据 ID 的无填充 base64url）；超长在进库前 400。属 body 校验失败，**不**计入 IP 登录失败锁定（与其它 zod 拒绝一致，避免垃圾超长请求被用来锁 IP）。
 
+## 字段加密
+
+`items.title`、`items.body`、`items.source_url` 在写入 Supabase 前于服务器用 **AES-256-GCM** 加密，读出后再解密。实现：`src/lib/crypto/fields.ts`（`server-only`）。
+
+- **信封格式**：`v{N}:{iv_b64}:{tag_b64}:{ciphertext_b64}`（每值随机 12 字节 IV；GCM tag 一并存储）。
+- **content_hash**：仍对**明文**计算并存储；乐观锁与作废判定不受影响。
+- **遗留明文**：解密时若无 `vN:` 信封则原样返回，便于过渡；回填脚本 `scripts/encrypt-existing-fields.ts`（默认 `--dry-run`，可 `--execute`，按批、幂等跳过已加密行）。**切勿对生产库在未审阅的情况下执行。**
+- **密钥环**：
+  - `FIELD_ENCRYPTION_KEY`（base64 解码须恰好 32 字节）→ 版本 `v1`；或
+  - `FIELD_ENCRYPTION_KEY_V1` / `_V2` / … + `FIELD_ENCRYPTION_KEY_CURRENT`；或
+  - `FIELD_ENCRYPTION_KEYS='{"1":"…","2":"…"}'` + `FIELD_ENCRYPTION_KEY_CURRENT`。
+  新写入用当前版本；旧版本密钥保留以便解密历史行。
+- **生产缺密钥**：运行时 fail closed（明确错误）；`next build` 允许占位，与其它密钥一致。永不记录密钥或明文。
+- **无 schema 变更**：列类型仍为 `text`，可容纳信封；合并本变更**不会**自动改库结构。加密后无法在 SQL 侧对这三列做有意义的 `ilike` / `order by` / 唯一约束（当前代码本就不依赖这些）。
+
 ## 环境变量
 
 | 变量 | 用途 |
@@ -81,6 +96,7 @@
 | `OWNER_EMAIL` | 唯一允许首次登记魔法链接的邮箱；服务器专用 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
 | `SITE_NAME` | 登录页站名 |
+| `FIELD_ENCRYPTION_KEY` | 字段加密主密钥（base64 32 字节）；或与 `FIELD_ENCRYPTION_KEY_Vn` / `FIELD_ENCRYPTION_KEYS` + `FIELD_ENCRYPTION_KEY_CURRENT` 组成密钥环 |
 
 已移除：`BOOTSTRAP_TOKEN`（改由 `OWNER_EMAIL` + setup-grant 承担首次登记授权）。
 

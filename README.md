@@ -23,6 +23,10 @@ npm run build
 
 架构说明见 [docs/architecture.md](docs/architecture.md)。数据库迁移在 `supabase/migrations/`；种子在 `supabase/seed.sql`。
 
+### 字段加密（本地）
+
+`items` 的 `title` / `body` / `source_url` 经应用层 AES-256-GCM 加密后入库。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY`（`openssl rand -base64 32`）。密钥环与回填脚本说明见 [docs/architecture.md](docs/architecture.md#字段加密)。
+
 ## 首次通行密钥登记（概要）
 
 1. 配置 `OWNER_EMAIL`、`SESSION_SECRET`、`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`（anon 仅服务器 Auth OTP）。

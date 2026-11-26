@@ -2,6 +2,10 @@ import "server-only";
 
 import { requireSession } from "@/lib/auth-guard";
 import {
+  decryptItemSensitiveFields,
+  decryptItemsSensitiveFields,
+} from "@/lib/crypto/fields";
+import {
   DataReadError,
   SessionRequiredError,
 } from "@/lib/read/errors";
@@ -223,7 +227,7 @@ export async function loadAllItems(): Promise<ItemRow[]> {
     .select(ITEM_COLUMNS)
     .order("last_activity_at", { ascending: false });
   assertNoError("failed to load items", error, "items");
-  return (data ?? []) as ItemRow[];
+  return decryptItemsSensitiveFields((data ?? []) as ItemRow[]);
 }
 
 export async function loadItemsByKind(
@@ -238,7 +242,7 @@ export async function loadItemsByKind(
     ascending: false,
   });
   assertNoError(`failed to load items kind=${kind}`, error, "items");
-  const items = (data ?? []) as ItemRow[];
+  const items = decryptItemsSensitiveFields((data ?? []) as ItemRow[]);
   const [agents, invalidated] = await Promise.all([
     loadAgentsMap(),
     findInvalidatedApprovalIds(items),
@@ -257,7 +261,7 @@ export async function loadHeldItems(): Promise<ItemWithMeta[]> {
     .lt("last_activity_at", cutoff)
     .order("last_activity_at", { ascending: false });
   assertNoError("failed to load held items", error, "items");
-  const items = (data ?? []) as ItemRow[];
+  const items = decryptItemsSensitiveFields((data ?? []) as ItemRow[]);
   const [agents, invalidated] = await Promise.all([
     loadAgentsMap(),
     findInvalidatedApprovalIds(items),
@@ -419,7 +423,7 @@ export async function loadItemsForAgent(
     .eq("agent_id", agentId)
     .order("last_activity_at", { ascending: false });
   assertNoError("failed to load agent items", error, "items");
-  const items = (data ?? []) as ItemRow[];
+  const items = decryptItemsSensitiveFields((data ?? []) as ItemRow[]);
   const invalidated = await findInvalidatedApprovalIds(items);
   const agents = new Map([[(agent as AgentRow).id, agent as AgentRow]]);
   return {
@@ -444,7 +448,7 @@ export async function loadItemDetail(id: string): Promise<{
   assertNoError("failed to load item", error, "items");
   if (!item) return null;
 
-  const typed = item as ItemRow;
+  const typed = decryptItemSensitiveFields(item as ItemRow);
   const [eventsRes, agents, invalidated] = await Promise.all([
     supabase
       .from("item_events")

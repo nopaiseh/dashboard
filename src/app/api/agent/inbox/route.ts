@@ -1,5 +1,6 @@
 import { annotateInvalidated } from "@/lib/content-hash";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
+import { decryptItemsSensitiveFields } from "@/lib/crypto/fields";
 import { jsonError, jsonOk } from "@/lib/http";
 import { itemHasFinalDecision } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -48,8 +49,8 @@ export async function GET(request: Request) {
     return jsonError(500, "failed to load inbox");
   }
 
-  const decided = ((items ?? []) as ItemRow[]).filter((item) =>
-    itemHasFinalDecision(item.status as ItemStatus),
+  const decided = decryptItemsSensitiveFields((items ?? []) as ItemRow[]).filter(
+    (item) => itemHasFinalDecision(item.status as ItemStatus),
   );
 
   const results = [];

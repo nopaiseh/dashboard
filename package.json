@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "encrypt-fields": "tsx scripts/encrypt-existing-fields.ts"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
@@ -30,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
+    "tsx": "^4.20.5",
     "typescript": "^5",
     "vite": "^8.3.8",
     "vitest": "^5.1.2"

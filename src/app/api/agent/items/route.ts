@@ -1,7 +1,12 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
+import {
+  decryptItemSensitiveFields,
+  encryptItemSensitiveFields,
+} from "@/lib/crypto/fields";
 import { clientIp, jsonError, jsonOk } from "@/lib/http";
 import { buildNewItemFields } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
+import type { ItemRow } from "@/lib/types";
 import { createItemSchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
@@ -33,10 +38,11 @@ export async function POST(request: Request) {
 
   const nowIso = new Date().toISOString();
   const fields = buildNewItemFields(auth.agent.agentId, parsed.data, nowIso);
+  const encrypted = encryptItemSensitiveFields(fields);
 
   const { data: item, error } = await supabase
     .from("items")
-    .insert(fields)
+    .insert(encrypted)
     .select("*")
     .single();
 
@@ -52,5 +58,8 @@ export async function POST(request: Request) {
     content_hash: item.content_hash,
   });
 
-  return jsonOk({ item }, { status: 201 });
+  return jsonOk(
+    { item: decryptItemSensitiveFields(item as ItemRow) },
+    { status: 201 },
+  );
 }
