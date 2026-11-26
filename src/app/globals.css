@@ -1,19 +1,94 @@
 @import "tailwindcss";
+@import "../components/qingjian/qingjian.css";
 
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
+  --qj-bg: #f3f5f3;
+  --qj-bg-soft: #eff2f1;
+  --qj-surface: #ffffff;
+  --qj-ink: #1a1a1a;
+  --qj-ink-muted: #6b7280;
+  --qj-ink-soft: #9ca3af;
+  --qj-line: #e5e7eb;
+  --qj-green: #2d5a47;
+  --qj-green-deep: #1b4332;
+  --qj-green-soft: #e8f0ec;
+  --qj-green-mid: #d7e6de;
+  --qj-warn-bg: #f7e8d4;
+  --qj-warn-ink: #8a5a2b;
+  --qj-danger: #b42318;
+  --qj-danger-border: #d4a19a;
+  --qj-list-bg: #eaf3ee;
+  --qj-radius: 12px;
+  --qj-radius-sm: 8px;
+  --qj-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  --qj-font-sans: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
+    "Microsoft YaHei", "Segoe UI", sans-serif;
+  --qj-font-display: "Songti SC", "STSong", "Noto Serif SC", "SimSun", serif;
+  --background: var(--qj-bg);
+  --foreground: var(--qj-ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--qj-font-sans);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, sans-serif;
+  margin: 0;
+  min-height: 100%;
+  background: var(--qj-bg);
+  color: var(--qj-ink);
+  font-family: var(--qj-font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--qj-green);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.qj-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
