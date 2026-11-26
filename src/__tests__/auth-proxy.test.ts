@@ -125,5 +125,11 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.headers.get("content-security-policy")).toContain(
       "frame-ancestors 'none'",
     );
+    // 续期 cookie 由 proxy 写出
+    const setCookie = res.headers.getSetCookie?.() ?? [];
+    expect(
+      setCookie.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`)) ||
+        Boolean(res.headers.get("set-cookie")?.includes(SESSION_COOKIE_NAME)),
+    ).toBe(true);
   });
 });

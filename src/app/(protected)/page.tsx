@@ -1,7 +1,11 @@
-/** 受保护布局已动态；显式声明避免静态壳缺 nonce。 */
+import { connection } from "next/server";
+
+/** 与 layout 一致：全动态，避免 PPR 静态部分缺 nonce。 */
 export const instant = false;
 
-export default function HomePage() {
+export default async function HomePage() {
+  await connection();
+
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center gap-3 px-6 py-16">
       <h1 className="text-2xl font-semibold tracking-tight">玄机阁</h1>

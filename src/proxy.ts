@@ -5,7 +5,13 @@ import {
   buildCspHeader,
   generateCspNonce,
 } from "@/lib/security-headers";
-import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/session";
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_IDLE_MS,
+  sessionCookieOptions,
+  touchSessionToken,
+  verifySessionToken,
+} from "@/lib/session";
 import { isSessionSecretConfigured } from "@/lib/env";
 
 const PUBLIC_PATHS = new Set(["/login", "/robots.txt", "/favicon.ico"]);
@@ -109,7 +115,25 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  return withSecurity(request, nextWithNonce(request, nonce), nonce);
+  const response = withSecurity(request, nextWithNonce(request, nonce), nonce);
+
+  // 滑动续期在 proxy 写 cookie（页面内 jar.set 会被 Next 拒绝）
+  if (token) {
+    try {
+      const refreshed = await touchSessionToken(token);
+      if (refreshed) {
+        response.cookies.set(
+          SESSION_COOKIE_NAME,
+          refreshed,
+          sessionCookieOptions(Math.floor(SESSION_IDLE_MS / 1000)),
+        );
+      }
+    } catch {
+      // 续期失败不影响放行；下次请求再试
+    }
+  }
+
+  return response;
 }
 
 export const config = {

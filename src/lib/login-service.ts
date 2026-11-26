@@ -62,8 +62,9 @@ export async function recordLoginFailure(
     p_lock_minutes: LOGIN_LOCK_MINUTES,
   });
   if (error) {
+    // fail closed：计数不可用时按已锁定处理，避免绕过
     console.error("record_login_failure_atomic failed", error);
-    return { locked: false };
+    return { locked: true };
   }
   const locked =
     data != null &&
