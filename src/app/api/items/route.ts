@@ -3,6 +3,7 @@ import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
+  await requireRequest();
   const session = await requireSession();
   if (!session.ok) {
     return jsonError(session.status, session.error);
@@ -30,3 +31,4 @@ export async function GET(request: Request) {
 
   return jsonOk({ items: data ?? [] });
 }
+import { requireRequest } from "@/lib/require-request";

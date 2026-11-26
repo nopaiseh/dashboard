@@ -6,6 +6,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemEventRow, ItemRow, ItemStatus } from "@/lib/types";
 
 export async function GET(request: Request) {
+  await requireRequest();
   const supabase = getServiceClient();
   const auth = await resolveAgentFromRequest(
     supabase,
@@ -61,3 +62,4 @@ export async function GET(request: Request) {
 
   return jsonOk({ since, items: results });
 }
+import { requireRequest } from "@/lib/require-request";

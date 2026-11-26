@@ -13,7 +13,9 @@ import {
  * 无令牌一律拒绝。首次用合格 BOOTSTRAP_TOKEN；已有凭据后 bootstrap 失效。
  * 按 IP 数据库限流。
  */
+
 export async function POST(request: Request) {
+  await requireRequest();
   const ip = clientIp(request);
 
   let body: unknown;
@@ -84,3 +86,4 @@ export async function POST(request: Request) {
 
   return jsonOk({ challenge_id: challengeId, options });
 }
+import { requireRequest } from "@/lib/require-request";

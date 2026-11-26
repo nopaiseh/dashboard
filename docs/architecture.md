@@ -10,7 +10,7 @@
 |------|------|
 | `agents` | 姐妹（slug / name / area / bot_id） |
 | `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发 |
-| `items` | 事项；`content_hash` = sha256(title+body+options) |
+| `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, due_at])) |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
 | `goals` / `daily_summaries` | 目标与每日小结 |
 | `webauthn_credentials` | 本人 passkey |

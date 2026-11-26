@@ -14,6 +14,7 @@ import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
+  await requireRequest();
   const origin = assertSameOrigin(request);
   if (!origin.ok) {
     return jsonError(403, origin.error);
@@ -133,3 +134,4 @@ export async function POST(request: Request, context: RouteContext) {
 
   return jsonOk(data);
 }
+import { requireRequest } from "@/lib/require-request";

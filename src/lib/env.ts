@@ -1,8 +1,19 @@
 export const SESSION_SECRET_MIN_BYTES = 32;
 
+function isProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) {
+    // 允许无密钥完成 next build（Vercel 编译）；运行时仍会失败
+    if (isProductionBuild()) {
+      if (name === "SUPABASE_URL") {
+        return "https://build-placeholder.supabase.co";
+      }
+      return `build-placeholder-${name}`;
+    }
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
@@ -32,6 +43,9 @@ export function isSessionSecretConfigured(): boolean {
 export function getSessionSecret(): string {
   const value = process.env.SESSION_SECRET;
   if (!value || Buffer.byteLength(value, "utf8") < SESSION_SECRET_MIN_BYTES) {
+    if (isProductionBuild()) {
+      return "build-placeholder-session-secret-32b!!";
+    }
     throw new Error(
       `SESSION_SECRET missing or shorter than ${SESSION_SECRET_MIN_BYTES} bytes`,
     );

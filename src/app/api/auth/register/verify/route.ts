@@ -10,7 +10,9 @@ import {
  * POST /api/auth/register/verify
  * 校验 attestation 后由 RPC 在同一事务复查授权、写入凭据、关闭注册。
  */
+
 export async function POST(request: Request) {
+  await requireRequest();
   let body: unknown;
   try {
     body = await request.json();
@@ -67,3 +69,4 @@ export async function POST(request: Request) {
 
   return jsonOk({ ok: true, credential_id: credential.id });
 }
+import { requireRequest } from "@/lib/require-request";

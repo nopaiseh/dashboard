@@ -5,6 +5,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import { createItemSchema } from "@/lib/validation";
 
 export async function POST(request: Request) {
+  await requireRequest();
   void clientIp(request);
   const supabase = getServiceClient();
   const auth = await resolveAgentFromRequest(
@@ -52,3 +53,4 @@ export async function POST(request: Request) {
 
   return jsonOk({ item }, { status: 201 });
 }
+import { requireRequest } from "@/lib/require-request";

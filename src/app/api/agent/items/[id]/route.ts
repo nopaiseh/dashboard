@@ -8,6 +8,7 @@ import { patchItemSchema } from "@/lib/validation";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: RouteContext) {
+  await requireRequest();
   const { id } = await context.params;
   const supabase = getServiceClient();
   const auth = await resolveAgentFromRequest(
@@ -105,3 +106,4 @@ export async function PATCH(request: Request, context: RouteContext) {
     content_reopened: plan.contentReopened,
   });
 }
+import { requireRequest } from "@/lib/require-request";

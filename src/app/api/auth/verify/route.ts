@@ -18,6 +18,7 @@ import { authVerifySchema } from "@/lib/validation";
 import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
 
 export async function POST(request: Request) {
+  await requireRequest();
   const origin = assertSameOrigin(request);
   if (!origin.ok) {
     return jsonError(403, origin.error);
@@ -104,3 +105,4 @@ export async function POST(request: Request) {
   );
   return response;
 }
+import { requireRequest } from "@/lib/require-request";

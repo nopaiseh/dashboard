@@ -12,6 +12,7 @@ import { buildLoginOptions, type StoredCredential } from "@/lib/webauthn";
  * GET /api/auth/options — 登录断言选项；库内按 IP 限流并清理过期挑战。
  */
 export async function GET(request: Request) {
+  await requireRequest();
   const ip = clientIp(request);
   const supabase = getServiceClient();
 
@@ -74,6 +75,7 @@ export async function GET(request: Request) {
  * POST /api/auth/options — step-up（需登录 + Origin）。
  */
 export async function POST(request: Request) {
+  await requireRequest();
   const origin = assertSameOrigin(request);
   if (!origin.ok) {
     return jsonError(403, origin.error);
@@ -128,3 +130,4 @@ export async function POST(request: Request) {
     options,
   });
 }
+import { requireRequest } from "@/lib/require-request";

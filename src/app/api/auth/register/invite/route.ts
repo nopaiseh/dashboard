@@ -14,7 +14,9 @@ const INVITE_TTL_MS = 15 * 60 * 1000;
  * POST /api/auth/register/invite
  * 需已登录 + 现场 passkey（login 挑战抢占）；签发短时效一次性登记令牌。
  */
+
 export async function POST(request: Request) {
+  await requireRequest();
   const origin = assertSameOrigin(request);
   if (!origin.ok) {
     return jsonError(403, origin.error);
@@ -101,3 +103,4 @@ export async function POST(request: Request) {
     expires_at: expiresAt,
   });
 }
+import { requireRequest } from "@/lib/require-request";

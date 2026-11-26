@@ -4,6 +4,7 @@ import { assertSameOrigin } from "@/lib/origin";
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from "@/lib/session";
 
 export async function POST(request: Request) {
+  await requireRequest();
   const origin = assertSameOrigin(request);
   if (!origin.ok) {
     return jsonError(403, origin.error);
@@ -17,5 +18,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
+  await requireRequest();
   return jsonOk({ ok: true });
 }
+import { requireRequest } from "@/lib/require-request";
