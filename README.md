@@ -25,6 +25,6 @@ npm run build
 
 ## 首次通行密钥登记（概要）
 
-1. 配置 `OWNER_EMAIL`、`SESSION_SECRET`、`SUPABASE_*`（含 anon key 供 Auth OTP）。
+1. 配置 `OWNER_EMAIL`、`SESSION_SECRET`、`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`（anon 仅服务器 Auth OTP）。
 2. 在 Supabase Auth 仪表盘：开启 Email、**关闭**公开注册、Site URL / Redirect 为 `https://desk.nopaiseh.com`，Magic Link 模板使用 `token_hash` 链到 `/setup/confirm`；预先创建与 `OWNER_EMAIL` 相同的用户。
 3. 打开 `/setup` → 输入邮箱 → 邮件内链接 → **点击确认** → 登记 passkey（算法仅 ES256/RS256）。

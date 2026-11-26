@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { jsonError } from "@/lib/http";
+import { clientIp, jsonError } from "@/lib/http";
+import { matchesOwnerEmail } from "@/lib/owner-email";
 import { assertSameOrigin } from "@/lib/origin";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { requireRequest } from "@/lib/require-request";
 import {
   SETUP_GRANT_COOKIE_NAME,
@@ -15,7 +17,7 @@ import { hasWebAuthnCredential } from "@/lib/webauthn-credentials";
 /**
  * POST /api/auth/setup/confirm
  * 校验邮件 token_hash（须由用户点击按钮触发，避免预览消费）。
- * 成功后签发短时 setup-grant cookie。
+ * 成功后签发短时 setup-grant cookie；丢弃 Supabase Auth 会话。
  */
 
 export async function POST(request: Request) {
@@ -23,6 +25,12 @@ export async function POST(request: Request) {
   const origin = assertSameOrigin(request);
   if (!origin.ok) {
     return jsonError(403, origin.error);
+  }
+
+  const ip = clientIp(request);
+  const limited = checkRateLimit(`setup-confirm:${ip}`, 20, 60 * 60 * 1000);
+  if (!limited.allowed) {
+    return jsonError(429, "rate limit exceeded");
   }
 
   if (await hasWebAuthnCredential()) {
@@ -42,21 +50,30 @@ export async function POST(request: Request) {
   }
 
   const { token_hash, type } = parsed.data;
+  const supabase = createAuthOtpClient();
 
   try {
-    const supabase = createAuthOtpClient();
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       token_hash,
       type,
     });
     if (error) {
       return jsonError(400, "invalid or expired link");
     }
+    if (!matchesOwnerEmail(data.user?.email ?? "")) {
+      return jsonError(400, "invalid or expired link");
+    }
   } catch {
     return jsonError(400, "invalid or expired link");
+  } finally {
+    // 丢弃 verifyOtp 产生的 Auth 会话；本站只用 setup-grant
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // ignore
+    }
   }
 
-  // 验证通过后不保留 Supabase Auth 会话；只发本站 setup grant
   const grant = await createSetupGrantToken();
   const response = NextResponse.json({ ok: true });
   response.cookies.set(

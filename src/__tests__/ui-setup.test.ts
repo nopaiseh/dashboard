@@ -22,8 +22,10 @@ import {
   SetupAlreadyRegistered,
   SetupEmailForm,
   SetupPasskeyForm,
+  setupRegistrationErrorMessage,
 } from "@/components/qingjian/SetupForm";
 import { LoginForm } from "@/components/qingjian/LoginForm";
+import { PasskeyError } from "@/lib/ui/passkey-client";
 
 describe("setup page UI states", () => {
   it("SetupEmailForm has one main, one h1, labeled email input", () => {
@@ -69,24 +71,67 @@ describe("setup page UI states", () => {
     expect(html).not.toContain("style=");
   });
 
-  it("LoginForm shows setup link only when showSetupLink is true", () => {
-    const withLink = renderToStaticMarkup(
-      createElement(LoginForm, {
-        siteName: "玄机阁",
-        showSetupLink: true,
-      }),
+  it("LoginForm always shows neutral 首次注册 link (no registration-state leak)", () => {
+    const html = renderToStaticMarkup(
+      createElement(LoginForm, { siteName: "玄机阁" }),
     );
-    expect(withLink).toContain('href="/setup"');
-    expect(withLink).toContain("首次登记通行密钥");
+    expect(html).toContain('href="/setup"');
+    expect(html).toContain("首次注册");
+    expect(html).not.toContain("首次登记通行密钥");
+    expect(html).not.toContain("已注册");
+    expect(html).not.toContain("style=");
+  });
+});
 
-    const withoutLink = renderToStaticMarkup(
-      createElement(LoginForm, {
-        siteName: "玄机阁",
-        showSetupLink: false,
-      }),
+describe("setupRegistrationErrorMessage", () => {
+  it("shows neutral authenticator hint for NotAllowedError (not 已取消)", () => {
+    const err = new Error("user cancelled or resident key unsupported");
+    err.name = "NotAllowedError";
+    expect(setupRegistrationErrorMessage(err)).toBe(
+      "未完成登记，请确认使用支持通行密钥的认证器，或重试",
     );
-    expect(withoutLink).not.toContain("/setup");
-    expect(withoutLink).not.toContain("首次登记");
+    expect(setupRegistrationErrorMessage(err)).not.toBe("已取消");
+    expect(setupRegistrationErrorMessage(err)).not.toContain("resident");
+  });
+
+  it("shows neutral message for NotSupportedError (no resident keys)", () => {
+    const err = new Error("resident key not supported");
+    err.name = "NotSupportedError";
+    expect(setupRegistrationErrorMessage(err)).toBe(
+      "注册未完成，请确认密码管理器支持通行密钥后重试",
+    );
+    expect(setupRegistrationErrorMessage(err)).not.toContain("resident");
+    expect(setupRegistrationErrorMessage(err)).not.toContain("NotSupported");
+  });
+
+  it("shows 令牌无效或已失效 for token-rejected PasskeyError (403)", () => {
+    const denied = new PasskeyError("registration denied", 403);
+    expect(setupRegistrationErrorMessage(denied)).toBe("令牌无效或已失效");
+    expect(setupRegistrationErrorMessage(denied)).not.toContain(
+      "registration denied",
+    );
+    expect(setupRegistrationErrorMessage(denied)).not.toContain("403");
+  });
+
+  it("shows neutral message for other PasskeyError/failures without leaking details", () => {
+    const passkey = new PasskeyError("secret server detail", 500);
+    expect(setupRegistrationErrorMessage(passkey)).toBe(
+      "注册未完成，请确认密码管理器支持通行密钥后重试",
+    );
+    expect(setupRegistrationErrorMessage(passkey)).not.toContain("secret");
+    expect(setupRegistrationErrorMessage(passkey)).not.toContain("500");
+
+    const generic = new Error("DOMException: InvalidStateError xyz");
+    generic.name = "InvalidStateError";
+    expect(setupRegistrationErrorMessage(generic)).toBe(
+      "注册未完成，请确认密码管理器支持通行密钥后重试",
+    );
+    expect(setupRegistrationErrorMessage(generic)).not.toContain(
+      "InvalidState",
+    );
+    expect(setupRegistrationErrorMessage("string blowup")).toBe(
+      "注册未完成，请确认密码管理器支持通行密钥后重试",
+    );
   });
 });
 
@@ -163,7 +208,10 @@ describe("setup / login pages already-registered gating", () => {
     expect(html).not.toContain("已注册");
   });
 
-  it("LoginPage hides setup link when credential exists", async () => {
+  it("LoginPage always shows 首次注册 and does not call hasWebAuthnCredential", async () => {
+    const hasCredential = vi.fn(async () => {
+      throw new Error("should not be called from /login");
+    });
     vi.doMock("next/server", () => ({
       connection: async () => undefined,
     }));
@@ -171,31 +219,39 @@ describe("setup / login pages already-registered gating", () => {
       getSiteName: () => "测试阁",
     }));
     vi.doMock("@/lib/webauthn-credentials", () => ({
-      hasWebAuthnCredential: async () => true,
-    }));
-
-    const { default: LoginPage } = await import("@/app/login/page");
-    const element = await LoginPage();
-    const html = renderToStaticMarkup(element);
-    expect(html).not.toContain("/setup");
-    expect(html).not.toContain("首次登记");
-  });
-
-  it("LoginPage shows setup link when no credential", async () => {
-    vi.doMock("next/server", () => ({
-      connection: async () => undefined,
-    }));
-    vi.doMock("@/lib/env", () => ({
-      getSiteName: () => "测试阁",
-    }));
-    vi.doMock("@/lib/webauthn-credentials", () => ({
-      hasWebAuthnCredential: async () => false,
+      hasWebAuthnCredential: hasCredential,
     }));
 
     const { default: LoginPage } = await import("@/app/login/page");
     const element = await LoginPage();
     const html = renderToStaticMarkup(element);
     expect(html).toContain('href="/setup"');
-    expect(html).toContain("首次登记通行密钥");
+    expect(html).toContain("首次注册");
+    expect(html).toContain("测试阁");
+    expect(hasCredential).not.toHaveBeenCalled();
+  });
+
+  it("LoginPage still renders when Supabase env would be missing", async () => {
+    vi.doMock("next/server", () => ({
+      connection: async () => undefined,
+    }));
+    vi.doMock("@/lib/env", () => ({
+      getSiteName: () => {
+        throw new Error("Missing required environment variable: SITE_NAME");
+      },
+    }));
+    // Even if something imported hasWebAuthnCredential and it threw, login must not blank.
+    vi.doMock("@/lib/webauthn-credentials", () => ({
+      hasWebAuthnCredential: async () => {
+        throw new Error("Missing required environment variable: SUPABASE_URL");
+      },
+    }));
+
+    const { default: LoginPage } = await import("@/app/login/page");
+    const element = await LoginPage();
+    const html = renderToStaticMarkup(element);
+    expect(html).toContain("玄机阁");
+    expect(html).toContain("首次注册");
+    expect(html).toContain("使用通行密钥登录");
   });
 });

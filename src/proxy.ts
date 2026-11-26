@@ -26,15 +26,12 @@ const PUBLIC_API_PREFIXES = [
   "/api/auth/options",
   "/api/auth/verify",
   "/api/auth/register",
-  "/api/auth/setup",
+  "/api/auth/setup/",
   "/api/agent/",
 ];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) {
-    return true;
-  }
-  if (pathname.startsWith("/setup/")) {
     return true;
   }
   if (isPublicStaticAsset(pathname)) {

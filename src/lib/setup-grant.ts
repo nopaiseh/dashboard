@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { getSessionSecret } from "@/lib/env";
@@ -7,6 +8,7 @@ import { getSessionSecret } from "@/lib/env";
 /** 短时 setup 授权 cookie：仅允许首次 WebAuthn 登记。 */
 export const SETUP_GRANT_COOKIE_NAME = "xjg_setup_grant";
 export const SETUP_GRANT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export const SETUP_GRANT_AUD = "xjg-setup-grant";
 
 function secretKey(): Uint8Array {
   return new TextEncoder().encode(getSessionSecret());
@@ -19,6 +21,8 @@ export async function createSetupGrantToken(
   return new SignJWT({ purpose: "setup" })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject("owner-setup")
+    .setAudience(SETUP_GRANT_AUD)
+    .setJti(randomUUID())
     .setIssuedAt(iat)
     .setExpirationTime(iat + Math.floor(SETUP_GRANT_TTL_MS / 1000))
     .sign(secretKey());
@@ -31,10 +35,13 @@ export async function verifySetupGrantToken(
   try {
     const { payload } = await jwtVerify(token, secretKey(), {
       algorithms: ["HS256"],
+      audience: SETUP_GRANT_AUD,
       currentDate: now,
     });
     return (
       payload.sub === "owner-setup" &&
+      typeof payload.jti === "string" &&
+      payload.jti.length > 0 &&
       (payload as { purpose?: string }).purpose === "setup"
     );
   } catch {

@@ -11,12 +11,16 @@ import { getWebAuthnOrigin } from "@/lib/env";
  * POST /api/auth/setup/request
  * 提交邮箱；仅当匹配 OWNER_EMAIL 时发送魔法链接。
  * 始终返回同一中性响应，避免枚举。按 IP 限流。
+ * 对匹配/非匹配路径做最短响应时间填充，缩小时序差。
  */
 
 const NEUTRAL = {
   ok: true as const,
   message: "若该邮箱获准，登录链接已发送",
 };
+
+/** 压缩匹配与否的时序差（OTP 网络往返通常远长于此；仅作下限）。 */
+const MIN_RESPONSE_MS = 400;
 
 export async function POST(request: Request) {
   await requireRequest();
@@ -40,25 +44,39 @@ export async function POST(request: Request) {
 
   const parsed = setupRequestSchema.safeParse(body);
   if (!parsed.success) {
-    // 格式错误可 400；匹配与否仍不泄露
     return jsonError(400, "invalid body");
   }
 
   const email = parsed.data.email.trim();
+  const started = Date.now();
+
   if (matchesOwnerEmail(email)) {
     try {
       const supabase = createAuthOtpClient();
       const redirectTo = `${getWebAuthnOrigin()}/setup/confirm`;
-      await supabase.auth.signInWithOtp({
+      const { error } = await supabase.auth.signInWithOtp({
         email: email.toLowerCase(),
         options: {
           shouldCreateUser: false,
           emailRedirectTo: redirectTo,
         },
       });
-    } catch {
-      // 发送失败仍返回中性成功，避免泄露
+      if (error) {
+        console.error(
+          "[setup/request] signInWithOtp failed:",
+          error.message,
+        );
+      }
+    } catch (err) {
+      console.error("[setup/request] signInWithOtp threw:", err);
     }
+  }
+
+  const elapsed = Date.now() - started;
+  if (elapsed < MIN_RESPONSE_MS) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, MIN_RESPONSE_MS - elapsed),
+    );
   }
 
   return jsonOk(NEUTRAL);

@@ -133,6 +133,62 @@ describe("unauthenticated access / proxy hardening", () => {
     expect((await proxy(agentReq)).status).toBe(200);
   });
 
+  it("does not treat /setupX, /setup/foo or path-traversal variants as public", async () => {
+    const { proxy } = await import("@/proxy");
+    const paths = [
+      "/setupX",
+      "/setup/x",
+      "/setup/foo",
+      "/setup/",
+      "/setup/../todo",
+      "/setup/%2e%2e/todo",
+      "/./setup/secret",
+    ];
+
+    for (const pathname of paths) {
+      const url = new URL(pathname, "http://localhost");
+      // Only exact /setup and /setup/confirm are public pages.
+      expect(url.pathname).not.toBe("/setup");
+      expect(url.pathname).not.toBe("/setup/confirm");
+      const nextRequest = {
+        nextUrl: url,
+        cookies: { get: () => undefined },
+        url: url.href,
+        headers: new Headers(),
+      } as unknown as import("next/server").NextRequest;
+      const res = await proxy(nextRequest);
+      expect(res.status, pathname).toBe(307);
+      expect(res.headers.get("location"), pathname).toBe(
+        "http://localhost/login",
+      );
+    }
+  });
+
+  it("rejects unauthenticated /setup/foo with 307 to login", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/setup/foo"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/setup/foo",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("http://localhost/login");
+  });
+
+  it("does not treat /api/auth/setupX as public (trailing slash prefix)", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/api/auth/setupX"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/auth/setupX",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(401);
+  });
+
   it("allows authenticated session cookie and sets security headers", async () => {
     const token = await createSessionToken();
     const { proxy } = await import("@/proxy");

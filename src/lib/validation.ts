@@ -121,7 +121,7 @@ export const setupRequestSchema = z
 export const setupConfirmSchema = z
   .object({
     token_hash: z.string().min(1).max(2048),
-    type: z.enum(["email", "magiclink"]),
+    type: z.literal("email"),
   })
   .strict();
 

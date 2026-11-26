@@ -9,11 +9,9 @@ import { useState, useTransition, type FormEvent } from "react";
 export function SetupConfirmForm({
   siteName,
   tokenHash,
-  type,
 }: {
   siteName: string;
   tokenHash: string;
-  type: "email" | "magiclink";
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +25,7 @@ export function SetupConfirmForm({
         const res = await fetch("/api/auth/setup/confirm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token_hash: tokenHash, type }),
+          body: JSON.stringify({ token_hash: tokenHash, type: "email" }),
         });
         if (!res.ok) {
           setError("链接无效或已过期，请回到登记页重新发送");

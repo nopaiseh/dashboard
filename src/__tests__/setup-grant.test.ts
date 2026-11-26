@@ -1,5 +1,7 @@
+import { decodeJwt } from "jose";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  SETUP_GRANT_AUD,
   SETUP_GRANT_TTL_MS,
   createSetupGrantToken,
   verifySetupGrantToken,
@@ -27,6 +29,15 @@ describe("setup grant JWT", () => {
 
     const expired = new Date(issuedAt.getTime() + SETUP_GRANT_TTL_MS + 1000);
     expect(await verifySetupGrantToken(token, expired)).toBe(false);
+  });
+
+  it("embeds aud and jti claims", async () => {
+    const token = await createSetupGrantToken();
+    const payload = decodeJwt(token);
+    expect(payload.aud).toBe(SETUP_GRANT_AUD);
+    expect(typeof payload.jti).toBe("string");
+    expect(payload.jti!.length).toBeGreaterThan(0);
+    expect(payload.sub).toBe("owner-setup");
   });
 });
 
@@ -96,6 +107,109 @@ describe("setup request neutral response", () => {
         options: expect.objectContaining({ shouldCreateUser: false }),
       }),
     );
+  }, 15_000);
+});
+
+describe("setup confirm owner email gate", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    process.env.SESSION_SECRET = SECRET;
+    process.env.OWNER_EMAIL = OWNER;
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_ANON_KEY = "anon-key";
+    process.env.WEBAUTHN_ORIGIN = "https://desk.nopaiseh.com";
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    delete process.env.OWNER_EMAIL;
+  });
+
+  it("returns 400 when verifyOtp user email does not match OWNER_EMAIL", async () => {
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const verifyOtp = vi.fn().mockResolvedValue({
+      data: { user: { email: "intruder@example.com" } },
+      error: null,
+    });
+
+    vi.doMock("@/lib/supabase/auth-otp", () => ({
+      createAuthOtpClient: () => ({
+        auth: { verifyOtp, signOut },
+      }),
+    }));
+    vi.doMock("@/lib/webauthn-credentials", () => ({
+      hasWebAuthnCredential: async () => false,
+    }));
+    vi.doMock("@/lib/rate-limit", () => ({
+      checkRateLimit: () => ({
+        allowed: true,
+        remaining: 19,
+        retryAfterSeconds: 3600,
+      }),
+    }));
+
+    const { POST } = await import("@/app/api/auth/setup/confirm/route");
+    const res = await POST(
+      new Request("http://localhost/api/auth/setup/confirm", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          token_hash: "some-hash",
+          type: "email",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid or expired link");
+    expect(signOut).toHaveBeenCalled();
+    expect(res.headers.getSetCookie?.() ?? []).toHaveLength(0);
+  });
+
+  it("sets setup-grant cookie when email matches OWNER_EMAIL", async () => {
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const verifyOtp = vi.fn().mockResolvedValue({
+      data: { user: { email: OWNER } },
+      error: null,
+    });
+
+    vi.doMock("@/lib/supabase/auth-otp", () => ({
+      createAuthOtpClient: () => ({
+        auth: { verifyOtp, signOut },
+      }),
+    }));
+    vi.doMock("@/lib/webauthn-credentials", () => ({
+      hasWebAuthnCredential: async () => false,
+    }));
+    vi.doMock("@/lib/rate-limit", () => ({
+      checkRateLimit: () => ({
+        allowed: true,
+        remaining: 19,
+        retryAfterSeconds: 3600,
+      }),
+    }));
+
+    const { POST } = await import("@/app/api/auth/setup/confirm/route");
+    const res = await POST(
+      new Request("http://localhost/api/auth/setup/confirm", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          token_hash: "some-hash",
+          type: "email",
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(signOut).toHaveBeenCalled();
+    const setCookie = res.headers.getSetCookie?.() ?? [];
+    expect(setCookie.some((c) => c.startsWith("xjg_setup_grant="))).toBe(true);
   });
 });
 

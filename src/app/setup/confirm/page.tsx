@@ -12,6 +12,7 @@ export const instant = false;
 
 /**
  * 魔法链接落地页：仅展示确认按钮，不在 GET 时校验 token（防预览消费）。
+ * 仅接受 type=email（token_hash 校验模式）。
  */
 export default async function SetupConfirmPage({
   searchParams,
@@ -35,14 +36,10 @@ export default async function SetupConfirmPage({
   const rawHash = params.token_hash;
   const rawType = params.type;
   const tokenHash = typeof rawHash === "string" ? rawHash : "";
-  const type =
-    rawType === "magiclink" || rawType === "email" ? rawType : null;
 
-  if (!tokenHash || !type) {
+  if (!tokenHash || rawType !== "email") {
     return <SetupConfirmMissing siteName={siteName} />;
   }
 
-  return (
-    <SetupConfirmForm siteName={siteName} tokenHash={tokenHash} type={type} />
-  );
+  return <SetupConfirmForm siteName={siteName} tokenHash={tokenHash} />;
 }

@@ -76,7 +76,7 @@
 |------|------|
 | `SUPABASE_URL` | Supabase API URL（服务器） |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role；仅服务器；业务 DB |
-| `SUPABASE_ANON_KEY` 或 `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 仅 Auth OTP（`signInWithOtp` / `verifyOtp`） |
+| `SUPABASE_ANON_KEY` | 仅 Auth OTP（`signInWithOtp` / `verifyOtp`）；服务器专用，勿用 `NEXT_PUBLIC_` |
 | `SESSION_SECRET` | 会话 JWT 与 setup-grant HMAC；≥32 字节，不足则拒绝 |
 | `OWNER_EMAIL` | 唯一允许首次登记魔法链接的邮箱；服务器专用 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
