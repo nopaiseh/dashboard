@@ -1,5 +1,9 @@
 import { hashAgentToken, verifyAgentToken } from "@/lib/crypto";
-import { AGENT_ALLOWED_STATUSES, type ItemStatus } from "@/lib/types";
+import {
+  AGENT_ALLOWED_STATUSES,
+  type ItemKind,
+  type ItemStatus,
+} from "@/lib/types";
 
 export interface TokenRecord {
   agent_id: string;
@@ -42,9 +46,14 @@ export function authenticateAgentToken(
   return null;
 }
 
-/** 姐妹可设状态仅 done / withdrawn。 */
+/**
+ * 姐妹可设状态：done / withdrawn。
+ * 审批类（approval）且仍为 open 时，只能 withdrawn，不能 done。
+ */
 export function assertAgentMaySetStatus(
   status: ItemStatus | undefined,
+  kind?: ItemKind,
+  currentStatus?: ItemStatus,
 ): { ok: true } | { ok: false; error: string } {
   if (status === undefined) {
     return { ok: true };
@@ -53,6 +62,16 @@ export function assertAgentMaySetStatus(
     return {
       ok: false,
       error: "agents may only set status to done or withdrawn",
+    };
+  }
+  if (
+    kind === "approval" &&
+    currentStatus === "open" &&
+    status === "done"
+  ) {
+    return {
+      ok: false,
+      error: "open approval items may only be withdrawn, not done",
     };
   }
   return { ok: true };

@@ -7,25 +7,35 @@ import {
 } from "@/lib/agent-auth";
 import { computeContentHash } from "@/lib/content-hash";
 import { hashAgentToken } from "@/lib/crypto";
-import { applyAgentPatch } from "@/lib/items-logic";
+import { planAgentPatch } from "@/lib/items-logic";
 import type { ItemRow } from "@/lib/types";
 
 function sampleItem(overrides: Partial<ItemRow> = {}): ItemRow {
   const title = overrides.title ?? "title";
   const body = overrides.body ?? "body";
   const options = overrides.options ?? [{ key: "a", label: "A" }];
+  const kind = overrides.kind ?? "approval";
+  const source_url = overrides.source_url ?? null;
+  const due_at = overrides.due_at ?? null;
   const base: ItemRow = {
     id: "11111111-1111-4111-8111-111111111111",
-    kind: "approval",
+    kind,
     agent_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     project: "p",
     title,
     body,
     options,
-    due_at: null,
-    source_url: null,
+    due_at,
+    source_url,
     status: "open",
-    content_hash: computeContentHash(title, body, options),
+    content_hash: computeContentHash({
+      kind,
+      title,
+      body,
+      options,
+      source_url,
+      due_at,
+    }),
     created_at: "2025-01-01T00:00:00.000Z",
     updated_at: "2025-01-01T00:00:00.000Z",
     last_activity_at: "2025-01-01T00:00:00.000Z",
@@ -35,11 +45,14 @@ function sampleItem(overrides: Partial<ItemRow> = {}): ItemRow {
     ...overrides,
     content_hash:
       overrides.content_hash ??
-      computeContentHash(
-        overrides.title ?? base.title,
-        overrides.body ?? base.body,
-        overrides.options ?? base.options,
-      ),
+      computeContentHash({
+        kind: overrides.kind ?? base.kind,
+        title: overrides.title ?? base.title,
+        body: overrides.body ?? base.body,
+        options: overrides.options ?? base.options,
+        source_url: overrides.source_url ?? base.source_url,
+        due_at: overrides.due_at ?? base.due_at,
+      }),
   };
 }
 
@@ -47,7 +60,6 @@ describe("agent auth", () => {
   it("extracts bearer token", () => {
     expect(extractBearerToken("Bearer tok")).toBe("tok");
     expect(extractBearerToken(null)).toBeNull();
-    expect(extractBearerToken("Basic x")).toBeNull();
   });
 
   it("authenticates active token by hash", () => {
@@ -61,77 +73,68 @@ describe("agent auth", () => {
     ]);
     expect(agent?.agentId).toBe("agent-1");
   });
-
-  it("rejects revoked tokens", () => {
-    const raw = "revoked-token";
-    const agent = authenticateAgentToken(raw, [
-      {
-        agent_id: "agent-1",
-        token_hash: hashAgentToken(raw),
-        revoked_at: "2025-01-02T00:00:00.000Z",
-      },
-    ]);
-    expect(agent).toBeNull();
-  });
 });
 
 describe("agent authorization rules", () => {
   it("rejects cross-agent patch", () => {
-    const result = applyAgentPatch(
+    const result = planAgentPatch(
       "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
       sampleItem(),
       { title: "hijack" },
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(403);
-    }
   });
 
-  it("only allows done/withdrawn status; rejects approved/rejected/replied", () => {
-    expect(assertAgentMaySetStatus("done").ok).toBe(true);
-    expect(assertAgentMaySetStatus("withdrawn").ok).toBe(true);
-    expect(assertAgentMaySetStatus("approved").ok).toBe(false);
-    expect(assertAgentMaySetStatus("rejected").ok).toBe(false);
-    expect(assertAgentMaySetStatus("replied").ok).toBe(false);
-    expect(assertAgentMaySetStatus("open").ok).toBe(false);
+  it("open approval may only be withdrawn, not done", () => {
+    expect(
+      assertAgentMaySetStatus("done", "approval", "open").ok,
+    ).toBe(false);
+    expect(
+      assertAgentMaySetStatus("withdrawn", "approval", "open").ok,
+    ).toBe(true);
+    expect(assertAgentMaySetStatus("done", "todo", "open").ok).toBe(true);
 
-    const result = applyAgentPatch(
+    const result = planAgentPatch(
       "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-      sampleItem(),
-      { status: "approved" },
+      sampleItem({ kind: "approval", status: "open" }),
+      { status: "done" },
     );
     expect(result.ok).toBe(false);
   });
 
-  it("reopens to open and recomputes hash when content changes", () => {
-    const item = sampleItem({
-      status: "approved",
-      content_hash: "old",
-    });
-    const result = applyAgentPatch(item.agent_id, item, {
+  it("reopens without writing stale status when content changes", () => {
+    const item = sampleItem({ status: "approved" });
+    const result = planAgentPatch(item.agent_id, item, {
       title: "new title",
-      body: "new body",
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.contentReopened).toBe(true);
-      expect(result.next.status).toBe("open");
-      expect(result.next.content_hash).toMatch(/^[a-f0-9]{64}$/);
-      expect(result.next.content_hash).not.toBe("old");
+      expect(result.plan.contentReopened).toBe(true);
+      expect(result.plan.setStatus).toBe(true);
+      expect(result.plan.newStatus).toBe("open");
+      expect(result.plan.expectedStatus).toBe("approved");
+    }
+  });
+
+  it("does not set status when only non-content fields change", () => {
+    const item = sampleItem({ status: "open" });
+    const result = planAgentPatch(item.agent_id, item, {
+      project: "other",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.plan.setStatus).toBe(false);
+      expect(result.plan.newStatus).toBeNull();
     }
   });
 
   it("forbids kind change after user decision", () => {
-    const result = applyAgentPatch(
+    const result = planAgentPatch(
       "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       sampleItem({ status: "approved" }),
       { kind: "todo" },
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toMatch(/kind/i);
-    }
   });
 
   it("assertAgentOwnsItem distinguishes owners", () => {

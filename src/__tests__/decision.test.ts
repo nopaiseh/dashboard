@@ -11,7 +11,14 @@ describe("decision API rules", () => {
     { key: "yes", label: "Yes" },
     { key: "no", label: "No" },
   ];
-  const hash = computeContentHash("t", "b", options);
+  const hash = computeContentHash({
+    kind: "approval",
+    title: "t",
+    body: "b",
+    options,
+    source_url: null,
+    due_at: null,
+  });
 
   it("requires matching content_hash and open status", () => {
     expect(

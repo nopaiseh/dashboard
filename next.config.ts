@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { SECURITY_HEADERS } from "./src/lib/security-headers";
+import { STATIC_SECURITY_HEADERS } from "./src/lib/security-headers";
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
@@ -13,13 +13,13 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
+    // CSP 由 proxy 按请求带 nonce 设置，此处不放静态 CSP
     return [
       {
         source: "/:path*",
-        headers: Object.entries(SECURITY_HEADERS).map(([key, value]) => ({
-          key,
-          value,
-        })),
+        headers: Object.entries(STATIC_SECURITY_HEADERS).map(
+          ([key, value]) => ({ key, value }),
+        ),
       },
     ];
   },

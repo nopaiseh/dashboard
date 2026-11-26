@@ -2,6 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { isSessionSecretConfigured } from "@/lib/env";
 import {
   SESSION_COOKIE_NAME,
   SESSION_IDLE_MS,
@@ -14,7 +15,7 @@ export async function requireSession(): Promise<
   | { ok: true }
   | { ok: false; status: 401; error: string }
 > {
-  if (!process.env.SESSION_SECRET) {
+  if (!isSessionSecretConfigured()) {
     return { ok: false, status: 401, error: "unauthorized" };
   }
 

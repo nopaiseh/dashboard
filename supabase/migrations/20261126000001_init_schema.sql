@@ -171,7 +171,9 @@ VALUES (1, false);
 
 CREATE TABLE public.login_attempts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  scope text NOT NULL CHECK (scope IN ('ip', 'global', 'auth_options')),
+  scope text NOT NULL CHECK (
+    scope IN ('ip', 'global', 'auth_options', 'register_options')
+  ),
   scope_key text NOT NULL,
   failed_count int NOT NULL DEFAULT 0,
   locked_until timestamptz,
@@ -278,17 +280,11 @@ BEGIN
   END IF;
 
   IF p_mode = 'bootstrap' THEN
-    -- 只要已有任何凭据，BOOTSTRAP_TOKEN 一律失效（不依赖人工删环境变量）
+    -- 只要已有任何凭据，BOOTSTRAP_TOKEN 一律失效
     IF EXISTS (SELECT 1 FROM public.webauthn_credentials LIMIT 1) THEN
       RAISE EXCEPTION 'bootstrap disabled: credentials already exist';
     END IF;
-    IF v_reg.bootstrap_consumed_at IS NOT NULL THEN
-      RAISE EXCEPTION 'bootstrap already consumed';
-    END IF;
-    UPDATE public.webauthn_registration
-    SET bootstrap_consumed_at = now(),
-        updated_at = now()
-    WHERE id = 1;
+    -- 无凭据时允许重试（中途失败不永久作废）；consumed 仅在 verify 成功时写入
   ELSIF p_mode = 'one_time' THEN
     IF v_reg.one_time_token_hash IS NULL
        OR v_reg.one_time_token_hash IS DISTINCT FROM p_token_hash THEN
@@ -355,6 +351,7 @@ BEGIN
   SET open = false,
       one_time_token_hash = NULL,
       one_time_token_expires_at = NULL,
+      bootstrap_consumed_at = COALESCE(bootstrap_consumed_at, now()),
       updated_at = now()
   WHERE id = 1;
 END;
@@ -554,5 +551,185 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'registration config missing';
   END IF;
+END;
+$$;
+
+-- 注册 options 按 IP 限流
+CREATE OR REPLACE FUNCTION public.rate_limit_register_options(
+  p_scope_key text,
+  p_limit int,
+  p_window_seconds int
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row public.login_attempts%ROWTYPE;
+BEGIN
+  SELECT * INTO v_row
+  FROM public.login_attempts
+  WHERE scope = 'register_options' AND scope_key = p_scope_key
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    INSERT INTO public.login_attempts (scope, scope_key, failed_count, updated_at)
+    VALUES ('register_options', p_scope_key, 1, now());
+    RETURN true;
+  END IF;
+
+  IF v_row.updated_at < now() - make_interval(secs => p_window_seconds) THEN
+    UPDATE public.login_attempts
+    SET failed_count = 1, updated_at = now(), locked_until = NULL
+    WHERE id = v_row.id;
+    RETURN true;
+  END IF;
+
+  IF v_row.failed_count >= p_limit THEN
+    RETURN false;
+  END IF;
+
+  UPDATE public.login_attempts
+  SET failed_count = v_row.failed_count + 1, updated_at = now()
+  WHERE id = v_row.id;
+  RETURN true;
+END;
+$$;
+
+-- 姐妹 PATCH：单事务 FOR UPDATE，不回写旧 status；冲突则失败
+CREATE OR REPLACE FUNCTION public.apply_agent_item_patch(
+  p_item_id uuid,
+  p_agent_id uuid,
+  p_expected_status public.item_status,
+  p_expected_content_hash text,
+  p_new_content_hash text,
+  p_set_status boolean,
+  p_new_status public.item_status,
+  p_title text,
+  p_body text,
+  p_options jsonb,
+  p_project text,
+  p_due_at timestamptz,
+  p_touch_due_at boolean,
+  p_source_url text,
+  p_touch_source_url boolean,
+  p_kind public.item_kind,
+  p_event_action public.item_action
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_item public.items%ROWTYPE;
+  v_event public.item_events%ROWTYPE;
+  v_now timestamptz := now();
+BEGIN
+  SELECT * INTO v_item
+  FROM public.items
+  WHERE id = p_item_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'item not found';
+  END IF;
+
+  IF v_item.agent_id IS DISTINCT FROM p_agent_id THEN
+    RAISE EXCEPTION 'forbidden: item belongs to another agent';
+  END IF;
+
+  IF v_item.status IS DISTINCT FROM p_expected_status
+     OR v_item.content_hash IS DISTINCT FROM p_expected_content_hash THEN
+    RAISE EXCEPTION 'conflict: status or content changed';
+  END IF;
+
+  -- 审批仍 open 时禁止标 done
+  IF p_set_status
+     AND p_new_status = 'done'
+     AND v_item.kind = 'approval'
+     AND v_item.status = 'open' THEN
+    RAISE EXCEPTION 'not allowed: open approval may only be withdrawn';
+  END IF;
+
+  IF p_set_status
+     AND p_new_status IS NOT NULL
+     AND p_new_status NOT IN ('done', 'withdrawn', 'open') THEN
+    RAISE EXCEPTION 'not allowed status';
+  END IF;
+
+  UPDATE public.items
+  SET
+    title = COALESCE(p_title, title),
+    body = COALESCE(p_body, body),
+    options = COALESCE(p_options, options),
+    project = COALESCE(p_project, project),
+    due_at = CASE WHEN p_touch_due_at THEN p_due_at ELSE due_at END,
+    source_url = CASE WHEN p_touch_source_url THEN p_source_url ELSE source_url END,
+    kind = COALESCE(p_kind, kind),
+    content_hash = p_new_content_hash,
+    status = CASE
+      WHEN p_set_status AND p_new_status IS NOT NULL THEN p_new_status
+      ELSE status
+    END,
+    updated_at = v_now,
+    last_activity_at = v_now
+  WHERE id = p_item_id
+    AND agent_id = p_agent_id
+    AND status = p_expected_status
+    AND content_hash = p_expected_content_hash
+  RETURNING * INTO v_item;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'conflict: conditional update failed';
+  END IF;
+
+  INSERT INTO public.item_events (
+    item_id, actor_type, agent_id, action, content_hash
+  )
+  VALUES (
+    p_item_id, 'agent', p_agent_id, p_event_action, p_new_content_hash
+  )
+  RETURNING * INTO v_event;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'failed to write event';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'item', to_jsonb(v_item),
+    'event', to_jsonb(v_event)
+  );
+END;
+$$;
+
+-- 所有 RPC：收回 public/anon/authenticated 的 EXECUTE，仅 service_role
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT p.oid::regprocedure AS sig
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN (
+        'authorize_and_create_registration_challenge',
+        'complete_webauthn_registration',
+        'claim_webauthn_challenge',
+        'apply_item_decision',
+        'rate_limit_auth_options',
+        'rate_limit_register_options',
+        'set_registration_one_time_token',
+        'apply_agent_item_patch',
+        'forbid_item_events_mutation',
+        'set_updated_at'
+      )
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', r.sig);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM anon, authenticated', r.sig);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', r.sig);
+  END LOOP;
 END;
 $$;

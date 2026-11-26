@@ -1,34 +1,44 @@
 import { sha256Hex } from "@/lib/crypto";
-import type { ItemOption } from "@/lib/types";
+import type { ItemKind, ItemOption } from "@/lib/types";
 
-/** Canonical JSON for options so hash is stable across key order. */
-export function canonicalizeOptions(options: ItemOption[] | unknown): string {
+/** Canonical options array (sorted by key) for stable hashing. */
+export function canonicalizeOptions(
+  options: ItemOption[] | unknown,
+): ItemOption[] {
   const list = Array.isArray(options) ? options : [];
-  const normalized = list
+  return list
     .map((o) => {
       const row = o as ItemOption;
       return { key: String(row.key ?? ""), label: String(row.label ?? "") };
     })
     .sort((a, b) => a.key.localeCompare(b.key));
-  return JSON.stringify(normalized);
+}
+
+export interface ContentHashFields {
+  kind: ItemKind | string;
+  title: string;
+  body: string;
+  options: ItemOption[] | unknown;
+  source_url: string | null;
+  due_at: string | null;
 }
 
 /**
- * content_hash = sha256(title + body + options)
- * 服务端唯一计算来源；姐妹改内容时必须重算。
+ * content_hash = sha256(JSON.stringify([kind, title, body, options, source_url, due_at]))
+ * 用 JSON 数组序列化避免拼接歧义；纳入 source_url / due_at / kind。
  */
-export function computeContentHash(
-  title: string,
-  body: string,
-  options: ItemOption[] | unknown,
-): string {
-  const payload = `${title}\n${body}\n${canonicalizeOptions(options)}`;
+export function computeContentHash(fields: ContentHashFields): string {
+  const payload = JSON.stringify([
+    fields.kind,
+    fields.title,
+    fields.body,
+    canonicalizeOptions(fields.options),
+    fields.source_url,
+    fields.due_at,
+  ]);
   return sha256Hex(payload);
 }
 
-/**
- * 某次批准/拒绝/回复是否仍有效：事件记录的 content_hash 必须等于事项当前 hash。
- */
 export function isDecisionValid(
   eventContentHash: string | null | undefined,
   currentContentHash: string,

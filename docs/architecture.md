@@ -25,18 +25,19 @@
 
 ## 注册与认证
 
-1. **首次登记**：必须带 `BOOTSTRAP_TOKEN`。要求至少 **32 字节**随机（不足视为未配置并拒绝）；生成示例：`openssl rand -base64 48`。比对：先各自 sha256，再用 `timingSafeEqual`（避免明文长度泄露）。`POST /api/auth/register/options` 无令牌 → 403。校验通过后 RPC **立即作废**启动令牌（写 `bootstrap_consumed_at`）并创建 `authorized` 挑战。**只要 `webauthn_credentials` 已有任何凭据，bootstrap 一律失效**（服务端与 RPC 事务内双重检查），不依赖人工删除环境变量。
-2. **verify**：校验 attestation 后 RPC `complete_webauthn_registration` 在同一事务复查授权、写入凭据、关闭注册。
-3. **新设备**：已登录 + 现场 passkey → `POST /api/auth/register/invite` 签发短时效一次性令牌（只回传一次明文，库内仅哈希）。之后用该令牌走 register/options（`one_time` 模式，options 时作废）。
-4. **登录**：passkey → 会话 cookie `xjg_session`（httpOnly / Secure / SameSite=Strict，闲置 12h）。失败锁定逻辑集中在 `evaluateLoginLockout`（现状：IP+全站各 5 次 / 15 分钟；日后可改为 IP+凭据锁定）。
-5. **决定 step-up**：`POST /api/auth/options`（purpose=step_up）→ `POST /api/items/:id/decision` 必须带 `content_hash`；挑战经 `claim_webauthn_challenge` 抢占，`item_id` 严格相等；状态+事件由 `apply_item_decision` 同一事务条件更新。
+1. **首次登记**：必须带 `BOOTSTRAP_TOKEN`（≥32 字节；`openssl rand -base64 48`）。比对：先 sha256 再 `timingSafeEqual`。`POST /api/auth/register/options` 无令牌 → 403；按 IP 库内限流。options 创建 `authorized` 挑战；**`bootstrap_consumed_at` 仅在 verify 成功写入凭据时设置**。**只要已有任何凭据，bootstrap 一律失效**（服务端 + RPC）。
+2. **中途失败恢复**：若 options 成功但 verify 失败且库中尚无凭据，同一 `BOOTSTRAP_TOKEN` **仍可用**（可重试 options/verify）。若已写入凭据，bootstrap 永久失效，加设备走 invite。轮换：更换环境变量中的 `BOOTSTRAP_TOKEN`，并确认无凭据（或清库后重来）。
+3. **verify**：RPC `complete_webauthn_registration` 事务内复查授权、写入凭据、关闭注册并标记 bootstrap 已消耗。
+4. **新设备**：已登录 + passkey → `POST /api/auth/register/invite`。
+5. **登录**：会话 cookie 闲置 12h；锁定逻辑集中 `evaluateLoginLockout`（策略暂不改）。
+6. **决定 step-up**：须带 `content_hash`；挑战抢占；`apply_item_decision` 事务条件更新；前端只见通用错误。
 
 ## 姐妹接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/agent/items` | 新建 |
-| PATCH | `/api/agent/items/:id` | 仅自己名下；状态只许 `done`/`withdrawn`；改标题/正文/选项 → 退回 `open`、重算 hash、记事件；有本人决定后禁止改 `kind` |
+| PATCH | `/api/agent/items/:id` | RPC `apply_agent_item_patch` 单事务 FOR UPDATE；不回写旧 status；冲突 409；approval 且 open 时只能 `withdrawn`；改内容 → 退回 open；有本人决定后禁改 kind |
 | GET | `/api/agent/inbox?since=` | 已决定事项 + 流水；`invalidated` 表示内容事后变更 |
 
 ## 本人读接口
@@ -45,12 +46,12 @@
 
 ## 防护
 
-- `src/proxy.ts`：缺 `SESSION_SECRET` 一律拒绝；静态资源仅 `public/` 白名单；未登录页 → `/login`，API → 401。
-- `(protected)/layout` 服务器端再验会话。
-- Cookie 写操作校验 `Origin === WEBAUTHN_ORIGIN`。
-- 未登录 options：库内 `rate_limit_auth_options` 限流并清理过期挑战。
-- 安全头：CSP、HSTS、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`、`X-Robots-Tag`；robots.txt 全站 disallow。
-- 服务端模块 `import "server-only"`。
+- `src/proxy.ts`：`SESSION_SECRET` 缺失或短于 32 字节一律拒绝；静态资源白名单；未登录 → `/login` 或 401。
+- CSP：proxy 每请求生成 nonce，`script-src 'self' 'nonce-…' 'strict-dynamic'`（生产无 unsafe-inline/unsafe-eval），经 `x-nonce` 交给 Next。
+- `(protected)/layout` 再验会话。
+- Cookie 写操作校验 Origin；登录/注册 options 库内限流。
+- RPC：`REVOKE EXECUTE FROM public, anon, authenticated`，仅 `service_role`。
+- 安全头：HSTS、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`、`X-Robots-Tag`。
 
 ## 输入校验
 
@@ -62,8 +63,8 @@
 |------|------|
 | `SUPABASE_URL` | Supabase API URL（服务器） |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role；仅服务器 |
-| `SESSION_SECRET` | 会话 JWT HMAC；缺失则拒绝所有鉴权 |
-| `BOOTSTRAP_TOKEN` | 首次注册启动令牌（≥32 字节；`openssl rand -base64 48`）；先哈希再恒定时间比对；有凭据后自动失效；用后作废 |
+| `SESSION_SECRET` | 会话 JWT HMAC；≥32 字节，不足则拒绝 |
+| `BOOTSTRAP_TOKEN` | 首次注册（≥32 字节；`openssl rand -base64 48`）；无凭据可重试；有凭据后失效 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
 | `SITE_NAME` | 登录页站名 |
 

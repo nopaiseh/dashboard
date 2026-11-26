@@ -39,7 +39,7 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.headers.get("location")).toBe("http://localhost/login");
   });
 
-  it("rejects when SESSION_SECRET is missing even if cookie present", async () => {
+  it("rejects when SESSION_SECRET is missing or too short", async () => {
     const token = await createSessionToken();
     delete process.env.SESSION_SECRET;
     const { proxy } = await import("@/proxy");
@@ -53,8 +53,10 @@ describe("unauthenticated access / proxy hardening", () => {
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
 
-    const res = await proxy(nextRequest);
-    expect(res.status).toBe(401);
+    expect((await proxy(nextRequest)).status).toBe(401);
+
+    process.env.SESSION_SECRET = "too-short";
+    expect((await proxy(nextRequest)).status).toBe(401);
     process.env.SESSION_SECRET = SECRET;
   });
 

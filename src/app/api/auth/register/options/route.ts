@@ -11,10 +11,10 @@ import {
 /**
  * POST /api/auth/register/options
  * 无令牌一律拒绝。首次用合格 BOOTSTRAP_TOKEN；已有凭据后 bootstrap 失效。
- * 校验通过后立即作废令牌，并将授权绑定到挑战码。
+ * 按 IP 数据库限流。
  */
 export async function POST(request: Request) {
-  void clientIp(request);
+  const ip = clientIp(request);
 
   let body: unknown;
   try {
@@ -28,10 +28,26 @@ export async function POST(request: Request) {
     return jsonError(403, "registration token required");
   }
 
+  const supabase = getServiceClient();
+
+  const { data: allowed, error: rateError } = await supabase.rpc(
+    "rate_limit_register_options",
+    {
+      p_scope_key: ip,
+      p_limit: 20,
+      p_window_seconds: 60,
+    },
+  );
+  if (rateError) {
+    return jsonError(500, "unavailable");
+  }
+  if (!allowed) {
+    return jsonError(429, "rate limit exceeded");
+  }
+
   const rawToken = parsed.data.token;
   const tokenHash = hashAgentToken(rawToken);
 
-  const supabase = getServiceClient();
   const { data: existing, error: credError } = await supabase
     .from("webauthn_credentials")
     .select("credential_id, public_key, counter, transports");
@@ -42,7 +58,6 @@ export async function POST(request: Request) {
 
   const hasCredentials = (existing?.length ?? 0) > 0;
 
-  // 已有凭据时服务端直接禁止 bootstrap（RPC 内再查一遍）
   let mode: "bootstrap" | "one_time" = "one_time";
   if (!hasCredentials && matchesBootstrapToken(rawToken)) {
     mode = "bootstrap";

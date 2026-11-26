@@ -48,7 +48,6 @@ export async function POST(request: Request, context: RouteContext) {
   if (!challengeRow) {
     return jsonError(400, "invalid challenge");
   }
-  // step_up item_id 严格相等（RPC 已强制）
   if (challengeRow.item_id !== id) {
     return jsonError(400, "challenge item mismatch");
   }
@@ -128,7 +127,8 @@ export async function POST(request: Request, context: RouteContext) {
   });
 
   if (error || !data) {
-    return jsonError(409, error?.message ?? "decision failed");
+    console.error("apply_item_decision failed", error);
+    return jsonError(409, "decision failed");
   }
 
   return jsonOk(data);

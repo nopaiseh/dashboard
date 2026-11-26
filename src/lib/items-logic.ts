@@ -7,6 +7,7 @@ import {
   ALLOWED_DECISIONS_BY_KIND,
   USER_DECISION_STATUSES,
   type DecisionAction,
+  type ItemAction,
   type ItemKind,
   type ItemOption,
   type ItemRow,
@@ -35,6 +36,26 @@ export interface PatchItemInput {
   kind?: ItemKind;
 }
 
+export interface AgentPatchPlan {
+  expectedStatus: ItemStatus;
+  expectedContentHash: string;
+  newContentHash: string;
+  /** 仅当需要改 status 时为 true（显式 patch 或内容重开） */
+  setStatus: boolean;
+  newStatus: ItemStatus | null;
+  contentReopened: boolean;
+  eventAction: ItemAction;
+  fields: {
+    title: string | null;
+    body: string | null;
+    options: ItemOption[] | null;
+    project: string | null;
+    due_at: string | null | undefined;
+    source_url: string | null | undefined;
+    kind: ItemKind | null;
+  };
+}
+
 export function buildNewItemFields(
   agentId: string,
   input: CreateItemInput,
@@ -43,17 +64,27 @@ export function buildNewItemFields(
   const title = input.title.trim();
   const body = (input.body ?? "").trim();
   const options = input.options ?? [];
+  const kind = input.kind;
+  const due_at = input.due_at ?? null;
+  const source_url = input.source_url ?? null;
   return {
-    kind: input.kind,
+    kind,
     agent_id: agentId,
     project: input.project ?? "",
     title,
     body,
     options,
-    due_at: input.due_at ?? null,
-    source_url: input.source_url ?? null,
+    due_at,
+    source_url,
     status: "open" as const,
-    content_hash: computeContentHash(title, body, options),
+    content_hash: computeContentHash({
+      kind,
+      title,
+      body,
+      options,
+      source_url,
+      due_at,
+    }),
     created_at: nowIso,
     updated_at: nowIso,
     last_activity_at: nowIso,
@@ -62,34 +93,40 @@ export function buildNewItemFields(
 
 function contentChanged(
   item: ItemRow,
-  title: string,
-  body: string,
-  options: ItemOption[],
+  next: {
+    kind: ItemKind;
+    title: string;
+    body: string;
+    options: ItemOption[];
+    source_url: string | null;
+    due_at: string | null;
+  },
 ): boolean {
-  return (
-    title !== item.title ||
-    body !== item.body ||
-    computeContentHash(title, body, options) !== item.content_hash
-  );
+  const hash = computeContentHash(next);
+  return hash !== item.content_hash;
 }
 
-export function applyAgentPatch(
+/**
+ * 规划姐妹 PATCH：不回写「读到的旧 status」。
+ * 仅在显式改 status 或内容变更重开时设置 setStatus。
+ */
+export function planAgentPatch(
   agentId: string,
   item: ItemRow,
   patch: PatchItemInput,
 ):
-  | {
-      ok: true;
-      next: Partial<ItemRow> & { content_hash: string; status: ItemStatus };
-      contentReopened: boolean;
-    }
+  | { ok: true; plan: AgentPatchPlan }
   | { ok: false; status: number; error: string } {
   const ownership = assertAgentOwnsItem(agentId, item.agent_id);
   if (!ownership.ok) {
     return { ok: false, status: 403, error: ownership.error };
   }
 
-  const statusCheck = assertAgentMaySetStatus(patch.status);
+  const statusCheck = assertAgentMaySetStatus(
+    patch.status,
+    item.kind,
+    item.status,
+  );
   if (!statusCheck.ok) {
     return { ok: false, status: 403, error: statusCheck.error };
   }
@@ -109,31 +146,115 @@ export function applyAgentPatch(
   const title = patch.title !== undefined ? patch.title.trim() : item.title;
   const body = patch.body !== undefined ? patch.body.trim() : item.body;
   const options = patch.options !== undefined ? patch.options : item.options;
-  const reopened = contentChanged(item, title, body, options);
+  const kind = patch.kind !== undefined ? patch.kind : item.kind;
+  const source_url =
+    patch.source_url !== undefined ? patch.source_url : item.source_url;
+  const due_at = patch.due_at !== undefined ? patch.due_at : item.due_at;
 
-  const next: Partial<ItemRow> & { content_hash: string; status: ItemStatus } = {
-    content_hash: computeContentHash(title, body, options),
-    status: reopened ? "open" : (patch.status ?? item.status),
-  };
+  const reopened = contentChanged(item, {
+    kind,
+    title,
+    body,
+    options,
+    source_url,
+    due_at,
+  });
 
-  if (patch.title !== undefined) next.title = title;
-  if (patch.body !== undefined) next.body = body;
-  if (patch.options !== undefined) next.options = options;
-  if (patch.project !== undefined) next.project = patch.project;
-  if (patch.due_at !== undefined) next.due_at = patch.due_at;
-  if (patch.source_url !== undefined) next.source_url = patch.source_url;
-  if (patch.kind !== undefined) next.kind = patch.kind;
-  if (!reopened && patch.status !== undefined) next.status = patch.status;
+  const newContentHash = computeContentHash({
+    kind,
+    title,
+    body,
+    options,
+    source_url,
+    due_at,
+  });
 
-  // 改内容后强制退回 open（覆盖姐妹同时传来的 status）
+  let setStatus = false;
+  let newStatus: ItemStatus | null = null;
   if (reopened) {
-    next.status = "open";
+    setStatus = true;
+    newStatus = "open";
+  } else if (patch.status !== undefined) {
+    setStatus = true;
+    newStatus = patch.status;
   }
 
-  next.updated_at = new Date().toISOString();
-  next.last_activity_at = next.updated_at;
+  let eventAction: ItemAction = "update";
+  if (!reopened && patch.status === "withdrawn") {
+    eventAction = "withdraw";
+  }
 
-  return { ok: true, next, contentReopened: reopened };
+  return {
+    ok: true,
+    plan: {
+      expectedStatus: item.status,
+      expectedContentHash: item.content_hash,
+      newContentHash,
+      setStatus,
+      newStatus,
+      contentReopened: reopened,
+      eventAction,
+      fields: {
+        title: patch.title !== undefined ? title : null,
+        body: patch.body !== undefined ? body : null,
+        options: patch.options !== undefined ? options : null,
+        project: patch.project !== undefined ? patch.project : null,
+        due_at: patch.due_at !== undefined ? patch.due_at : undefined,
+        source_url:
+          patch.source_url !== undefined ? patch.source_url : undefined,
+        kind: patch.kind !== undefined ? patch.kind : null,
+      },
+    },
+  };
+}
+
+/** @deprecated 使用 planAgentPatch；保留别名供旧测试过渡 */
+export function applyAgentPatch(
+  agentId: string,
+  item: ItemRow,
+  patch: PatchItemInput,
+):
+  | {
+      ok: true;
+      next: Partial<ItemRow> & { content_hash: string };
+      contentReopened: boolean;
+      setStatus: boolean;
+      newStatus: ItemStatus | null;
+      eventAction: ItemAction;
+      expectedStatus: ItemStatus;
+      expectedContentHash: string;
+    }
+  | { ok: false; status: number; error: string } {
+  const planned = planAgentPatch(agentId, item, patch);
+  if (!planned.ok) {
+    return planned;
+  }
+  const { plan } = planned;
+  const next: Partial<ItemRow> & { content_hash: string } = {
+    content_hash: plan.newContentHash,
+  };
+  if (plan.fields.title !== null) next.title = plan.fields.title;
+  if (plan.fields.body !== null) next.body = plan.fields.body;
+  if (plan.fields.options !== null) next.options = plan.fields.options;
+  if (plan.fields.project !== null) next.project = plan.fields.project;
+  if (plan.fields.due_at !== undefined) next.due_at = plan.fields.due_at;
+  if (plan.fields.source_url !== undefined) {
+    next.source_url = plan.fields.source_url;
+  }
+  if (plan.fields.kind !== null) next.kind = plan.fields.kind;
+  if (plan.setStatus && plan.newStatus) {
+    next.status = plan.newStatus;
+  }
+  return {
+    ok: true,
+    next,
+    contentReopened: plan.contentReopened,
+    setStatus: plan.setStatus,
+    newStatus: plan.newStatus,
+    eventAction: plan.eventAction,
+    expectedStatus: plan.expectedStatus,
+    expectedContentHash: plan.expectedContentHash,
+  };
 }
 
 export function decisionToStatus(action: DecisionAction): ItemStatus {

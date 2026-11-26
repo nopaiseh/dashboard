@@ -17,7 +17,12 @@ describe("registration API rules", () => {
   });
 
   it("rejects register options without token", async () => {
-    const rpc = vi.fn();
+    const rpc = vi.fn().mockImplementation((name: string) => {
+      if (name === "rate_limit_register_options") {
+        return Promise.resolve({ data: true, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
@@ -47,10 +52,15 @@ describe("registration API rules", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("consumes bootstrap token via authorize RPC when token matches and no credentials", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: "11111111-1111-4111-8111-111111111111",
-      error: null,
+  it("authorizes bootstrap via RPC when token matches and no credentials", async () => {
+    const rpc = vi.fn().mockImplementation((name: string) => {
+      if (name === "rate_limit_register_options") {
+        return Promise.resolve({ data: true, error: null });
+      }
+      return Promise.resolve({
+        data: "11111111-1111-4111-8111-111111111111",
+        error: null,
+      });
     });
 
     vi.doMock("@/lib/supabase/server", () => ({
@@ -89,9 +99,14 @@ describe("registration API rules", () => {
   });
 
   it("disables bootstrap mode when any credential already exists", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: null,
-      error: { message: "invalid one-time token" },
+    const rpc = vi.fn().mockImplementation((name: string) => {
+      if (name === "rate_limit_register_options") {
+        return Promise.resolve({ data: true, error: null });
+      }
+      return Promise.resolve({
+        data: null,
+        error: { message: "invalid one-time token" },
+      });
     });
 
     vi.doMock("@/lib/supabase/server", () => ({

@@ -1,5 +1,8 @@
 import { getSiteName } from "@/lib/env";
 
+/** 需动态渲染以接收 proxy 注入的 CSP nonce。 */
+export const instant = false;
+
 /**
  * 登录页：除站名外不透露其它内容。
  * 实际 passkey 交互由前端另做；此处仅占位。
