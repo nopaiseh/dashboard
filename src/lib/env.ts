@@ -1,8 +1,3 @@
-/**
- * 服务器端环境变量读取。
- * 不在此处硬编码任何密钥；缺失时抛错（构建/测试可 mock）。
- */
-
 function required(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -27,6 +22,11 @@ export function getSessionSecret(): string {
   return required("SESSION_SECRET");
 }
 
+/** 首次注册启动令牌（明文仅存于环境变量；库中只记是否已消耗）。 */
+export function getBootstrapToken(): string {
+  return required("BOOTSTRAP_TOKEN");
+}
+
 export function getWebAuthnRpID(): string {
   return optional("WEBAUTHN_RP_ID", "desk.nopaiseh.com");
 }
@@ -43,7 +43,6 @@ export function getSiteName(): string {
   return optional("SITE_NAME", "玄机阁");
 }
 
-/** 构建期 / 无 DB 场景：是否具备运行时密钥。 */
 export function hasRuntimeSecrets(): boolean {
   return Boolean(
     process.env.SUPABASE_URL &&

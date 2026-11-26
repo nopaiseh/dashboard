@@ -1,3 +1,5 @@
+import "server-only";
+
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -59,10 +61,6 @@ export async function buildRegistrationOptions(
     },
     attestationType: "none",
   });
-}
-
-export async function buildStepUpOptions(credentials: StoredCredential[]) {
-  return buildLoginOptions(credentials);
 }
 
 export async function verifyLoginAssertion(

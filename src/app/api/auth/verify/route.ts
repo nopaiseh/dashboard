@@ -1,10 +1,12 @@
-import { z } from "zod";
+import { NextResponse } from "next/server";
+import { claimChallenge } from "@/lib/challenges";
 import { clientIp, jsonError } from "@/lib/http";
 import {
   assertNotLocked,
   recordLoginFailure,
   recordLoginSuccess,
 } from "@/lib/login-service";
+import { assertSameOrigin } from "@/lib/origin";
 import {
   SESSION_COOKIE_NAME,
   SESSION_IDLE_MS,
@@ -12,18 +14,15 @@ import {
   sessionCookieOptions,
 } from "@/lib/session";
 import { getServiceClient } from "@/lib/supabase/server";
+import { authVerifySchema } from "@/lib/validation";
 import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
-import { NextResponse } from "next/server";
 
-const verifySchema = z.object({
-  challenge_id: z.string().uuid(),
-  assertion: z.unknown(),
-});
-
-/**
- * POST /api/auth/verify — 校验 passkey 断言并签发会话 cookie。
- */
 export async function POST(request: Request) {
+  const origin = assertSameOrigin(request);
+  if (!origin.ok) {
+    return jsonError(403, origin.error);
+  }
+
   const ip = clientIp(request);
   const supabase = getServiceClient();
 
@@ -39,23 +38,17 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid json");
   }
 
-  const parsed = verifySchema.safeParse(body);
+  const parsed = authVerifySchema.safeParse(body);
   if (!parsed.success) {
     return jsonError(400, "invalid body");
   }
 
-  const { data: challengeRow } = await supabase
-    .from("webauthn_challenges")
-    .select("*")
-    .eq("id", parsed.data.challenge_id)
-    .eq("purpose", "login")
-    .maybeSingle();
-
+  const challengeRow = await claimChallenge(
+    supabase,
+    parsed.data.challenge_id,
+    "login",
+  );
   if (!challengeRow) {
-    await recordLoginFailure(supabase, ip);
-    return jsonError(401, "authentication failed");
-  }
-  if (new Date(challengeRow.expires_at).getTime() < Date.now()) {
     await recordLoginFailure(supabase, ip);
     return jsonError(401, "authentication failed");
   }
@@ -99,11 +92,6 @@ export async function POST(request: Request) {
     .from("webauthn_credentials")
     .update({ counter: verification.authenticationInfo.newCounter })
     .eq("credential_id", credentialId);
-
-  await supabase
-    .from("webauthn_challenges")
-    .delete()
-    .eq("id", parsed.data.challenge_id);
 
   await recordLoginSuccess(supabase, ip);
 

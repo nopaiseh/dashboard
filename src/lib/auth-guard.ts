@@ -1,4 +1,7 @@
+import "server-only";
+
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import {
   SESSION_COOKIE_NAME,
   SESSION_IDLE_MS,
@@ -11,6 +14,10 @@ export async function requireSession(): Promise<
   | { ok: true }
   | { ok: false; status: 401; error: string }
 > {
+  if (!process.env.SESSION_SECRET) {
+    return { ok: false, status: 401, error: "unauthorized" };
+  }
+
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE_NAME)?.value;
   if (!token) {
@@ -34,19 +41,10 @@ export async function requireSession(): Promise<
   return { ok: true };
 }
 
-export async function hasValidSessionCookie(
-  cookieHeader: string | null,
-): Promise<boolean> {
-  if (!cookieHeader) {
-    return false;
+/** 受保护布局：服务器端再验一次会话。 */
+export async function requireSessionOrRedirect(): Promise<void> {
+  const session = await requireSession();
+  if (!session.ok) {
+    redirect("/login");
   }
-  const match = new RegExp(
-    `(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`,
-  ).exec(cookieHeader);
-  const token = match?.[1];
-  if (!token) {
-    return false;
-  }
-  const session = await verifySessionToken(decodeURIComponent(token));
-  return session !== null;
 }

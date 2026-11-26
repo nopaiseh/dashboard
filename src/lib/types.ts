@@ -62,32 +62,23 @@ export interface ItemEventRow {
   created_at: string;
 }
 
-export interface AgentRow {
-  id: string;
-  slug: string;
-  name: string;
-  area: string;
-  bot_id: string | null;
-  created_at: string;
-}
-
-export interface AgentTokenRow {
-  id: string;
-  agent_id: string;
-  token_hash: string;
-  created_at: string;
-  revoked_at: string | null;
-}
-
 export interface SessionPayload {
   sub: "owner";
   iat: number;
   lastActivity: number;
 }
 
-export const AGENT_FORBIDDEN_STATUSES: ReadonlySet<ItemStatus> = new Set([
+/** 姐妹可主动设置的状态（仅 done / withdrawn）。 */
+export const AGENT_ALLOWED_STATUSES: ReadonlySet<ItemStatus> = new Set([
+  "done",
+  "withdrawn",
+]);
+
+/** 本人决定产生的状态。 */
+export const USER_DECISION_STATUSES: ReadonlySet<ItemStatus> = new Set([
   "approved",
   "rejected",
+  "replied",
 ]);
 
 export const DECISION_STATUSES: ReadonlySet<ItemStatus> = new Set([
@@ -97,3 +88,15 @@ export const DECISION_STATUSES: ReadonlySet<ItemStatus> = new Set([
   "done",
   "withdrawn",
 ]);
+
+/** 各 kind 允许的本人决定动作。 */
+export const ALLOWED_DECISIONS_BY_KIND: Record<
+  ItemKind,
+  ReadonlySet<DecisionAction>
+> = {
+  approval: new Set(["approve", "reject"]),
+  todo: new Set(["reply"]),
+  question_to_user: new Set(["reply"]),
+  question_from_user: new Set(["reply"]),
+  waiting: new Set(["reply"]),
+};

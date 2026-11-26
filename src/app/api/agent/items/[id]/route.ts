@@ -1,32 +1,9 @@
-import { z } from "zod";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { jsonError, jsonOk } from "@/lib/http";
 import { applyAgentPatch } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemRow } from "@/lib/types";
-
-const patchSchema = z.object({
-  project: z.string().optional(),
-  title: z.string().min(1).optional(),
-  body: z.string().optional(),
-  options: z
-    .array(z.object({ key: z.string(), label: z.string() }))
-    .optional(),
-  due_at: z.string().nullable().optional(),
-  source_url: z.string().nullable().optional(),
-  status: z
-    .enum(["open", "approved", "rejected", "replied", "done", "withdrawn"])
-    .optional(),
-  kind: z
-    .enum([
-      "approval",
-      "todo",
-      "question_to_user",
-      "question_from_user",
-      "waiting",
-    ])
-    .optional(),
-});
+import { patchItemSchema } from "@/lib/validation";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -50,7 +27,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(400, "invalid json");
   }
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = patchItemSchema.safeParse(body);
   if (!parsed.success) {
     return jsonError(400, "invalid body", { details: parsed.error.flatten() });
   }
@@ -92,9 +69,12 @@ export async function PATCH(request: Request, context: RouteContext) {
     item_id: id,
     actor_type: "agent",
     agent_id: auth.agent.agentId,
-    action: "update",
+    action: result.contentReopened ? "update" : parsed.data.status === "withdrawn" ? "withdraw" : "update",
     content_hash: updated.content_hash,
   });
 
-  return jsonOk({ item: updated });
+  return jsonOk({
+    item: updated,
+    content_reopened: result.contentReopened,
+  });
 }

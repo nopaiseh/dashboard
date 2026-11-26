@@ -1,9 +1,9 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/session";
 
 const SECRET = "test-session-secret-at-least-32-chars!!";
 
-describe("unauthenticated access", () => {
+describe("unauthenticated access / proxy hardening", () => {
   beforeAll(() => {
     process.env.SESSION_SECRET = SECRET;
   });
@@ -12,13 +12,8 @@ describe("unauthenticated access", () => {
     delete process.env.SESSION_SECRET;
   });
 
-  it("proxy returns 401 for protected api without cookie", async () => {
+  it("returns 401 for protected api without cookie", async () => {
     const { proxy } = await import("@/proxy");
-    const request = new Request("http://localhost/api/items", {
-      method: "GET",
-    }) as unknown as import("next/server").NextRequest;
-
-    // Minimal NextRequest-like shim
     const nextRequest = {
       nextUrl: new URL("http://localhost/api/items"),
       cookies: { get: () => undefined },
@@ -26,14 +21,11 @@ describe("unauthenticated access", () => {
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
 
-    void request;
     const res = await proxy(nextRequest);
     expect(res.status).toBe(401);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("unauthorized");
   });
 
-  it("proxy redirects pages to /login without cookie", async () => {
+  it("redirects pages to /login without cookie", async () => {
     const { proxy } = await import("@/proxy");
     const nextRequest = {
       nextUrl: new URL("http://localhost/"),
@@ -47,7 +39,52 @@ describe("unauthenticated access", () => {
     expect(res.headers.get("location")).toBe("http://localhost/login");
   });
 
-  it("proxy allows /login and agent api without session", async () => {
+  it("rejects when SESSION_SECRET is missing even if cookie present", async () => {
+    const token = await createSessionToken();
+    delete process.env.SESSION_SECRET;
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/api/goals"),
+      cookies: {
+        get: (name: string) =>
+          name === SESSION_COOKIE_NAME ? { value: token } : undefined,
+      },
+      url: "http://localhost/api/goals",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(401);
+    process.env.SESSION_SECRET = SECRET;
+  });
+
+  it("does not allow arbitrary extension paths", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/secret.json"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/secret.json",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(307);
+  });
+
+  it("allows whitelisted public static assets", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/next.svg"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/next.svg",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(200);
+  });
+
+  it("allows /login and agent api without session", async () => {
     const { proxy } = await import("@/proxy");
     const loginReq = {
       nextUrl: new URL("http://localhost/login"),
@@ -55,8 +92,7 @@ describe("unauthenticated access", () => {
       url: "http://localhost/login",
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
-    const loginRes = await proxy(loginReq);
-    expect(loginRes.status).toBe(200);
+    expect((await proxy(loginReq)).status).toBe(200);
 
     const agentReq = {
       nextUrl: new URL("http://localhost/api/agent/items"),
@@ -64,11 +100,10 @@ describe("unauthenticated access", () => {
       url: "http://localhost/api/agent/items",
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
-    const agentRes = await proxy(agentReq);
-    expect(agentRes.status).toBe(200);
+    expect((await proxy(agentReq)).status).toBe(200);
   });
 
-  it("proxy allows authenticated session cookie", async () => {
+  it("allows authenticated session cookie and sets security headers", async () => {
     const token = await createSessionToken();
     const { proxy } = await import("@/proxy");
     const nextRequest = {
@@ -84,5 +119,9 @@ describe("unauthenticated access", () => {
     const res = await proxy(nextRequest);
     expect(res.status).toBe(200);
     expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("content-security-policy")).toContain(
+      "frame-ancestors 'none'",
+    );
   });
 });

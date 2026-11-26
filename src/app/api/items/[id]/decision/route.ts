@@ -1,22 +1,24 @@
-import { z } from "zod";
 import { requireSession } from "@/lib/auth-guard";
+import { claimChallenge } from "@/lib/challenges";
 import { jsonError, jsonOk } from "@/lib/http";
-import { decisionToStatus } from "@/lib/items-logic";
+import {
+  assertDecisionAllowed,
+  decisionToStatus,
+} from "@/lib/items-logic";
+import { assertSameOrigin } from "@/lib/origin";
 import { getServiceClient } from "@/lib/supabase/server";
-import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
 import type { ItemRow } from "@/lib/types";
-
-const decisionSchema = z.object({
-  action: z.enum(["approve", "reject", "reply"]),
-  option_key: z.string().optional(),
-  reply_text: z.string().optional(),
-  assertion: z.unknown(),
-  challenge_id: z.string().uuid(),
-});
+import { decisionSchema } from "@/lib/validation";
+import { verifyLoginAssertion, type StoredCredential } from "@/lib/webauthn";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
+  const origin = assertSameOrigin(request);
+  if (!origin.ok) {
+    return jsonError(403, origin.error);
+  }
+
   const session = await requireSession();
   if (!session.ok) {
     return jsonError(session.status, session.error);
@@ -37,20 +39,17 @@ export async function POST(request: Request, context: RouteContext) {
 
   const supabase = getServiceClient();
 
-  const { data: challengeRow, error: challengeError } = await supabase
-    .from("webauthn_challenges")
-    .select("*")
-    .eq("id", parsed.data.challenge_id)
-    .eq("purpose", "step_up")
-    .maybeSingle();
-
-  if (challengeError || !challengeRow) {
+  const challengeRow = await claimChallenge(
+    supabase,
+    parsed.data.challenge_id,
+    "step_up",
+    id,
+  );
+  if (!challengeRow) {
     return jsonError(400, "invalid challenge");
   }
-  if (new Date(challengeRow.expires_at).getTime() < Date.now()) {
-    return jsonError(400, "challenge expired");
-  }
-  if (challengeRow.item_id && challengeRow.item_id !== id) {
+  // step_up item_id 严格相等（RPC 已强制）
+  if (challengeRow.item_id !== id) {
     return jsonError(400, "challenge item mismatch");
   }
 
@@ -60,13 +59,13 @@ export async function POST(request: Request, context: RouteContext) {
     return jsonError(400, "assertion missing credential id");
   }
 
-  const { data: credential, error: credError } = await supabase
+  const { data: credential } = await supabase
     .from("webauthn_credentials")
     .select("*")
     .eq("credential_id", credentialId)
     .maybeSingle();
 
-  if (credError || !credential) {
+  if (!credential) {
     return jsonError(401, "unknown credential");
   }
 
@@ -92,11 +91,6 @@ export async function POST(request: Request, context: RouteContext) {
     .update({ counter: verification.authenticationInfo.newCounter })
     .eq("credential_id", credentialId);
 
-  await supabase
-    .from("webauthn_challenges")
-    .delete()
-    .eq("id", parsed.data.challenge_id);
-
   const { data: item, error: itemError } = await supabase
     .from("items")
     .select("*")
@@ -108,41 +102,34 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const typed = item as ItemRow;
+  const allowed = assertDecisionAllowed(
+    typed.kind,
+    parsed.data.action,
+    typed.status,
+    parsed.data.option_key,
+    typed.options ?? [],
+    parsed.data.content_hash,
+    typed.content_hash,
+  );
+  if (!allowed.ok) {
+    return jsonError(409, allowed.error);
+  }
+
   const nextStatus = decisionToStatus(parsed.data.action);
+  const { data, error } = await supabase.rpc("apply_item_decision", {
+    p_item_id: id,
+    p_action: parsed.data.action,
+    p_expected_content_hash: parsed.data.content_hash,
+    p_option_key: parsed.data.option_key ?? null,
+    p_reply_text: parsed.data.reply_text ?? null,
+    p_credential_id: credentialId,
+    p_verified_at: verifiedAt,
+    p_next_status: nextStatus,
+  });
 
-  const { data: updated, error: updateError } = await supabase
-    .from("items")
-    .update({
-      status: nextStatus,
-      last_activity_at: verifiedAt,
-      updated_at: verifiedAt,
-    })
-    .eq("id", id)
-    .select("*")
-    .single();
-
-  if (updateError || !updated) {
-    return jsonError(500, "failed to update item");
+  if (error || !data) {
+    return jsonError(409, error?.message ?? "decision failed");
   }
 
-  const { data: event, error: eventError } = await supabase
-    .from("item_events")
-    .insert({
-      item_id: id,
-      actor_type: "user",
-      action: parsed.data.action,
-      option_key: parsed.data.option_key ?? null,
-      reply_text: parsed.data.reply_text ?? null,
-      credential_id: credentialId,
-      verified_at: verifiedAt,
-      content_hash: typed.content_hash,
-    })
-    .select("*")
-    .single();
-
-  if (eventError || !event) {
-    return jsonError(500, "failed to write event");
-  }
-
-  return jsonOk({ item: updated, event });
+  return jsonOk(data);
 }

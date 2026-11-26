@@ -35,6 +35,10 @@ jobs:
         run: npm test
         env:
           SESSION_SECRET: ci-test-session-secret-at-least-32-chars
+          BOOTSTRAP_TOKEN: ci-bootstrap-placeholder-not-real
+          WEBAUTHN_ORIGIN: https://desk.nopaiseh.com
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: test-placeholder-not-a-real-key
 
       - name: Build
         run: npm run build
@@ -43,6 +47,7 @@ jobs:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: build-placeholder-not-a-real-key
           SESSION_SECRET: ci-build-session-secret-at-least-32-chars
+          BOOTSTRAP_TOKEN: ci-bootstrap-placeholder-not-real
           WEBAUTHN_RP_ID: desk.nopaiseh.com
           WEBAUTHN_ORIGIN: https://desk.nopaiseh.com
           SITE_NAME: 玄机阁

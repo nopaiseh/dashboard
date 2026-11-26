@@ -1,7 +1,9 @@
+import "server-only";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  anyLocked,
   clearedAttemptState,
+  evaluateLoginLockout,
   isLocked,
   nextFailureState,
   type LoginAttemptState,
@@ -42,8 +44,9 @@ export async function assertNotLocked(
     loadAttempt(supabase, "ip", ip),
     loadAttempt(supabase, "global", "all"),
   ]);
-  if (anyLocked([ipAttempt, globalAttempt])) {
-    return { ok: false, error: "locked: too many failed login attempts" };
+  const result = evaluateLoginLockout(ipAttempt, globalAttempt);
+  if (result.locked) {
+    return { ok: false, error: result.reason ?? "locked" };
   }
   return { ok: true };
 }
@@ -58,7 +61,10 @@ export async function recordLoginFailure(
   ]);
   const ipNext = nextFailureState(ipPrev, "ip", ip);
   const globalNext = nextFailureState(globalPrev, "global", "all");
-  await Promise.all([saveAttempt(supabase, ipNext), saveAttempt(supabase, globalNext)]);
+  await Promise.all([
+    saveAttempt(supabase, ipNext),
+    saveAttempt(supabase, globalNext),
+  ]);
   return {
     locked: isLocked(ipNext) || isLocked(globalNext),
   };

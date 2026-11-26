@@ -1,18 +1,34 @@
+import { requireSession } from "@/lib/auth-guard";
 import { clientIp, jsonError, jsonOk } from "@/lib/http";
+import { assertSameOrigin } from "@/lib/origin";
 import {
   assertNotLocked,
-  recordLoginFailure,
 } from "@/lib/login-service";
 import { getServiceClient } from "@/lib/supabase/server";
+import { stepUpOptionsSchema } from "@/lib/validation";
 import { buildLoginOptions, type StoredCredential } from "@/lib/webauthn";
 
 /**
- * GET /api/auth/options — 登录用 passkey 断言选项。
- * 不透露站名以外的敏感信息；无凭证时返回通用错误。
+ * GET /api/auth/options — 登录断言选项；库内按 IP 限流并清理过期挑战。
  */
 export async function GET(request: Request) {
   const ip = clientIp(request);
   const supabase = getServiceClient();
+
+  const { data: allowed, error: rateError } = await supabase.rpc(
+    "rate_limit_auth_options",
+    {
+      p_scope_key: ip,
+      p_limit: 30,
+      p_window_seconds: 60,
+    },
+  );
+  if (rateError) {
+    return jsonError(500, "unavailable");
+  }
+  if (!allowed) {
+    return jsonError(429, "rate limit exceeded");
+  }
 
   const lock = await assertNotLocked(supabase, ip);
   if (!lock.ok) {
@@ -28,14 +44,10 @@ export async function GET(request: Request) {
   }
 
   if (!credentials || credentials.length === 0) {
-    // 不暴露「尚未登记」细节给未认证访客时可统一文案
     return jsonError(503, "login unavailable");
   }
 
-  const options = await buildLoginOptions(
-    credentials as StoredCredential[],
-  );
-
+  const options = await buildLoginOptions(credentials as StoredCredential[]);
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   const { data: challengeRow, error: challengeError } = await supabase
     .from("webauthn_challenges")
@@ -43,12 +55,12 @@ export async function GET(request: Request) {
       challenge: options.challenge,
       purpose: "login",
       expires_at: expiresAt,
+      authorized: false,
     })
     .select("id")
     .single();
 
   if (challengeError || !challengeRow) {
-    await recordLoginFailure(supabase, ip);
     return jsonError(500, "unavailable");
   }
 
@@ -59,24 +71,28 @@ export async function GET(request: Request) {
 }
 
 /**
- * POST /api/auth/options — step-up 断言选项（须已登录会话）。
- * body: { purpose: 'step_up', item_id: uuid }
+ * POST /api/auth/options — step-up（需登录 + Origin）。
  */
 export async function POST(request: Request) {
-  const { requireSession } = await import("@/lib/auth-guard");
+  const origin = assertSameOrigin(request);
+  if (!origin.ok) {
+    return jsonError(403, origin.error);
+  }
+
   const session = await requireSession();
   if (!session.ok) {
     return jsonError(session.status, session.error);
   }
 
-  let body: { purpose?: string; item_id?: string } = {};
+  let body: unknown;
   try {
-    body = (await request.json()) as typeof body;
+    body = await request.json();
   } catch {
     return jsonError(400, "invalid json");
   }
 
-  if (body.purpose !== "step_up" || !body.item_id) {
+  const parsed = stepUpOptionsSchema.safeParse(body);
+  if (!parsed.success) {
     return jsonError(400, "invalid body");
   }
 
@@ -89,17 +105,16 @@ export async function POST(request: Request) {
     return jsonError(503, "login unavailable");
   }
 
-  const options = await buildLoginOptions(
-    credentials as StoredCredential[],
-  );
+  const options = await buildLoginOptions(credentials as StoredCredential[]);
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   const { data: challengeRow, error: challengeError } = await supabase
     .from("webauthn_challenges")
     .insert({
       challenge: options.challenge,
       purpose: "step_up",
-      item_id: body.item_id,
+      item_id: parsed.data.item_id,
       expires_at: expiresAt,
+      authorized: false,
     })
     .select("id")
     .single();

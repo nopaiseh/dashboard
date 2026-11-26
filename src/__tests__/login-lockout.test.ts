@@ -4,11 +4,12 @@ import {
   LOGIN_MAX_FAILURES,
   anyLocked,
   clearedAttemptState,
+  evaluateLoginLockout,
   isLocked,
   nextFailureState,
 } from "@/lib/login-lockout";
 
-describe("login lockout", () => {
+describe("login lockout (centralized)", () => {
   it(`locks after ${LOGIN_MAX_FAILURES} consecutive failures for ${LOGIN_LOCK_MINUTES} minutes`, () => {
     const now = new Date("2025-06-01T12:00:00.000Z");
     let state = null;
@@ -18,7 +19,6 @@ describe("login lockout", () => {
     }
     state = nextFailureState(state, "ip", "1.2.3.4", now);
     expect(isLocked(state, now)).toBe(true);
-    expect(state.locked_until).not.toBeNull();
 
     const stillLockedAt = new Date(
       now.getTime() + (LOGIN_LOCK_MINUTES - 1) * 60 * 1000,
@@ -31,7 +31,7 @@ describe("login lockout", () => {
     expect(isLocked(state, unlockedAt)).toBe(false);
   });
 
-  it("clears on success and anyLocked aggregates scopes", () => {
+  it("evaluateLoginLockout is the single decision entrypoint", () => {
     const now = new Date("2025-06-01T12:00:00.000Z");
     const locked = nextFailureState(
       {
@@ -44,9 +44,12 @@ describe("login lockout", () => {
       "9.9.9.9",
       now,
     );
-    expect(
-      anyLocked([locked, clearedAttemptState("global", "all")], now),
-    ).toBe(true);
+    const decision = evaluateLoginLockout(
+      locked,
+      clearedAttemptState("global", "all"),
+      now,
+    );
+    expect(decision.locked).toBe(true);
     expect(
       anyLocked(
         [

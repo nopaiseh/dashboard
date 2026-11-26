@@ -1,26 +1,8 @@
-import { z } from "zod";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { clientIp, jsonError, jsonOk } from "@/lib/http";
 import { buildNewItemFields } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
-
-const createSchema = z.object({
-  kind: z.enum([
-    "approval",
-    "todo",
-    "question_to_user",
-    "question_from_user",
-    "waiting",
-  ]),
-  project: z.string().optional(),
-  title: z.string().min(1),
-  body: z.string().optional(),
-  options: z
-    .array(z.object({ key: z.string(), label: z.string() }))
-    .optional(),
-  due_at: z.string().nullable().optional(),
-  source_url: z.string().nullable().optional(),
-});
+import { createItemSchema } from "@/lib/validation";
 
 export async function POST(request: Request) {
   void clientIp(request);
@@ -42,7 +24,7 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid json");
   }
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = createItemSchema.safeParse(body);
   if (!parsed.success) {
     return jsonError(400, "invalid body", { details: parsed.error.flatten() });
   }

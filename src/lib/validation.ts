@@ -1,0 +1,120 @@
+import { z } from "zod";
+
+export const TITLE_MAX = 200;
+export const BODY_MAX = 10_000;
+export const PROJECT_MAX = 200;
+export const OPTION_KEY_MAX = 64;
+export const OPTION_LABEL_MAX = 200;
+export const OPTIONS_MAX = 20;
+export const REPLY_MAX = 5_000;
+
+const httpsUrl = z
+  .string()
+  .url()
+  .refine((u) => u.startsWith("https://"), {
+    message: "source_url must be https",
+  });
+
+export const itemOptionSchema = z
+  .object({
+    key: z.string().min(1).max(OPTION_KEY_MAX),
+    label: z.string().min(1).max(OPTION_LABEL_MAX),
+  })
+  .strict();
+
+export const itemOptionsSchema = z
+  .array(itemOptionSchema)
+  .max(OPTIONS_MAX)
+  .superRefine((opts, ctx) => {
+    const keys = opts.map((o) => o.key);
+    if (new Set(keys).size !== keys.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "option keys must be unique",
+      });
+    }
+  });
+
+export const createItemSchema = z
+  .object({
+    kind: z.enum([
+      "approval",
+      "todo",
+      "question_to_user",
+      "question_from_user",
+      "waiting",
+    ]),
+    project: z.string().max(PROJECT_MAX).optional(),
+    title: z.string().min(1).max(TITLE_MAX),
+    body: z.string().max(BODY_MAX).optional(),
+    options: itemOptionsSchema.optional(),
+    due_at: z.string().datetime().nullable().optional(),
+    source_url: httpsUrl.nullable().optional(),
+  })
+  .strict();
+
+export const patchItemSchema = z
+  .object({
+    project: z.string().max(PROJECT_MAX).optional(),
+    title: z.string().min(1).max(TITLE_MAX).optional(),
+    body: z.string().max(BODY_MAX).optional(),
+    options: itemOptionsSchema.optional(),
+    due_at: z.string().datetime().nullable().optional(),
+    source_url: httpsUrl.nullable().optional(),
+    status: z.enum(["done", "withdrawn"]).optional(),
+    kind: z
+      .enum([
+        "approval",
+        "todo",
+        "question_to_user",
+        "question_from_user",
+        "waiting",
+      ])
+      .optional(),
+  })
+  .strict();
+
+export const decisionSchema = z
+  .object({
+    action: z.enum(["approve", "reject", "reply"]),
+    content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    option_key: z.string().min(1).max(OPTION_KEY_MAX).optional(),
+    reply_text: z.string().max(REPLY_MAX).optional(),
+    assertion: z.unknown(),
+    challenge_id: z.string().uuid(),
+  })
+  .strict();
+
+export const registerOptionsSchema = z
+  .object({
+    token: z.string().min(1).max(512),
+  })
+  .strict();
+
+export const registerVerifySchema = z
+  .object({
+    challenge_id: z.string().uuid(),
+    attestation: z.unknown(),
+  })
+  .strict();
+
+export const authVerifySchema = z
+  .object({
+    challenge_id: z.string().uuid(),
+    assertion: z.unknown(),
+  })
+  .strict();
+
+export const stepUpOptionsSchema = z
+  .object({
+    purpose: z.literal("step_up"),
+    item_id: z.string().uuid(),
+  })
+  .strict();
+
+export const inviteSchema = z
+  .object({
+    assertion: z.unknown(),
+    challenge_id: z.string().uuid(),
+  })
+  .strict();

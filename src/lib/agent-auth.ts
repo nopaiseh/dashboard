@@ -1,5 +1,5 @@
 import { hashAgentToken, verifyAgentToken } from "@/lib/crypto";
-import { AGENT_FORBIDDEN_STATUSES, type ItemStatus } from "@/lib/types";
+import { AGENT_ALLOWED_STATUSES, type ItemStatus } from "@/lib/types";
 
 export interface TokenRecord {
   agent_id: string;
@@ -12,9 +12,6 @@ export interface AuthenticatedAgent {
   tokenHash: string;
 }
 
-/**
- * 从 Authorization: Bearer <token> 解析原始令牌。
- */
 export function extractBearerToken(
   authorizationHeader: string | null,
 ): string | null {
@@ -29,10 +26,6 @@ export function extractBearerToken(
   return token && token.length > 0 ? token : null;
 }
 
-/**
- * 在候选令牌记录中校验哈希且未作废。
- * 调用方应先用 hash 查库；此函数负责比对与作废检查。
- */
 export function authenticateAgentToken(
   rawToken: string,
   records: TokenRecord[],
@@ -49,23 +42,22 @@ export function authenticateAgentToken(
   return null;
 }
 
-/** 姐妹不可将状态写成 approved / rejected。 */
+/** 姐妹可设状态仅 done / withdrawn。 */
 export function assertAgentMaySetStatus(
   status: ItemStatus | undefined,
 ): { ok: true } | { ok: false; error: string } {
   if (status === undefined) {
     return { ok: true };
   }
-  if (AGENT_FORBIDDEN_STATUSES.has(status)) {
+  if (!AGENT_ALLOWED_STATUSES.has(status)) {
     return {
       ok: false,
-      error: "agents cannot set status to approved or rejected",
+      error: "agents may only set status to done or withdrawn",
     };
   }
   return { ok: true };
 }
 
-/** 只能改自己名下的事项。 */
 export function assertAgentOwnsItem(
   agentId: string,
   itemAgentId: string,
