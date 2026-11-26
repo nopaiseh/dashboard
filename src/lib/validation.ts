@@ -7,6 +7,19 @@ export const OPTION_KEY_MAX = 64;
 export const OPTION_LABEL_MAX = 200;
 export const OPTIONS_MAX = 20;
 export const REPLY_MAX = 5_000;
+/** WebAuthn 凭据 ID：规范上限 1023 字节 → 无填充 base64url 最长 1364 字符 */
+export const CREDENTIAL_ID_MAX = 1364;
+
+/**
+ * assertion / attestation 载荷：限制 id、rawId 长度，其余 WebAuthn 字段透传。
+ * 超长在进库前由 zod 拒绝（400）；与其它 body 校验失败一样不计入登录失败锁定。
+ */
+export const webauthnCredentialPayloadSchema = z
+  .object({
+    id: z.string().max(CREDENTIAL_ID_MAX).optional(),
+    rawId: z.string().max(CREDENTIAL_ID_MAX).optional(),
+  })
+  .passthrough();
 
 const httpsUrl = z
   .string()
@@ -80,7 +93,7 @@ export const decisionSchema = z
     content_hash: z.string().regex(/^[a-f0-9]{64}$/),
     option_key: z.string().min(1).max(OPTION_KEY_MAX).optional(),
     reply_text: z.string().max(REPLY_MAX).optional(),
-    assertion: z.unknown(),
+    assertion: webauthnCredentialPayloadSchema,
     challenge_id: z.string().uuid(),
   })
   .strict();
@@ -94,14 +107,14 @@ export const registerOptionsSchema = z
 export const registerVerifySchema = z
   .object({
     challenge_id: z.string().uuid(),
-    attestation: z.unknown(),
+    attestation: webauthnCredentialPayloadSchema,
   })
   .strict();
 
 export const authVerifySchema = z
   .object({
     challenge_id: z.string().uuid(),
-    assertion: z.unknown(),
+    assertion: webauthnCredentialPayloadSchema,
   })
   .strict();
 
@@ -114,7 +127,7 @@ export const stepUpOptionsSchema = z
 
 export const inviteSchema = z
   .object({
-    assertion: z.unknown(),
+    assertion: webauthnCredentialPayloadSchema,
     challenge_id: z.string().uuid(),
   })
   .strict();
