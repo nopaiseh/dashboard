@@ -53,6 +53,19 @@ export const NAV_TABS = [
 
 export type NavTabId = (typeof NAV_TABS)[number]["id"];
 
+/** 从 pathname 推断顶栏高亮；错误边界与客户端壳共用。 */
+export function navTabFromPathname(pathname: string): NavTabId {
+  if (pathname.startsWith("/sisters")) return "sisters";
+  if (pathname.startsWith("/pending")) return "pending";
+  if (pathname.startsWith("/todo")) return "todo";
+  if (pathname.startsWith("/qa-in")) return "qa-in";
+  if (pathname.startsWith("/qa-out")) return "qa-out";
+  if (pathname.startsWith("/waiting")) return "waiting";
+  if (pathname.startsWith("/held")) return "held";
+  if (pathname.startsWith("/goals")) return "goals";
+  return "today";
+}
+
 export const MOBILE_BOTTOM = [
   { id: "today", href: "/", label: "今日" },
   { id: "pending", href: "/pending", label: "待批" },

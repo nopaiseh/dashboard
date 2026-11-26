@@ -17,7 +17,7 @@ export function AppShell({
   return (
     <div className={"qj-app"}>
       <TopNav active={active} counts={counts} siteName={siteName} />
-      <div className={"qj-wrap"}>{children}</div>
+      <main className={"qj-wrap"}>{children}</main>
       <BottomNav active={active} />
     </div>
   );

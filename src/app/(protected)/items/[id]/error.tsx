@@ -1,13 +1,13 @@
 "use client";
 
-import { ReadError } from "@/components/qingjian/ReadError";
+import { ProtectedReadError } from "@/components/qingjian/ProtectedReadError";
 
-/** 事项详情读失败边界。 */
+/** 事项详情读失败边界；壳内渲染以保留顶栏。 */
 export default function ItemDetailError({
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return <ReadError reset={reset} />;
+  return <ProtectedReadError reset={reset} />;
 }
