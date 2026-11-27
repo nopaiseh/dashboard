@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_TOKEN_PREFIX,
+  generateAgentBearerToken,
   hashAgentToken,
   safeEqualHex,
   sha256Hex,
@@ -12,6 +14,12 @@ describe("token hashing", () => {
     const hash = hashAgentToken(raw);
     expect(hash).toBe(sha256Hex(raw));
     expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("generateAgentBearerToken is prefixed and hashes stably", () => {
+    const raw = generateAgentBearerToken();
+    expect(raw.startsWith(AGENT_TOKEN_PREFIX)).toBe(true);
+    expect(verifyAgentToken(raw, hashAgentToken(raw))).toBe(true);
   });
 
   it("verifies matching token against stored hash", () => {
