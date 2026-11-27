@@ -4,14 +4,17 @@ import { assertSameOrigin } from "@/lib/origin";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { requireRequest } from "@/lib/require-request";
 import { createAuthOtpClient } from "@/lib/supabase/auth-otp";
+import { ensureMinDuration } from "@/lib/timing";
 import { setupRequestSchema } from "@/lib/validation";
 import { getWebAuthnOrigin } from "@/lib/env";
 
 /**
  * POST /api/auth/setup/request
  * 提交邮箱；仅当匹配 OWNER_EMAIL 时发送魔法链接。
- * 始终返回同一中性响应，避免枚举。按 IP 限流。
- * 对匹配/非匹配路径做最短响应时间填充，缩小时序差。
+ * 始终返回同一中性响应，避免枚举。按 IP 限流（进程内，见 rate-limit.ts）。
+ * 对匹配/非匹配路径做 ~400ms 最短响应时间填充，缩小时序差。
+ *
+ * 注：confirm 返回按成败区分的状态码/文案，时序填充无法隐藏结果，故不加下限。
  */
 
 const NEUTRAL = {
@@ -72,12 +75,6 @@ export async function POST(request: Request) {
     }
   }
 
-  const elapsed = Date.now() - started;
-  if (elapsed < MIN_RESPONSE_MS) {
-    await new Promise((resolve) =>
-      setTimeout(resolve, MIN_RESPONSE_MS - elapsed),
-    );
-  }
-
+  await ensureMinDuration(started, MIN_RESPONSE_MS);
   return jsonOk(NEUTRAL);
 }

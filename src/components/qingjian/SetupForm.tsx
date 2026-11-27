@@ -10,11 +10,11 @@ const NEUTRAL_SENT =
 /**
  * 登记失败文案：不泄漏服务端/浏览器细节。
  * NotAllowedError 亦可能来自认证器不支持 resident keys，故不用「已取消」。
- * 403：setup-grant 缺失/过期，或 invite 令牌无效。
+ * 403：setup-grant 缺失/过期/jti 已消费，或 invite 令牌无效。
  */
 export function setupRegistrationErrorMessage(err: unknown): string {
   if (err instanceof PasskeyError && err.status === 403) {
-    return "令牌无效或已失效";
+    return "令牌无效或已失效，请回到登记页重新发送邮件";
   }
   if (err instanceof Error && err.name === "NotAllowedError") {
     return "未完成登记，请确认使用支持通行密钥的认证器，或重试";

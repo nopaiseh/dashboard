@@ -32,3 +32,8 @@ npm run build
 1. 配置 `OWNER_EMAIL`、`SESSION_SECRET`、`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`（anon 仅服务器 Auth OTP）。
 2. 在 Supabase Auth 仪表盘：开启 Email、**关闭**公开注册、Site URL / Redirect 为 `https://desk.nopaiseh.com`，Magic Link 模板使用 `token_hash` 链到 `/setup/confirm`；预先创建与 `OWNER_EMAIL` 相同的用户。
 3. 打开 `/setup` → 输入邮箱 → 邮件内链接 → **点击确认** → 登记 passkey（算法仅 ES256/RS256）。
+
+### 邮件与过期
+
+- **SMTP**：当前用 Supabase **内置邮件**（每小时额度较低，仅够主人自用）；自定义 SMTP（如 Resend）留待后续。
+- **OTP / 魔法链接过期**：计划在 Auth 仪表盘设为 **15 分钟**；setup-grant cookie 约 10 分钟。详见 [docs/architecture.md](docs/architecture.md)。

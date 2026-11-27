@@ -189,6 +189,29 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.status).toBe(401);
   });
 
+  it("does not treat /api/auth/registerX as public (trailing slash prefix)", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/api/auth/registerX"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/auth/registerX",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const res = await proxy(nextRequest);
+    expect(res.status).toBe(401);
+  });
+
+  it("allows /api/auth/register/options without session", async () => {
+    const { proxy } = await import("@/proxy");
+    const nextRequest = {
+      nextUrl: new URL("http://localhost/api/auth/register/options"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/auth/register/options",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    expect((await proxy(nextRequest)).status).toBe(200);
+  });
+
   it("allows authenticated session cookie and sets security headers", async () => {
     const token = await createSessionToken();
     const { proxy } = await import("@/proxy");

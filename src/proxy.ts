@@ -25,7 +25,8 @@ const PUBLIC_PATHS = new Set([
 const PUBLIC_API_PREFIXES = [
   "/api/auth/options",
   "/api/auth/verify",
-  "/api/auth/register",
+  // 尾斜杠：避免 /api/auth/registerX 被 startsWith 误放行
+  "/api/auth/register/",
   "/api/auth/setup/",
   "/api/agent/",
 ];

@@ -31,7 +31,8 @@ describe("register verify dual challenge", () => {
     });
 
     vi.doMock("@/lib/setup-grant", () => ({
-      hasValidSetupGrant: async () => true,
+      readValidSetupGrantJti: async () => "grant-jti-dual",
+      consumeSetupGrantJti: vi.fn(),
       SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
       clearedSetupGrantCookieOptions: () => ({ maxAge: 0 }),
     }));

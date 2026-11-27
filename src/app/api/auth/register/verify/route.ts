@@ -3,7 +3,8 @@ import { jsonError } from "@/lib/http";
 import {
   SETUP_GRANT_COOKIE_NAME,
   clearedSetupGrantCookieOptions,
-  hasValidSetupGrant,
+  consumeSetupGrantJti,
+  readValidSetupGrantJti,
 } from "@/lib/setup-grant";
 import { getServiceClient } from "@/lib/supabase/server";
 import { registerVerifySchema } from "@/lib/validation";
@@ -16,7 +17,7 @@ import { requireRequest } from "@/lib/require-request";
 /**
  * POST /api/auth/register/verify
  * 校验 attestation 后由 RPC 在同一事务复查授权、写入凭据、关闭注册。
- * bootstrap（首次）挑战另须有效 setup-grant；成功后清除 grant。
+ * bootstrap（首次）挑战另须有效 setup-grant；成功后消费 jti 并清除 grant cookie。
  */
 
 export async function POST(request: Request) {
@@ -48,9 +49,10 @@ export async function POST(request: Request) {
   }
 
   const isBootstrap = preview.registration_mode === "bootstrap";
+  let grantJti: string | null = null;
   if (isBootstrap) {
-    const grantOk = await hasValidSetupGrant();
-    if (!grantOk) {
+    grantJti = await readValidSetupGrantJti();
+    if (!grantJti) {
       return jsonError(403, "registration denied");
     }
   }
@@ -87,7 +89,8 @@ export async function POST(request: Request) {
     ok: true,
     credential_id: credential.id,
   });
-  if (isBootstrap) {
+  if (isBootstrap && grantJti) {
+    await consumeSetupGrantJti(grantJti);
     response.cookies.set(
       SETUP_GRANT_COOKIE_NAME,
       "",

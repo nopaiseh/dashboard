@@ -104,9 +104,11 @@ describe("setupRegistrationErrorMessage", () => {
     expect(setupRegistrationErrorMessage(err)).not.toContain("NotSupported");
   });
 
-  it("shows 令牌无效或已失效 for token-rejected PasskeyError (403)", () => {
+  it("shows 令牌无效或已失效 + 回到登记页提示 for token-rejected PasskeyError (403)", () => {
     const denied = new PasskeyError("registration denied", 403);
-    expect(setupRegistrationErrorMessage(denied)).toBe("令牌无效或已失效");
+    expect(setupRegistrationErrorMessage(denied)).toBe(
+      "令牌无效或已失效，请回到登记页重新发送邮件",
+    );
     expect(setupRegistrationErrorMessage(denied)).not.toContain(
       "registration denied",
     );

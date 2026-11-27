@@ -222,6 +222,13 @@ describe("register verify requires grant for bootstrap", () => {
     process.env.WEBAUTHN_ORIGIN = "https://desk.nopaiseh.com";
   });
 
+  afterEach(() => {
+    vi.doUnmock("@/lib/setup-grant");
+    vi.doUnmock("@/lib/supabase/server");
+    vi.doUnmock("@/lib/webauthn");
+    vi.resetModules();
+  });
+
   it("rejects bootstrap verify when setup grant is missing or expired", async () => {
     const maybeSingle = vi.fn().mockResolvedValue({
       data: {
@@ -236,7 +243,8 @@ describe("register verify requires grant for bootstrap", () => {
     });
 
     vi.doMock("@/lib/setup-grant", () => ({
-      hasValidSetupGrant: async () => false,
+      readValidSetupGrantJti: async () => null,
+      consumeSetupGrantJti: vi.fn(),
       SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
       clearedSetupGrantCookieOptions: () => ({ maxAge: 0 }),
     }));
@@ -273,5 +281,97 @@ describe("register verify requires grant for bootstrap", () => {
       }),
     );
     expect(res.status).toBe(403);
+  });
+});
+
+describe("setup grant jti consumption", () => {
+  beforeEach(() => {
+    vi.doUnmock("@/lib/setup-grant");
+    vi.resetModules();
+    process.env.SESSION_SECRET = SECRET;
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+  });
+
+  afterEach(() => {
+    vi.doUnmock("@/lib/supabase/server");
+    vi.doUnmock("next/headers");
+    vi.resetModules();
+    delete process.env.SESSION_SECRET;
+  });
+
+  it("rejects a grant whose jti was already consumed", async () => {
+    const { createSetupGrantToken: createToken } = await import(
+      "@/lib/setup-grant"
+    );
+    const token = await createToken();
+    const jti = decodeJwt(token).jti as string;
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { consumed_setup_grant_jti: jti },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const cookiesStore = {
+      get: (name: string) =>
+        name === "xjg_setup_grant" ? { value: token } : undefined,
+    };
+    vi.doMock("next/headers", () => ({
+      cookies: async () => cookiesStore,
+    }));
+
+    vi.resetModules();
+    const { hasValidSetupGrant, readValidSetupGrantJti } = await import(
+      "@/lib/setup-grant"
+    );
+    expect(await hasValidSetupGrant()).toBe(false);
+    expect(await readValidSetupGrantJti()).toBeNull();
+  });
+
+  it("accepts a grant when consumed jti differs", async () => {
+    const { createSetupGrantToken: createToken } = await import(
+      "@/lib/setup-grant"
+    );
+    const token = await createToken();
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { consumed_setup_grant_jti: "other-jti" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const cookiesStore = {
+      get: (name: string) =>
+        name === "xjg_setup_grant" ? { value: token } : undefined,
+    };
+    vi.doMock("next/headers", () => ({
+      cookies: async () => cookiesStore,
+    }));
+
+    vi.resetModules();
+    const { hasValidSetupGrant, readValidSetupGrantJti } = await import(
+      "@/lib/setup-grant"
+    );
+    expect(await hasValidSetupGrant()).toBe(true);
+    expect(await readValidSetupGrantJti()).toBe(decodeJwt(token).jti);
   });
 });

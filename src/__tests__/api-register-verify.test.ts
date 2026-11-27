@@ -35,8 +35,10 @@ describe("register verify API", () => {
       error: null,
     });
 
+    const consumeSetupGrantJti = vi.fn().mockResolvedValue(undefined);
     vi.doMock("@/lib/setup-grant", () => ({
-      hasValidSetupGrant: async () => true,
+      readValidSetupGrantJti: async () => "grant-jti-1",
+      consumeSetupGrantJti,
       SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
       clearedSetupGrantCookieOptions: () => ({
         httpOnly: true,
@@ -96,5 +98,6 @@ describe("register verify API", () => {
         p_credential_id: "cred-1",
       }),
     );
+    expect(consumeSetupGrantJti).toHaveBeenCalledWith("grant-jti-1");
   });
 });
