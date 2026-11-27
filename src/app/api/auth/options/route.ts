@@ -1,3 +1,4 @@
+import { createAgentTokenStepUpBinding } from "@/lib/agent-token-stepup";
 import { requireSession } from "@/lib/auth-guard";
 import { clientIp, jsonError, jsonOk } from "@/lib/http";
 import { assertSameOrigin } from "@/lib/origin";
@@ -110,12 +111,38 @@ export async function POST(request: Request) {
 
   const options = await buildLoginOptions(credentials as StoredCredential[]);
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+  // 决定：step_up + item_id（库内绑定）
+  if ("item_id" in parsed.data) {
+    const { data: challengeRow, error: challengeError } = await supabase
+      .from("webauthn_challenges")
+      .insert({
+        challenge: options.challenge,
+        purpose: "step_up",
+        item_id: parsed.data.item_id,
+        expires_at: expiresAt,
+        authorized: false,
+      })
+      .select("id")
+      .single();
+
+    if (challengeError || !challengeRow) {
+      return jsonError(500, "unavailable");
+    }
+
+    return jsonOk({
+      challenge_id: challengeRow.id,
+      options,
+    });
+  }
+
+  // 所有者令牌操作：无迁移无法在挑战行存 agent_id / 新 purpose。
+  // 用 purpose=login 抢占（同 invite）+ HMAC binding 绑定动作与目标。
   const { data: challengeRow, error: challengeError } = await supabase
     .from("webauthn_challenges")
     .insert({
       challenge: options.challenge,
-      purpose: "step_up",
-      item_id: parsed.data.item_id,
+      purpose: "login",
       expires_at: expiresAt,
       authorized: false,
     })
@@ -126,8 +153,18 @@ export async function POST(request: Request) {
     return jsonError(500, "unavailable");
   }
 
+  const binding = await createAgentTokenStepUpBinding({
+    challengeId: challengeRow.id,
+    action: parsed.data.action,
+    agentId:
+      "agent_id" in parsed.data ? parsed.data.agent_id : undefined,
+    tokenId:
+      "token_id" in parsed.data ? parsed.data.token_id : undefined,
+  });
+
   return jsonOk({
     challenge_id: challengeRow.id,
     options,
+    binding,
   });
 }

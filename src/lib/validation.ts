@@ -132,10 +132,71 @@ export const authVerifySchema = z
   })
   .strict();
 
-export const stepUpOptionsSchema = z
+/** 决定 step-up，或所有者令牌操作 step-up（绑定动作 / agent / token）。 */
+export const stepUpOptionsSchema = z.union([
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      item_id: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("issue_agent_token"),
+      agent_id: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("revoke_agent_token"),
+      agent_id: z.string().uuid(),
+      token_id: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("create_agent"),
+    })
+    .strict(),
+]);
+
+const agentSlugSchema = z
+  .string()
+  .min(2)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: "slug must be lowercase kebab-case",
+  });
+
+export const createAgentSchema = z
   .object({
-    purpose: z.literal("step_up"),
-    item_id: z.string().uuid(),
+    slug: agentSlugSchema,
+    name: z.string().min(1).max(100),
+    area: z.string().max(100).default(""),
+    bot_id: z.string().max(128).nullable().optional(),
+    assertion: webauthnCredentialPayloadSchema,
+    challenge_id: z.string().uuid(),
+    binding: z.string().min(1).max(4096),
+  })
+  .strict();
+
+export const issueAgentTokenSchema = z
+  .object({
+    assertion: webauthnCredentialPayloadSchema,
+    challenge_id: z.string().uuid(),
+    binding: z.string().min(1).max(4096),
+    revoke_previous: z.boolean().optional().default(true),
+  })
+  .strict();
+
+export const revokeAgentTokenSchema = z
+  .object({
+    assertion: webauthnCredentialPayloadSchema,
+    challenge_id: z.string().uuid(),
+    binding: z.string().min(1).max(4096),
   })
   .strict();
 

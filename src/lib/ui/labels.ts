@@ -49,12 +49,19 @@ export const NAV_TABS = [
   { id: "held", href: "/held", label: "搁置", primary: false },
   { id: "sisters", href: "/sisters", label: "姐妹", primary: false },
   { id: "goals", href: "/goals", label: "目标", primary: false },
+  {
+    id: "settings",
+    href: "/settings/agents",
+    label: "令牌",
+    primary: false,
+  },
 ] as const;
 
 export type NavTabId = (typeof NAV_TABS)[number]["id"];
 
 /** 从 pathname 推断顶栏高亮；错误边界与客户端壳共用。 */
 export function navTabFromPathname(pathname: string): NavTabId {
+  if (pathname.startsWith("/settings")) return "settings";
   if (pathname.startsWith("/sisters")) return "sisters";
   if (pathname.startsWith("/pending")) return "pending";
   if (pathname.startsWith("/todo")) return "todo";
