@@ -36,12 +36,15 @@ if [[ "${VERCEL_ENV:-}" == "production" ]]; then
   exit 1
 fi
 
+# Vercel 会把完整 commit message（含正文）塞进该变量；只看第一行 subject，
+# 避免正文里「说明用法含 [preview]」这类文档文字误触发强制构建。
 commit_msg="${VERCEL_GIT_COMMIT_MESSAGE:-}"
+commit_subject="${commit_msg%%$'\n'*}"
 branch_ref="${VERCEL_GIT_COMMIT_REF:-}"
 
-# --- 2a / 3 例外：提交说明含 [preview] → 构建（含 bot 分支）---
-if [[ "$commit_msg" == *"[preview]"* ]]; then
-  log "提交说明含 [preview] → 构建 (exit 1)"
+# --- 2a / 3 例外：提交 subject 含 [preview] → 构建（含 bot 分支）---
+if [[ "$commit_subject" == *"[preview]"* ]]; then
+  log "提交 subject 含 [preview] → 构建 (exit 1)"
   exit 1
 fi
 
@@ -96,22 +99,57 @@ list_has_frontend() {
   return 1
 }
 
-# 尝试拿到与 main 的改动列表；失败则退回 PREVIOUS_SHA；再失败则保守构建
-# 诊断日志走 stderr；stdout 仅输出文件路径（一行一个）
-collect_changed_files() {
-  local base="" range="" files=""
+# 解析用于对比的 main ref（优先 origin/main，其次本地 main）
+resolve_main_ref() {
+  if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    echo "origin/main"
+    return 0
+  fi
+  if git rev-parse --verify --quiet main >/dev/null 2>&1; then
+    echo "main"
+    return 0
+  fi
+  return 1
+}
 
-  # 确保能解析 origin/main（Vercel 浅克隆常缺此 ref）
-  if ! git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-    log "本地无 origin/main，尝试 git fetch…"
-    if ! git fetch --depth=50 origin main >&2; then
-      log "fetch origin main 失败（私有仓无凭据等）"
+# Vercel 浅克隆常无 remotes；用环境变量补上 origin 再 fetch main
+ensure_origin_main() {
+  if resolve_main_ref >/dev/null; then
+    return 0
+  fi
+
+  local owner="${VERCEL_GIT_REPO_OWNER:-}"
+  local slug="${VERCEL_GIT_REPO_SLUG:-}"
+  if [[ -n "$owner" && -n "$slug" ]]; then
+    if ! git remote get-url origin >/dev/null 2>&1; then
+      log "无 origin remote，添加 https://github.com/${owner}/${slug}.git"
+      git remote add origin "https://github.com/${owner}/${slug}.git" >&2 || true
     fi
   fi
 
-  if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-    if base="$(git merge-base HEAD origin/main 2>/dev/null)"; then
-      log "merge-base(HEAD, origin/main)=$base"
+  if git remote get-url origin >/dev/null 2>&1; then
+    log "尝试 git fetch origin main…"
+    if git fetch --depth=50 origin main >&2; then
+      return 0
+    fi
+    log "fetch origin main 失败（私有仓无凭据等）"
+  else
+    log "无可用 git remote，无法 fetch main"
+  fi
+  return 1
+}
+
+# 尝试拿到与 main 的改动列表；失败则退回 PREVIOUS_SHA；再失败则保守构建
+# 诊断日志走 stderr；stdout 仅输出文件路径（一行一个）
+collect_changed_files() {
+  local base="" range="" files="" main_ref=""
+
+  ensure_origin_main || true
+  main_ref="$(resolve_main_ref || true)"
+
+  if [[ -n "$main_ref" ]]; then
+    if base="$(git merge-base HEAD "$main_ref" 2>/dev/null)"; then
+      log "merge-base(HEAD, $main_ref)=$base"
       range="${base}...HEAD"
       if files="$(git diff --name-only "$range" 2>/dev/null)"; then
         printf '%s\n' "$files"
@@ -119,9 +157,8 @@ collect_changed_files() {
       fi
       log "git diff $range 失败"
     else
-      log "无法计算与 origin/main 的 merge-base（浅克隆过浅？）"
-      # 加深后再试一次
-      if git fetch --deepen=100 origin main >&2; then
+      log "无法计算与 $main_ref 的 merge-base（浅克隆过浅？）"
+      if git remote get-url origin >/dev/null 2>&1 && git fetch --deepen=100 origin main >&2; then
         if base="$(git merge-base HEAD origin/main 2>/dev/null)"; then
           log "deepen 后 merge-base=$base"
           range="${base}...HEAD"
@@ -133,11 +170,11 @@ collect_changed_files() {
           log "deepen 后仍无 merge-base"
         fi
       else
-        log "git fetch --deepen 失败"
+        log "git fetch --deepen 不可用或失败"
       fi
     fi
   else
-    log "仍无 origin/main"
+    log "仍无 main / origin/main"
   fi
 
   # 退回：相对上一部署 SHA（同分支连续推送）
