@@ -7,8 +7,8 @@
 #
 # 规则（项目负责人已批准）：
 #   1. VERCEL_ENV=production → 永远构建
-#   2. 预览默认跳过；仅当提交说明含 [preview]，或相对 main 有前端界面改动时才构建
-#   3. 分支名以 dependabot/ 或 renovate/ 开头 → 跳过（除非含 [preview]）
+#   2. 预览默认跳过；仅当提交 subject（第一行）含 [preview]，或相对 main 有前端界面改动时才构建
+#   3. 分支名以 dependabot/ 或 renovate/ 开头 → 跳过（除非 subject 含 [preview]）
 #   4. 判断不了（浅克隆无 merge-base、fetch 失败等）→ 保守构建，并打印原因
 #
 # 前端界面路径（本仓库）：
