@@ -14,7 +14,22 @@ async function signWithoutIat(nowSec: number): Promise<string> {
   const payload = new TextEncoder().encode(
     JSON.stringify({
       sub: "owner",
+      typ: "session",
       lastActivity: nowSec,
+      exp: nowSec + Math.floor(SESSION_IDLE_MS / 1000),
+    }),
+  );
+  return new CompactSign(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .sign(new TextEncoder().encode(SECRET));
+}
+
+async function signLegacyWithoutTyp(nowSec: number): Promise<string> {
+  const payload = new TextEncoder().encode(
+    JSON.stringify({
+      sub: "owner",
+      lastActivity: nowSec,
+      iat: nowSec,
       exp: nowSec + Math.floor(SESSION_IDLE_MS / 1000),
     }),
   );
@@ -78,5 +93,46 @@ describe("session absolute max + sliding renew", () => {
     const token = await createSessionToken(issuedAt);
     const afterIdle = new Date(issuedAt.getTime() + SESSION_IDLE_MS + 1000);
     expect(await verifySessionToken(token, afterIdle)).toBeNull();
+  });
+
+  it("rejects legacy sessions without typ=session (re-login once)", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = await signLegacyWithoutTyp(nowSec);
+    expect(await verifySessionToken(token)).toBeNull();
+  });
+
+  it("rejects tokens that carry aud or purpose even with typ=session", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const withAud = await new CompactSign(
+      new TextEncoder().encode(
+        JSON.stringify({
+          sub: "owner",
+          typ: "session",
+          lastActivity: nowSec,
+          iat: nowSec,
+          exp: nowSec + 3600,
+          aud: "xjg-agent-token-stepup",
+        }),
+      ),
+    )
+      .setProtectedHeader({ alg: "HS256" })
+      .sign(new TextEncoder().encode(SECRET));
+    expect(await verifySessionToken(withAud)).toBeNull();
+
+    const withPurpose = await new CompactSign(
+      new TextEncoder().encode(
+        JSON.stringify({
+          sub: "owner",
+          typ: "session",
+          lastActivity: nowSec,
+          iat: nowSec,
+          exp: nowSec + 3600,
+          purpose: "agent_token_stepup",
+        }),
+      ),
+    )
+      .setProtectedHeader({ alg: "HS256" })
+      .sign(new TextEncoder().encode(SECRET));
+    expect(await verifySessionToken(withPurpose)).toBeNull();
   });
 });

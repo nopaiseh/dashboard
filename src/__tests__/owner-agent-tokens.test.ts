@@ -52,6 +52,12 @@ describe("agent bearer token generation", () => {
 describe("owner agent token APIs", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.doUnmock("@/lib/passkey-step-up");
+    vi.doUnmock("@/lib/challenges");
+    vi.doUnmock("@/lib/webauthn");
+    vi.doUnmock("@/lib/origin");
+    vi.doUnmock("@/lib/auth-guard");
+    vi.doUnmock("@/lib/supabase/server");
     resetRateLimits();
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
@@ -141,7 +147,7 @@ describe("owner agent token APIs", () => {
     expect(body.error).toBe("invalid challenge");
   });
 
-  it("rejects challenge replay via binding mismatch after claim path", async () => {
+  it("rejects when binding challenge_id does not match request", async () => {
     await mockHappyPasskey();
     const { createAgentTokenStepUpBinding } = await import(
       "@/lib/agent-token-stepup"
@@ -178,6 +184,75 @@ describe("owner agent token APIs", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid binding");
+  });
+
+  it("second claim of the same challenge returns 400", async () => {
+    const claim = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: CHALLENGE_ID,
+        challenge: "chal",
+        purpose: "login",
+        item_id: null,
+        authorized: false,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      })
+      .mockResolvedValueOnce(null);
+
+    vi.doMock("@/lib/challenges", () => ({
+      claimChallenge: claim,
+    }));
+    vi.doMock("@/lib/webauthn", () => ({
+      verifyLoginAssertion: async () => ({
+        verified: true,
+        authenticationInfo: { newCounter: 2 },
+      }),
+    }));
+
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: {
+                credential_id: CRED_ID,
+                public_key: "pk",
+                counter: 1,
+                transports: [],
+              },
+              error: null,
+            }),
+          }),
+        }),
+        update: () => ({
+          eq: () => Promise.resolve({ error: null }),
+        }),
+      }),
+    };
+
+    const { consumePasskeyAssertion } = await import(
+      "@/lib/passkey-step-up"
+    );
+    const first = await consumePasskeyAssertion({
+      supabase: supabase as never,
+      challengeId: CHALLENGE_ID,
+      purpose: "login",
+      assertion: { id: CRED_ID },
+    });
+    expect(first.ok).toBe(true);
+
+    const second = await consumePasskeyAssertion({
+      supabase: supabase as never,
+      challengeId: CHALLENGE_ID,
+      purpose: "login",
+      assertion: { id: CRED_ID },
+    });
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.status).toBe(400);
+      expect(second.error).toBe("invalid challenge");
+    }
+    expect(claim).toHaveBeenCalledTimes(2);
   });
 
   it("issues token once: response has plaintext, no hash; list has no plaintext", async () => {
@@ -526,6 +601,7 @@ describe("owner agent token APIs", () => {
 
 describe("agent-token step-up binding", () => {
   beforeEach(() => {
+    vi.resetModules();
     process.env.SESSION_SECRET = "test-session-secret-at-least-32-chars!!";
   });
 
@@ -553,6 +629,110 @@ describe("agent-token step-up binding", () => {
         agentId: AGENT_ID,
         tokenId: TOKEN_ID,
       }),
+    ).toBe(false);
+  });
+
+  it("rejects binding older than 5 minutes", async () => {
+    const {
+      AGENT_TOKEN_STEPUP_TTL_MS,
+      createAgentTokenStepUpBinding,
+      verifyAgentTokenStepUpBinding,
+    } = await import("@/lib/agent-token-stepup");
+    const issuedAt = new Date("2026-11-27T12:00:00.000Z");
+    const binding = await createAgentTokenStepUpBinding(
+      {
+        challengeId: CHALLENGE_ID,
+        action: "issue_agent_token",
+        agentId: AGENT_ID,
+      },
+      issuedAt,
+    );
+    const expiredAt = new Date(
+      issuedAt.getTime() + AGENT_TOKEN_STEPUP_TTL_MS + 1000,
+    );
+    expect(
+      await verifyAgentTokenStepUpBinding(
+        binding,
+        {
+          challengeId: CHALLENGE_ID,
+          action: "issue_agent_token",
+          agentId: AGENT_ID,
+        },
+        expiredAt,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects agent_id or token_id mismatch", async () => {
+    const {
+      createAgentTokenStepUpBinding,
+      verifyAgentTokenStepUpBinding,
+    } = await import("@/lib/agent-token-stepup");
+    const binding = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "revoke_agent_token",
+      agentId: AGENT_ID,
+      tokenId: TOKEN_ID,
+    });
+    expect(
+      await verifyAgentTokenStepUpBinding(binding, {
+        challengeId: CHALLENGE_ID,
+        action: "revoke_agent_token",
+        agentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        tokenId: TOKEN_ID,
+      }),
+    ).toBe(false);
+    expect(
+      await verifyAgentTokenStepUpBinding(binding, {
+        challengeId: CHALLENGE_ID,
+        action: "revoke_agent_token",
+        agentId: AGENT_ID,
+        tokenId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      }),
+    ).toBe(false);
+  });
+
+  it("binding is not a session; session is not a binding; proxy will not renew binding", async () => {
+    const { createAgentTokenStepUpBinding, verifyAgentTokenStepUpBinding } =
+      await import("@/lib/agent-token-stepup");
+    const {
+      SESSION_COOKIE_NAME,
+      createSessionToken,
+      verifySessionToken,
+    } = await import("@/lib/session");
+    const { proxy } = await import("@/proxy");
+
+    const binding = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "issue_agent_token",
+      agentId: AGENT_ID,
+    });
+    const session = await createSessionToken();
+
+    expect(await verifySessionToken(binding)).toBeNull();
+    expect(
+      await verifyAgentTokenStepUpBinding(session, {
+        challengeId: CHALLENGE_ID,
+        action: "issue_agent_token",
+        agentId: AGENT_ID,
+      }),
+    ).toBe(false);
+
+    const res = await proxy({
+      nextUrl: new URL("http://localhost/api/owner/agents"),
+      cookies: {
+        get: (name: string) =>
+          name === SESSION_COOKIE_NAME ? { value: binding } : undefined,
+      },
+      url: "http://localhost/api/owner/agents",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest);
+
+    expect(res.status).toBe(401);
+    // 未通过会话校验 → 不会 touch/续期写成新会话 cookie
+    const setCookie = res.headers.getSetCookie?.() ?? [];
+    expect(
+      setCookie.some((c: string) => c.startsWith(`${SESSION_COOKIE_NAME}=`)),
     ).toBe(false);
   });
 });

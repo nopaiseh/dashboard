@@ -1,10 +1,12 @@
 import "server-only";
 
 import { SignJWT, jwtVerify } from "jose";
-import { getSessionSecret } from "@/lib/env";
+import { deriveAgentTokenStepUpKey } from "@/lib/crypto/hkdf";
 
 export const AGENT_TOKEN_STEPUP_AUD = "xjg-agent-token-stepup";
 export const AGENT_TOKEN_STEPUP_TTL_MS = 5 * 60 * 1000;
+/** JWT claim；与会话 typ=session 互斥。 */
+export const AGENT_TOKEN_STEPUP_TYP = "agent_token_stepup";
 
 export type AgentTokenStepUpAction =
   | "issue_agent_token"
@@ -20,11 +22,12 @@ export interface AgentTokenStepUpBinding {
 
 /**
  * 无迁移前提下：webauthn_challenges 无法存 agent_id / 新 purpose。
- * 用 SESSION_SECRET 签发短时绑定，把 challenge_id + 动作 + 目标绑在一起。
+ * 用 HKDF(SESSION_SECRET, info=step-up) 派生密钥签发短时绑定
+ * （不得用原始 SESSION_SECRET，否则可被 verifySessionToken 误收）。
  * 挑战行本身用 purpose=login 抢占（与 invite 相同；见 PR「后续建议」）。
  */
-function secretKey(): Uint8Array {
-  return new TextEncoder().encode(getSessionSecret());
+function stepUpKey(): Uint8Array {
+  return deriveAgentTokenStepUpKey();
 }
 
 export async function createAgentTokenStepUpBinding(
@@ -33,6 +36,7 @@ export async function createAgentTokenStepUpBinding(
 ): Promise<string> {
   const iat = Math.floor(now.getTime() / 1000);
   const claims: Record<string, string> = {
+    typ: AGENT_TOKEN_STEPUP_TYP,
     purpose: "agent_token_stepup",
     action: input.action,
     challenge_id: input.challengeId,
@@ -46,7 +50,7 @@ export async function createAgentTokenStepUpBinding(
     .setAudience(AGENT_TOKEN_STEPUP_AUD)
     .setIssuedAt(iat)
     .setExpirationTime(iat + Math.floor(AGENT_TOKEN_STEPUP_TTL_MS / 1000))
-    .sign(secretKey());
+    .sign(stepUpKey());
 }
 
 export async function verifyAgentTokenStepUpBinding(
@@ -55,13 +59,18 @@ export async function verifyAgentTokenStepUpBinding(
   now: Date = new Date(),
 ): Promise<boolean> {
   try {
-    const { payload } = await jwtVerify(token, secretKey(), {
+    const { payload } = await jwtVerify(token, stepUpKey(), {
       algorithms: ["HS256"],
       audience: AGENT_TOKEN_STEPUP_AUD,
       currentDate: now,
     });
+    // 拒收会话令牌形态（即便签名碰巧通过）
+    if ((payload as { typ?: string }).typ === "session") {
+      return false;
+    }
     if (
       payload.sub !== "owner" ||
+      (payload as { typ?: string }).typ !== AGENT_TOKEN_STEPUP_TYP ||
       (payload as { purpose?: string }).purpose !== "agent_token_stepup" ||
       (payload as { action?: string }).action !== expected.action ||
       (payload as { challenge_id?: string }).challenge_id !==

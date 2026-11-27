@@ -1,3 +1,5 @@
+import "server-only";
+
 import { randomBytes } from "node:crypto";
 
 /** 姐妹 Bearer 令牌前缀（明文仅签发时返回一次）。 */
