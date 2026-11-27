@@ -4,6 +4,8 @@
 
 > 注意：本仓库已开 Supabase「Deploy to production」（分支 `main`）。合并到 `main` 后迁移会自动上 prod。
 
+**预览构建**：`vercel.json` 的 `ignoreCommand`（`scripts/vercel-ignore-build.sh`）会跳过多数预览部署以省费用；生产永远构建。需要预览时在**提交 subject（第一行）**加 `[preview]`，或改动前端界面文件（详见脚本注释）。
+
 ## 表结构
 
 | 对象 | 说明 |
