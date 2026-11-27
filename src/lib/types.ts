@@ -48,6 +48,8 @@ export interface ItemRow {
   last_activity_at: string;
   /** 姐妹确认已读本人决定的时间；open 时通常为 null。 */
   result_read_at: string | null;
+  /** 单行解密失败时由读路径设置；整页不因此 500。 */
+  decrypt_failed?: boolean;
 }
 
 export interface ItemEventRow {

@@ -1,6 +1,8 @@
 import { requireSession } from "@/lib/auth-guard";
+import { decryptItemsSensitiveFields } from "@/lib/crypto/fields";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
+import type { ItemRow } from "@/lib/types";
 import { itemsQuerySchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
@@ -39,5 +41,7 @@ export async function GET(request: Request) {
     return jsonError(500, "failed to load items");
   }
 
-  return jsonOk({ items: data ?? [] });
+  return jsonOk({
+    items: decryptItemsSensitiveFields((data ?? []) as ItemRow[]),
+  });
 }

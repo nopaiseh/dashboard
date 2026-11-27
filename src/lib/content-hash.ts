@@ -1,4 +1,11 @@
-import { sha256Hex } from "@/lib/crypto";
+import { createHash } from "node:crypto";
+import {
+  hmacSha256Hex,
+  isFieldEncryptionStrict,
+  parseKeyBase64,
+  resetFieldKeyringCache,
+  safeEqualString,
+} from "@/lib/crypto/fields-core";
 import type { ItemKind, ItemOption } from "@/lib/types";
 
 /** Canonical options array (sorted by key) for stable hashing. */
@@ -39,13 +46,8 @@ export interface ContentHashFields {
   due_at: string | null;
 }
 
-/**
- * content_hash = sha256(JSON.stringify([kind, title, body, options, source_url, due_at]))
- * 用 JSON 数组序列化避免拼接歧义；纳入 source_url / due_at / kind。
- * due_at 在序列化前规范化为 toISOString()。
- */
-export function computeContentHash(fields: ContentHashFields): string {
-  const payload = JSON.stringify([
+function serializeContentPayload(fields: ContentHashFields): string {
+  return JSON.stringify([
     fields.kind,
     fields.title,
     fields.body,
@@ -53,7 +55,95 @@ export function computeContentHash(fields: ContentHashFields): string {
     fields.source_url,
     normalizeDueAt(fields.due_at),
   ]);
-  return sha256Hex(payload);
+}
+
+function isProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
+
+function isProductionRuntime(): boolean {
+  return (
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build"
+  );
+}
+
+let cachedContentHashKey: Buffer | null | undefined;
+
+/** Test helper. */
+export function resetContentHashKeyCache(): void {
+  cachedContentHashKey = undefined;
+  resetFieldKeyringCache();
+}
+
+/**
+ * CONTENT_HASH_KEY: base64 32 bytes. Fail closed in production.
+ * Used for HMAC-SHA256 content_hash (not the field encryption key).
+ */
+export function loadContentHashKey(): Buffer | null {
+  if (cachedContentHashKey !== undefined) {
+    return cachedContentHashKey;
+  }
+  const raw = process.env.CONTENT_HASH_KEY;
+  if (!raw) {
+    if (isProductionRuntime()) {
+      throw new Error("CONTENT_HASH_KEY is required in production");
+    }
+    if (isProductionBuild()) {
+      cachedContentHashKey = Buffer.alloc(32, 0);
+      return cachedContentHashKey;
+    }
+    cachedContentHashKey = null;
+    return null;
+  }
+  cachedContentHashKey = parseKeyBase64(raw, "CONTENT_HASH_KEY");
+  return cachedContentHashKey;
+}
+
+function requireContentHashKey(): Buffer {
+  const key = loadContentHashKey();
+  if (!key) {
+    throw new Error(
+      "CONTENT_HASH_KEY is not configured; cannot compute content_hash",
+    );
+  }
+  return key;
+}
+
+/**
+ * content_hash = HMAC-SHA256(CONTENT_HASH_KEY, JSON.stringify([kind, title, body, options, source_url, due_at]))
+ * 用 JSON 数组序列化避免拼接歧义；纳入 source_url / due_at / kind。
+ * due_at 在序列化前规范化为 toISOString()。
+ */
+export function computeContentHash(fields: ContentHashFields): string {
+  const payload = serializeContentPayload(fields);
+  return hmacSha256Hex(requireContentHashKey(), payload);
+}
+
+/** Pre-HMAC legacy: plain SHA-256 of the same payload (transition only). */
+export function computeLegacyContentHash(fields: ContentHashFields): string {
+  const payload = serializeContentPayload(fields);
+  return createHash("sha256").update(payload, "utf8").digest("hex");
+}
+
+/**
+ * Compare a stored content_hash to fields.
+ * During transition (strict off): accept HMAC or legacy SHA-256.
+ * After FIELD_ENCRYPTION_STRICT=1: HMAC only.
+ */
+export function matchesStoredContentHash(
+  stored: string,
+  fields: ContentHashFields,
+): boolean {
+  const hmac = computeContentHash(fields);
+  if (safeEqualString(stored, hmac)) {
+    return true;
+  }
+  if (isFieldEncryptionStrict()) {
+    return false;
+  }
+  const legacy = computeLegacyContentHash(fields);
+  return safeEqualString(stored, legacy);
 }
 
 export function isDecisionValid(

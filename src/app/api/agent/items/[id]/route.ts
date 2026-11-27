@@ -1,4 +1,9 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
+import {
+  decryptItemSensitiveFields,
+  encryptField,
+  encryptNullableField,
+} from "@/lib/crypto/fields";
 import { jsonError, jsonOk } from "@/lib/http";
 import { planAgentPatch } from "@/lib/items-logic";
 import {
@@ -53,9 +58,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(404, "item not found");
   }
 
+  const decrypted = decryptItemSensitiveFields(existing as ItemRow);
+  if (decrypted.decrypt_failed) {
+    return jsonError(422, "item fields could not be decrypted");
+  }
+
   const planned = planAgentPatch(
     auth.agent.agentId,
-    existing as ItemRow,
+    decrypted,
     parsed.data,
   );
   if (!planned.ok) {
@@ -71,14 +81,25 @@ export async function PATCH(request: Request, context: RouteContext) {
     p_new_content_hash: plan.newContentHash,
     p_set_status: plan.setStatus,
     p_new_status: plan.newStatus,
-    p_title: plan.fields.title,
-    p_body: plan.fields.body,
+    p_title:
+      plan.fields.title === null
+        ? null
+        : encryptField(plan.fields.title, { itemId: id, column: "title" }),
+    p_body:
+      plan.fields.body === null
+        ? null
+        : encryptField(plan.fields.body, { itemId: id, column: "body" }),
     p_options: plan.fields.options,
     p_project: plan.fields.project,
     p_due_at: plan.fields.due_at === undefined ? null : plan.fields.due_at,
     p_touch_due_at: plan.fields.due_at !== undefined,
     p_source_url:
-      plan.fields.source_url === undefined ? null : plan.fields.source_url,
+      plan.fields.source_url === undefined
+        ? null
+        : encryptNullableField(plan.fields.source_url, {
+            itemId: id,
+            column: "source_url",
+          }),
     p_touch_source_url: plan.fields.source_url !== undefined,
     p_kind: plan.fields.kind,
     p_event_action: plan.eventAction,
@@ -102,8 +123,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(409, "conflict");
   }
 
+  const rpcItem = (data as { item: ItemRow }).item;
   return jsonOk({
-    item: (data as { item: unknown }).item,
+    item: decryptItemSensitiveFields(rpcItem),
     content_reopened: plan.contentReopened,
   });
 }

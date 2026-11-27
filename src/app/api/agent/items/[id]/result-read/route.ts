@@ -1,4 +1,5 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
+import { decryptItemSensitiveFields } from "@/lib/crypto/fields";
 import { jsonError, jsonOk } from "@/lib/http";
 import {
   isPgConflict,
@@ -7,6 +8,7 @@ import {
 } from "@/lib/pg-errors";
 import { requireRequest } from "@/lib/require-request";
 import { getServiceClient } from "@/lib/supabase/server";
+import type { ItemRow } from "@/lib/types";
 import { z } from "zod";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -60,5 +62,7 @@ export async function POST(request: Request, context: RouteContext) {
     return jsonError(404, "item not found");
   }
 
-  return jsonOk({ item: data });
+  return jsonOk({
+    item: decryptItemSensitiveFields(data as ItemRow),
+  });
 }

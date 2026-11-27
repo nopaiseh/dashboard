@@ -1,5 +1,6 @@
 import { requireSession } from "@/lib/auth-guard";
 import { claimChallenge } from "@/lib/challenges";
+import { decryptItemSensitiveFields } from "@/lib/crypto/fields";
 import { jsonError, jsonOk } from "@/lib/http";
 import {
   assertDecisionAllowed,
@@ -102,7 +103,10 @@ export async function POST(request: Request, context: RouteContext) {
     return jsonError(404, "item not found");
   }
 
-  const typed = item as ItemRow;
+  const typed = decryptItemSensitiveFields(item as ItemRow);
+  if (typed.decrypt_failed) {
+    return jsonError(422, "item fields could not be decrypted");
+  }
   const allowed = assertDecisionAllowed(
     typed.kind,
     parsed.data.action,
@@ -133,5 +137,12 @@ export async function POST(request: Request, context: RouteContext) {
     return jsonError(409, "decision failed");
   }
 
+  const payload = data as { item?: ItemRow; event?: unknown };
+  if (payload.item) {
+    return jsonOk({
+      ...payload,
+      item: decryptItemSensitiveFields(payload.item),
+    });
+  }
   return jsonOk(data);
 }

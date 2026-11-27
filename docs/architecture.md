@@ -70,6 +70,29 @@
 - `source_url` 仅 https；`due_at` 为 ISO datetime；标题/正文/选项有长度与数量上限；选项 key 唯一；zod `.strict()`。
 - WebAuthn `assertion` / `attestation` 的 `id`、`rawId` 最长 **1364** 字符（1023 字节凭据 ID 的无填充 base64url）；超长在进库前 400。属 body 校验失败，**不**计入 IP 登录失败锁定（与其它 zod 拒绝一致，避免垃圾超长请求被用来锁 IP）。
 
+## 字段加密
+
+`items.title`、`items.body`、`items.source_url` 在写入 Supabase 前于服务器用 **AES-256-GCM** 加密，读出后再解密。实现：`src/lib/crypto/fields.ts`（`server-only`）/ `fields-core.ts`。
+
+- **信封格式**：`v{N}:{iv_b64}:{tag_b64}:{ciphertext_b64}`（每值随机 12 字节 IV；GCM tag；密文段可为**空**——空字符串 `body`）。
+- **AAD**：`items:{id}:{column}:v{N}`，防止跨行/跨列调换密文。新建事项时在应用层 `randomUUID()` 预生成 `id` 再加密后插入。
+- **content_hash**：`HMAC-SHA256(CONTENT_HASH_KEY, JSON.stringify([kind, title, body, options, source_url, due_at]))`（密钥与字段加密分离）。过渡期 `matchesStoredContentHash` 仍接受旧版纯 SHA-256，避免 PATCH/决定误判；`FIELD_ENCRYPTION_STRICT=1` 后只接受 HMAC。
+- **遗留明文**：非严格模式下无信封则原样返回。回填 `scripts/encrypt-existing-fields.ts`（默认 `--dry-run`）须指定 `--encrypt-only` 或 `--rehash-only`；CAS；幂等。**切勿未审阅对生产执行。** `--rehash-only --execute` **直接拒绝**（事件表方案待定，仅允许 dry-run）。
+- **密钥环**：`FIELD_ENCRYPTION_KEY` / `FIELD_ENCRYPTION_KEY_Vn` / `FIELD_ENCRYPTION_KEYS` + `FIELD_ENCRYPTION_KEY_CURRENT`；`KEY` 与 `KEY_V1` 同时设置且值不同 → 报错。密钥须严格 base64、恰好 32 字节。密钥环加载失败一律抛出；信封版本不在环内 → 该行降级（`unknown_key_version`），不 500 整页。
+- **单行解密失败（读路径）**：该行占位（`[无法解密]` + `decrypt_failed`）+ Vercel 结构化 `console.error`（无明文/密钥）；不拖垮整页。UI 置灰批准/驳回/回复并显示原因。PATCH / 决定接口对 `decrypt_failed` 返回 **422**。
+- **PATCH**：明文内容未变时保留原 `content_hash`（不重写 HMAC），避免仅改状态导致旧批准失效。
+- **生产缺密钥**：`FIELD_ENCRYPTION_KEY*` 与 `CONTENT_HASH_KEY` 运行时 fail closed；`next build` 允许占位。
+- **无 schema 迁移**：列类型仍为 `text`；合并**不会**改库结构。
+- **item_events content_hash 重算**：`--rehash-only` 目前仅允许 dry-run——**待定，等阁主拍板**（本 PR 不加放开触发器的迁移）。
+
+### 部署顺序（合并后由本人操作）
+
+1. 在 Vercel 配置 `FIELD_ENCRYPTION_KEY`（或密钥环）与 `CONTENT_HASH_KEY`（**本 PR 不改 Vercel**）
+2. 合并本 PR
+3. `--encrypt-only --dry-run` → 审阅 → `--execute`
+4. `--rehash-only`（仅 dry-run；execute 会拒绝，待事件表方案）
+5. 确认无遗留明文后设置 `FIELD_ENCRYPTION_STRICT=1`
+
 ## 环境变量
 
 | 变量 | 用途 |
@@ -81,6 +104,9 @@
 | `OWNER_EMAIL` | 唯一允许首次登记魔法链接的邮箱；服务器专用 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
 | `SITE_NAME` | 登录页站名 |
+| `FIELD_ENCRYPTION_KEY` | 字段加密主密钥（base64 32 字节）；或与 `FIELD_ENCRYPTION_KEY_Vn` / `FIELD_ENCRYPTION_KEYS` + `FIELD_ENCRYPTION_KEY_CURRENT` 组成密钥环 |
+| `FIELD_ENCRYPTION_STRICT` | `1` 时拒绝遗留明文 / 无 AAD 密文 / 旧 SHA content_hash |
+| `CONTENT_HASH_KEY` | content_hash HMAC 密钥（base64 32 字节；与字段加密密钥分离） |
 
 已移除：`BOOTSTRAP_TOKEN`（改由 `OWNER_EMAIL` + setup-grant 承担首次登记授权）。
 
