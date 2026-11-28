@@ -5,7 +5,7 @@
  *   null / missing → no writers (assert → 403).
  */
 export function mockDashboardWritersFrom(
-  writerByCategory: Record<string, string | string[] | null>,
+  writerByCategory: Record<string, string | readonly string[] | null>,
 ) {
   return {
     select: () => ({
