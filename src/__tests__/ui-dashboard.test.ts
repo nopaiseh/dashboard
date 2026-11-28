@@ -8,7 +8,11 @@ import {
   resolveRetirementStatuses,
 } from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
-import { StackedTrendChart } from "@/components/qingjian/dashboard/StackedTrendChart";
+import {
+  StackedTrendChart,
+  buildTwelveMonthXLabels,
+  xPositionsForDates,
+} from "@/components/qingjian/dashboard/StackedTrendChart";
 import {
   parseCpfModel,
   reachedFrsFromTier,
@@ -17,6 +21,7 @@ import { parseMissingYears, parseTextPayload } from "@/components/qingjian/dashb
 import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
 import {
   formatWan,
+  parsePointTime,
   progressFill,
 } from "@/components/qingjian/dashboard/format";
 import {
@@ -315,6 +320,106 @@ describe("C2 CPF section", () => {
     expect(html).toContain("全部（2016 年起）");
     expect(html).toContain("月底数");
     expect(html).toContain(CPF_COLORS.oa);
+  });
+});
+
+describe("StackedTrendChart date scale", () => {
+  const padLeft = 48;
+  const innerW = 640 - 48 - 16;
+
+  it("positions mixed yearly+monthly points by date (monotonic, not index-even)", () => {
+    // Synthetic 「全部」 mix: sparse yearly points then dense 2026 months.
+    const ts = [
+      "2016",
+      "2018",
+      "2020",
+      "2022",
+      "2024",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07",
+      "2026-08",
+      "2026-09",
+      "2026-10",
+      "2026-11",
+    ];
+    const times = ts.map((t) => parsePointTime(t));
+    const xs = xPositionsForDates(times, padLeft, innerW);
+
+    expect(xs).toHaveLength(ts.length);
+    expect(xs.every((x) => Number.isFinite(x))).toBe(true);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]!).toBeGreaterThan(xs[i - 1]!);
+    }
+
+    // Index-even spacing would put 2026-01 at index 5/15 of the width.
+    const indexEvenAt2026Jan = padLeft + (5 / (ts.length - 1)) * innerW;
+    const dateScaleAt2026Jan = xs[5]!;
+    // On a real time scale, 2026-01 sits near the right (years 2016–2024 span most of the axis).
+    expect(dateScaleAt2026Jan).toBeGreaterThan(indexEvenAt2026Jan + innerW * 0.15);
+
+    // Monthly gaps among 2026 points are much smaller than the 2016→2018 year gap.
+    const yearGap = xs[1]! - xs[0]!;
+    const monthGap = xs[6]! - xs[5]!;
+    expect(monthGap).toBeLessThan(yearGap * 0.2);
+  });
+
+  it("handles empty and single-point series without NaN", () => {
+    expect(xPositionsForDates([], padLeft, innerW)).toEqual([]);
+    const one = xPositionsForDates([parsePointTime("2026-01")], padLeft, innerW);
+    expect(one).toHaveLength(1);
+    expect(Number.isFinite(one[0]!)).toBe(true);
+    expect(one[0]).toBe(padLeft + innerW / 2);
+  });
+
+  it("labels a 2026-01 start series as 1月 (not hardcoded 11月)", () => {
+    const points = Array.from({ length: 11 }, (_, i) => ({
+      t: `2026-${String(i + 1).padStart(2, "0")}`,
+    }));
+    const labels = buildTwelveMonthXLabels(points);
+    expect(labels.length).toBeGreaterThan(0);
+    // Hardcoded ticks used to start at 「11月」; real data starting 2026-01 must start at 「1月」.
+    expect(labels[0]!.label).toBe("1月");
+    expect(labels[0]!.i).toBe(0);
+    // All labels are derived months from the series.
+    for (const l of labels) {
+      expect(l.label).toMatch(/^\d{1,2}月$/);
+      const month = Number(l.label.replace("月", ""));
+      expect(month).toBeGreaterThanOrEqual(1);
+      expect(month).toBeLessThanOrEqual(11);
+    }
+  });
+
+  it("renders 1月 on the 12m chart when series starts at 2026-01", () => {
+    const points = Array.from({ length: 11 }, (_, i) => ({
+      t: `2026-${String(i + 1).padStart(2, "0")}`,
+      balances: { OA: 1000 * (i + 1), SA: 500, MA: 200 },
+      phase: "actual" as const,
+      grain: "month" as const,
+    }));
+    const html = renderToStaticMarkup(
+      createElement(StackedTrendChart, {
+        data: {
+          points12: points,
+          pointsAll: points,
+          events: [],
+          guides: [],
+          defaultRange: "12m",
+        },
+        initialRange: "12m",
+      }),
+    );
+    expect(html).toContain(">1月<");
+    // Must not keep the old hardcoded first tick 「11月」 as the only/leading label pattern.
+    const axisLabels = [...html.matchAll(/class="k-axisText"[^>]*>([^<]+)</g)].map(
+      (m) => m[1],
+    );
+    const monthLabels = axisLabels.filter((t) => /^\d{1,2}月$/.test(t ?? ""));
+    expect(monthLabels[0]).toBe("1月");
   });
 });
 

@@ -4,8 +4,85 @@ import { useId, useState, type KeyboardEvent } from "react";
 import { EmptyBlock } from "./EmptyBlock";
 import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
 import { CPF_COLORS } from "./cpfTheme";
-import { formatMoney } from "./format";
+import { formatMoney, parsePointTime } from "./format";
 import type { ChartRangeMode } from "./types";
+
+/** Evenly pick ~`count` indices from `length` points (inclusive ends). */
+export function pickEvenIndices(length: number, count = 5): number[] {
+  if (length <= 0) return [];
+  if (length === 1) return [0];
+  const ticks = Math.min(Math.max(1, count), length);
+  if (ticks === 1) return [0];
+  const out: number[] = [];
+  for (let k = 0; k < ticks; k++) {
+    out.push(Math.round((k * (length - 1)) / (ticks - 1)));
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * X positions on a linear time scale between the series min/max dates.
+ * Single-point / zero-span / empty → no NaN (center, index fallback, or padLeft).
+ */
+export function xPositionsForDates(
+  times: Array<number | null>,
+  padLeft: number,
+  innerW: number,
+): number[] {
+  const n = times.length;
+  if (n === 0) return [];
+  if (n === 1) return [padLeft + innerW / 2];
+
+  const valid = times.filter((t): t is number => t != null && Number.isFinite(t));
+  const tMin = valid.length ? Math.min(...valid) : NaN;
+  const tMax = valid.length ? Math.max(...valid) : NaN;
+  const tSpan = tMax - tMin;
+
+  if (!Number.isFinite(tSpan) || tSpan === 0) {
+    const denom = Math.max(1, n - 1);
+    return times.map((_, i) => padLeft + (i / denom) * innerW);
+  }
+
+  const denom = Math.max(1, n - 1);
+  return times.map((t, i) => {
+    if (t == null || !Number.isFinite(t)) {
+      return padLeft + (i / denom) * innerW;
+    }
+    return padLeft + ((t - tMin) / tSpan) * innerW;
+  });
+}
+
+/** Month axis labels from real point dates (e.g. 2026-01 → 「1月」). */
+export function buildTwelveMonthXLabels(
+  points: Array<{ t: string }>,
+  tickCount = 5,
+): Array<{ i: number; label: string }> {
+  if (points.length === 0) return [];
+  const indices = pickEvenIndices(points.length, tickCount);
+  const years = new Set(
+    points
+      .map((p) => {
+        const m = p.t.trim().match(/^(\d{4})/);
+        return m ? m[1] : null;
+      })
+      .filter((y): y is string => y != null),
+  );
+  const multiYear = years.size > 1;
+  let prevYear: string | null = null;
+  return indices.map((i) => {
+    const raw = points[i]?.t.trim() ?? "";
+    const match = raw.match(/^(\d{4})(?:-(\d{2}))?/);
+    if (!match) return { i, label: raw };
+    const year = match[1]!;
+    const month = match[2] ? String(Number(match[2])) : "12";
+    let label = `${month}月`;
+    if (multiYear && (prevYear === null || year !== prevYear)) {
+      label = `${year}年${month}月`;
+    }
+    prevYear = year;
+    return { i, label };
+  });
+}
 
 export function StackedTrendChart({
   data,
@@ -181,11 +258,18 @@ function TrendSvg({
     (p) => p.balances.OA + p.balances.SA + p.balances.MA,
   );
   const guideMax = data.guides.reduce((m, g) => Math.max(m, g.amount), 0);
-  const maxV = Math.max(...totals, guideMax * 0.3, 1) * 1.08;
-  const n = Math.max(1, points.length - 1);
+  const maxV =
+    (points.length === 0
+      ? Math.max(guideMax * 0.3, 1)
+      : Math.max(...totals, guideMax * 0.3, 1)) * 1.08;
+  const xAt = xPositionsForDates(
+    points.map((p) => parsePointTime(p.t)),
+    PAD.left,
+    innerW,
+  );
 
   const xy = (i: number, v: number) => ({
-    x: PAD.left + (i / n) * innerW,
+    x: xAt[i] ?? PAD.left,
     y: PAD.top + (1 - v / maxV) * innerH,
   });
 
@@ -245,13 +329,7 @@ function TrendSvg({
 
   const xLabels =
     mode === "12m"
-      ? [
-          { i: 0, label: "11月" },
-          { i: 2, label: "1月" },
-          { i: 5, label: "4月" },
-          { i: 8, label: "7月" },
-          { i: 11, label: "10月" },
-        ].filter((x) => x.i < points.length)
+      ? buildTwelveMonthXLabels(points)
       : [
           { i: points.findIndex((p) => p.t === "2016"), label: "2016" },
           { i: points.findIndex((p) => p.t === "2018"), label: "2018" },
