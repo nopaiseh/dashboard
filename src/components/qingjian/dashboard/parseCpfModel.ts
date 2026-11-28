@@ -36,6 +36,41 @@ const DEFAULT_RETIREMENT_TIER_ORDER = ["BRS", "FRS", "ERS"] as const;
 
 const KEY_SET = new Set<string>(CPF_BLOCK_KEYS);
 
+/** 每个 block_key 槽位允许的 block_type；错型则视为未找到。 */
+const KEY_EXPECTED_TYPES: Record<
+  CpfBlockKey,
+  | DashboardBlockPublic["block_type"]
+  | ReadonlyArray<DashboardBlockPublic["block_type"]>
+> = {
+  cpf_conclusion: ["text", "headline"],
+  cpf_acc_oa: "metric",
+  cpf_acc_sa: "metric",
+  cpf_acc_ma: "metric",
+  cpf_prog_ma: "progress",
+  cpf_prog_oasa: "progress",
+  cpf_trend_oa: "chart_series",
+  cpf_trend_sa: "chart_series",
+  cpf_trend_ma: "chart_series",
+  cpf_contrib: "list",
+  cpf_int_oa: "metric",
+  cpf_int_sa: "metric",
+  cpf_int_ma: "metric",
+  cpf_int_total: "metric",
+  cpf_rstu: "text",
+  cpf_rstu_paid: "metric",
+  cpf_todos: "list",
+  cpf_ledger: "list",
+  cpf_assumptions: "text",
+};
+
+function expectedTypes(
+  key: CpfBlockKey,
+): readonly DashboardBlockPublic["block_type"][] {
+  const t = KEY_EXPECTED_TYPES[key];
+  if (typeof t === "string") return [t];
+  return t;
+}
+
 function clean(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(payload)) {
@@ -69,12 +104,30 @@ function findByKey(
   blocks: DashboardBlockPublic[],
   key: CpfBlockKey,
 ): DashboardBlockPublic | undefined {
-  return blocks.find((b) => payloadBlockKey(clean(b.payload)) === key);
+  const allowed = expectedTypes(key);
+  return blocks.find((b) => {
+    if (payloadBlockKey(clean(b.payload)) !== key) return false;
+    return allowed.includes(b.block_type);
+  });
 }
 
 /** 标题回退候选：跳过已带 block_key 的块，避免误匹配其他槽位。 */
 function unkeyed(blocks: DashboardBlockPublic[]): DashboardBlockPublic[] {
   return blocks.filter((b) => payloadBlockKey(clean(b.payload)) === undefined);
+}
+
+/**
+ * 在候选中按标题认领一块；已被认领的块不再给后续槽位，
+ * 避免「OA 和 SA」这类标题被两个户口共用。
+ */
+function claimByTitle(
+  candidates: DashboardBlockPublic[],
+  claimed: Set<string>,
+  match: (b: DashboardBlockPublic) => boolean,
+): DashboardBlockPublic | undefined {
+  const found = candidates.find((b) => !claimed.has(b.id) && match(b));
+  if (found) claimed.add(found.id);
+  return found;
 }
 
 function blocksOfType(
@@ -190,8 +243,10 @@ function parseAccounts(blocks: DashboardBlockPublic[]): CpfAccountsData | null {
   const metrics = blocksOfType(blocks, "metric");
   if (metrics.length === 0 && !findByKey(blocks, "cpf_acc_oa")) return null;
 
+  const claimed = new Set<string>();
+  const candidates = unkeyed(metrics);
   const pickUnkeyed = (...needles: string[]) =>
-    unkeyed(metrics).find((b) => {
+    claimByTitle(candidates, claimed, (b) => {
       const t = titleOf(b);
       // 利息块标题常含 OA/SA/MA，不得当作户口余额。
       if (t.includes("利息")) return false;
@@ -248,7 +303,6 @@ function parseAccounts(blocks: DashboardBlockPublic[]): CpfAccountsData | null {
     chgY,
     asOf,
     monthContribTotal: undefined,
-    monthInterest: undefined,
   };
 }
 
@@ -281,17 +335,20 @@ function parseProgress(blocks: DashboardBlockPublic[]): {
   reachedFrs: boolean;
 } {
   const progresses = blocksOfType(blocks, "progress");
+  const claimed = new Set<string>();
+  const progressCandidates = unkeyed(progresses);
   const maBlk =
     findByKey(blocks, "cpf_prog_ma") ??
-    unkeyed(progresses).find((b) =>
+    claimByTitle(progressCandidates, claimed, (b) =>
       matchTitle(titleOf(b), "MA", "BHS", "保健"),
     );
+  if (maBlk) claimed.add(maBlk.id);
   const oaSaBlk =
     findByKey(blocks, "cpf_prog_oasa") ??
-    unkeyed(progresses).find((b) =>
+    claimByTitle(progressCandidates, claimed, (b) =>
       matchTitle(titleOf(b), "SA+OA", "BRS", "FRS", "ERS", "退休"),
     ) ??
-    unkeyed(progresses).find((b) => b !== maBlk);
+    claimByTitle(progressCandidates, claimed, () => true);
 
   if (progresses.length === 0 && !maBlk && !oaSaBlk) {
     return { data: null, reachedFrs: false };
@@ -396,12 +453,22 @@ function parseTrend(blocks: DashboardBlockPublic[]): CpfTrendData | null {
 
   const unnamed: DashboardBlockPublic[] = [];
   if (byAcc.size === 0) {
-    for (const b of unkeyed(charts)) {
-      const t = titleOf(b);
-      if (matchTitle(t, "OA", "普通")) byAcc.set("OA", b);
-      else if (matchTitle(t, "SA", "特别")) byAcc.set("SA", b);
-      else if (matchTitle(t, "MA", "保健")) byAcc.set("MA", b);
-      else unnamed.push(b);
+    const claimed = new Set<string>();
+    const chartCandidates = unkeyed(charts);
+    const oa = claimByTitle(chartCandidates, claimed, (b) =>
+      matchTitle(titleOf(b), "OA", "普通"),
+    );
+    const sa = claimByTitle(chartCandidates, claimed, (b) =>
+      matchTitle(titleOf(b), "SA", "特别"),
+    );
+    const ma = claimByTitle(chartCandidates, claimed, (b) =>
+      matchTitle(titleOf(b), "MA", "保健"),
+    );
+    if (oa) byAcc.set("OA", oa);
+    if (sa) byAcc.set("SA", sa);
+    if (ma) byAcc.set("MA", ma);
+    for (const b of chartCandidates) {
+      if (!claimed.has(b.id)) unnamed.push(b);
     }
   }
 
@@ -584,17 +651,22 @@ function parseAnnual(blocks: DashboardBlockPublic[]): CpfAnnualData | null {
   const interestUnkeyed = unkeyed(metrics).filter((b) =>
     matchTitle(titleOf(b), "利息"),
   );
+  const claimed = new Set<string>();
 
   const pickInt = (key: CpfBlockKey, ...needles: string[]) =>
     findByKey(blocks, key) ??
-    interestUnkeyed.find((x) => matchTitle(titleOf(x), ...needles));
+    claimByTitle(interestUnkeyed, claimed, (x) =>
+      matchTitle(titleOf(x), ...needles),
+    );
 
   const oaBlk = pickInt("cpf_int_oa", "OA", "普通");
   const saBlk = pickInt("cpf_int_sa", "SA", "特别");
   const maBlk = pickInt("cpf_int_ma", "MA", "保健");
   const totBlk =
     findByKey(blocks, "cpf_int_total") ??
-    interestUnkeyed.find((b) => matchTitle(titleOf(b), "合计", "总利息"));
+    claimByTitle(interestUnkeyed, claimed, (b) =>
+      matchTitle(titleOf(b), "合计", "总利息"),
+    );
 
   const OA = oaBlk ? num(clean(oaBlk.payload).value) : undefined;
   const SA = saBlk ? num(clean(saBlk.payload).value) : undefined;

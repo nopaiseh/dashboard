@@ -13,6 +13,20 @@ export type TierStatus = {
 const TIER_ORDER = ["BRS", "FRS", "ERS"] as const;
 
 /**
+ * 进度比：分母为 0 / 非有限数时返回 0，避免 Infinity/NaN。
+ */
+export function ratioPct(numerator: number, denominator: number): number {
+  if (
+    !(denominator > 0) ||
+    !Number.isFinite(numerator) ||
+    !Number.isFinite(denominator)
+  ) {
+    return 0;
+  }
+  return (numerator / denominator) * 100;
+}
+
+/**
  * 由 reached_tier 优先，否则按金额 vs 目标推导 BRS/FRS/ERS 状态。
  * 文案：已达 / 已达，超出 S$ X / 下一档，约 YYYY 年 M 月 / 未到
  */
@@ -128,10 +142,12 @@ export function CpfProgress({
     nextEstimate,
     hitBhs,
   } = data;
-  const maPct = Math.min(100, (ma / bhs) * 100);
-  const brsX = (BRS / ERS) * 100;
-  const frsX = (FRS / ERS) * 100;
-  const nowX = Math.min(100, (oaSa / ERS) * 100);
+  const maPct = Math.min(100, ratioPct(ma, bhs));
+  const brsX = ratioPct(BRS, ERS);
+  const frsX = ratioPct(FRS, ERS);
+  const nowX = Math.min(100, ratioPct(oaSa, ERS));
+  const brsPct = Math.round(ratioPct(oaSa, BRS));
+  const frsPct = Math.round(ratioPct(oaSa, FRS));
   const solidToFrs = frsX;
   const overshootW = Math.max(0, nowX - frsX);
   const statuses = resolveRetirementStatuses({
@@ -220,7 +236,7 @@ export function CpfProgress({
               aria-valuenow={Math.round(nowX)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label={`SA 加 OA 已达 FRS 的 ${Math.round((oaSa / FRS) * 100)}%，下一档 ERS 已达 ${Math.round(nowX)}%`}
+              aria-label={`SA 加 OA 已达 FRS 的 ${frsPct}%，下一档 ERS 已达 ${Math.round(nowX)}%`}
             >
               <ProgressSvg
                 marks={[
@@ -243,13 +259,13 @@ export function CpfProgress({
             <div className={"k-ro"}>
               <div>
                 <span>
-                  BRS {formatMoney(BRS)}（{Math.round((oaSa / BRS) * 100)}%）
+                  BRS {formatMoney(BRS)}（{brsPct}%）
                 </span>
                 <b>{statusTag(statuses.BRS)}</b>
               </div>
               <div>
                 <span>
-                  FRS {formatMoney(FRS)}（{Math.round((oaSa / FRS) * 100)}%）
+                  FRS {formatMoney(FRS)}（{frsPct}%）
                 </span>
                 <b>{statusTag(statuses.FRS)}</b>
               </div>

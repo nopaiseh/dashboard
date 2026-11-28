@@ -1270,6 +1270,13 @@
   -webkit-overflow-scrolling: touch;
   max-width: 100%;
 }
+.k-tblScroll:focus {
+  outline: none;
+}
+.k-tblScroll:focus-visible {
+  outline: 2px solid var(--qj-green);
+  outline-offset: 2px;
+}
 .k-tblScroll .k-tbl {
   width: max-content;
   min-width: 100%;

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { DashboardView } from "@/components/qingjian/DashboardView";
 import {
   CpfProgress,
+  ratioPct,
   resolveRetirementStatuses,
 } from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
@@ -272,7 +273,10 @@ describe("C2 CPF section", () => {
     expect(html).toContain("下一档，约");
     expect(html).toContain("已达 FRS");
     expect(html).toContain("k-tblScroll");
-    expect(html).not.toContain("利息 0");
+    expect(html).toContain('aria-label="本月缴存表格"');
+    expect(html).toContain('aria-label="流水表格"');
+    expect(html).toContain('aria-label="年度利息表格"');
+    expect(html).not.toContain(" · 利息 ");
     expect(model.conclusion?.reachedFrs).toBe(true);
     expect(model.accounts?.monthContribTotal).toBe(2960);
     expect(model.accounts).not.toBeNull();
@@ -523,6 +527,117 @@ describe("parseCpfModel block_key + title fallback", () => {
     expect(statuses.FRS.kind).toBe("reached_over");
     expect(statuses.ERS.kind).toBe("next");
     expect(statuses.ERS.detail).toBe("2030 年 7 月");
+  });
+
+  it("ignores block_key when block_type does not match the slot", () => {
+    const model = parseCpfModel(
+      section([
+        {
+          id: "wrong-type-oa",
+          block_type: "text",
+          sort_order: 0,
+          payload: {
+            block_key: "cpf_acc_oa",
+            title: "普通户口 OA",
+            text: "wrong type should be ignored",
+            value: 999_999,
+          },
+          ...baseMeta,
+        },
+        metric(
+          "oa",
+          {
+            title: "普通户口 OA",
+            value: 10,
+            delta_mom: 0,
+            ytd: 0,
+          },
+          1,
+        ),
+        metric(
+          "sa",
+          { title: "特别户口 SA", value: 20, delta_mom: 0, ytd: 0 },
+          2,
+        ),
+        metric(
+          "ma",
+          { title: "保健储蓄 MA", value: 30, delta_mom: 0, ytd: 0 },
+          3,
+        ),
+      ]),
+    );
+    expect(model.accounts?.balances.OA).toBe(10);
+    expect(model.accounts?.balances.SA).toBe(20);
+    expect(model.accounts?.balances.MA).toBe(30);
+  });
+
+  it("does not share one title-matched block across OA and SA slots", () => {
+    const model = parseCpfModel(
+      section([
+        metric(
+          "combined",
+          {
+            title: "OA 和 SA 合并",
+            value: 50_000,
+            delta_mom: 0,
+            ytd: 0,
+          },
+          0,
+        ),
+        metric(
+          "sa-real",
+          {
+            title: "特别户口 SA",
+            value: 12_000,
+            delta_mom: 0,
+            ytd: 0,
+          },
+          1,
+        ),
+        metric(
+          "ma",
+          {
+            title: "保健储蓄 MA",
+            value: 8_000,
+            delta_mom: 0,
+            ytd: 0,
+          },
+          2,
+        ),
+      ]),
+    );
+    expect(model.accounts?.balances.OA).toBe(50_000);
+    expect(model.accounts?.balances.SA).toBe(12_000);
+    expect(model.accounts?.balances.MA).toBe(8_000);
+  });
+});
+
+describe("CpfProgress zero denominators", () => {
+  it("ratioPct returns 0 when target is 0 or non-finite", () => {
+    expect(ratioPct(75_000, 0)).toBe(0);
+    expect(ratioPct(75_000, Number.NaN)).toBe(0);
+    expect(ratioPct(Number.POSITIVE_INFINITY, 100)).toBe(0);
+    expect(ratioPct(50, 100)).toBe(50);
+  });
+
+  it("renders finite percents when BHS/ERS targets are 0", () => {
+    const html = renderToStaticMarkup(
+      createElement(CpfProgress, {
+        data: {
+          ma: 10_000,
+          bhs: 0,
+          oaSa: 50_000,
+          brs: 0,
+          frs: 0,
+          ers: 0,
+          exceedFrs: 0,
+        },
+      }),
+    );
+    expect(html).not.toContain("Infinity");
+    expect(html).not.toContain("NaN");
+    expect(html).toContain("已达 BHS");
+    expect(html).toContain(">0%<");
   });
 });
 

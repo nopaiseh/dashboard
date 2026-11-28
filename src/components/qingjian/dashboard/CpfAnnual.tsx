@@ -41,7 +41,12 @@ export function CpfAnnual({
       <div className={"k-two"}>
         <div className={"card"}>
           <h2>{data.yearLabel}</h2>
-          <div className={"k-tblScroll"}>
+          <div
+            className={"k-tblScroll"}
+            tabIndex={0}
+            role="region"
+            aria-label="年度利息表格"
+          >
             <table className={"k-tbl"}>
               <thead>
                 <tr>

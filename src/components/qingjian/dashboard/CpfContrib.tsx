@@ -41,7 +41,12 @@ export function CpfContrib({
         </span>
       </div>
       <div className={"card"}>
-        <div className={"k-tblScroll"}>
+        <div
+          className={"k-tblScroll"}
+          tabIndex={0}
+          role="region"
+          aria-label="本月缴存表格"
+        >
           <table className={"k-tbl"}>
             <thead>
               <tr className={"grp"}>
