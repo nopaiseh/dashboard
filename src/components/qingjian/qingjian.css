@@ -1264,6 +1264,24 @@
   background: #1a1a1a; vertical-align: middle; margin-right: 0.35rem;
 }
 
+/* 卡片内横向滚动：窄屏（如 390px）不撑开页面宽度 */
+.k-tblScroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+.k-tblScroll .k-tbl {
+  width: max-content;
+  min-width: 100%;
+}
+.k-tblScroll .k-tbl th,
+.k-tblScroll .k-tbl td {
+  white-space: nowrap;
+}
+.k-tblScroll .k-tbl th.l,
+.k-tblScroll .k-tbl td.l {
+  white-space: nowrap;
+}
 .k-tbl { width: 100%; border-collapse: collapse; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
 .k-tbl th {
   font-weight: 600; color: #4b5563; font-size: 0.8125rem; text-align: right;
@@ -1284,6 +1302,10 @@
 @media (max-width: 720px) { .k-two { grid-template-columns: 1fr; } }
 .k-rstuHead { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .k-rstuHead h2 { margin: 0; }
+.k-rstuTags { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.k-rstuBody { margin-top: 0.7rem; font-size: 0.875rem; line-height: 1.6; color: #374151; }
+.k-rstuBody b { display: block; margin-bottom: 0.35rem; color: var(--qj-ink); }
+.k-rstuBody p { margin: 0; }
 .k-empty {
   background: var(--qj-bg-soft); border: 1px dashed #c5cdc8;
   border-radius: var(--qj-radius-sm); padding: 1rem 1.1rem; margin-top: 0.7rem;

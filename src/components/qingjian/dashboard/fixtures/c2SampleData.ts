@@ -181,7 +181,7 @@ export const C2_TODOS: C2Todo[] = [
     info: true,
   },
   {
-    title: "OA 转 SA（不可逆，需玄空哥决定）",
+    title: "OA 转 SA（不可逆，需本人决定）",
     sub: "转出后不能转回；仅供你考虑，不会自动执行。专户利率更高，有助于下一档 ERS。",
     due: "待你定",
     irreversible: true,

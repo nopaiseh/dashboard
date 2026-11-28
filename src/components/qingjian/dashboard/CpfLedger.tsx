@@ -62,55 +62,57 @@ export function CpfLedger({
           {rows.length === 0 ? (
             <EmptyBlock message="暂无流水记录" />
           ) : (
-            <table className={"k-tbl"}>
-              <thead>
-                <tr>
-                  <th className={"l"}>入账日期</th>
-                  <th className={"l"}>类型</th>
-                  <th className={"l"}>说明 / 用途</th>
-                  <th>OA</th>
-                  <th>SA</th>
-                  <th>MA</th>
-                  <th>合计（S$）</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={`${row.date}-${row.note}`}>
-                    <td className={"l"}>{row.date}</td>
-                    <td className={"l"}>
-                      <span
-                        className={
-                          row.kind === "in" ? "k-type k-in" : "k-type k-fee"
-                        }
-                      >
-                        {row.typeLabel}
-                      </span>
-                    </td>
-                    <td className={"l"}>{row.note}</td>
-                    <td>{cell(row.OA)}</td>
-                    <td>{cell(row.SA)}</td>
-                    <td>{cell(row.MA)}</td>
-                    <td>
-                      <b>{cell(row.total)}</b>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              {summary ? (
-                <tfoot>
+            <div className={"k-tblScroll"}>
+              <table className={"k-tbl"}>
+                <thead>
                   <tr>
-                    <td className={"l"} colSpan={3}>
-                      最近 6 个月合计
-                    </td>
-                    <td />
-                    <td />
-                    <td />
-                    <td>{summary}</td>
+                    <th className={"l"}>入账日期</th>
+                    <th className={"l"}>类型</th>
+                    <th className={"l"}>说明 / 用途</th>
+                    <th>OA</th>
+                    <th>SA</th>
+                    <th>MA</th>
+                    <th>合计（S$）</th>
                   </tr>
-                </tfoot>
-              ) : null}
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={`${row.date}-${row.note}`}>
+                      <td className={"l"}>{row.date}</td>
+                      <td className={"l"}>
+                        <span
+                          className={
+                            row.kind === "in" ? "k-type k-in" : "k-type k-fee"
+                          }
+                        >
+                          {row.typeLabel}
+                        </span>
+                      </td>
+                      <td className={"l"}>{row.note}</td>
+                      <td>{cell(row.OA)}</td>
+                      <td>{cell(row.SA)}</td>
+                      <td>{cell(row.MA)}</td>
+                      <td>
+                        <b>{cell(row.total)}</b>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {summary ? (
+                  <tfoot>
+                    <tr>
+                      <td className={"l"} colSpan={3}>
+                        最近 6 个月合计
+                      </td>
+                      <td />
+                      <td />
+                      <td />
+                      <td>{summary}</td>
+                    </tr>
+                  </tfoot>
+                ) : null}
+              </table>
+            </div>
           )}
           <div className={"k-empty k-empty-sm"}>
             <b>无提取</b>

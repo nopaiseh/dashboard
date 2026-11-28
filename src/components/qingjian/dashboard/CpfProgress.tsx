@@ -1,6 +1,96 @@
 import { EmptyBlock } from "./EmptyBlock";
 import type { CpfProgressData } from "./cpfModel";
-import { formatMoney } from "./format";
+import { formatMoney, formatWan } from "./format";
+
+export type TierStatusKind = "reached" | "reached_over" | "next" | "not_yet";
+
+export type TierStatus = {
+  kind: TierStatusKind;
+  /** 已达，超出 S$ X 时的超出额；或下一档时间文案。 */
+  detail?: string;
+};
+
+const TIER_ORDER = ["BRS", "FRS", "ERS"] as const;
+
+/**
+ * 由 reached_tier 优先，否则按金额 vs 目标推导 BRS/FRS/ERS 状态。
+ * 文案：已达 / 已达，超出 S$ X / 下一档，约 YYYY 年 M 月 / 未到
+ */
+export function resolveRetirementStatuses(data: {
+  oaSa: number;
+  brs: number;
+  frs: number;
+  ers: number;
+  exceedFrs: number;
+  reachedTier?: string;
+  nextEstimate?: string;
+}): { BRS: TierStatus; FRS: TierStatus; ERS: TierStatus } {
+  const targets = { BRS: data.brs, FRS: data.frs, ERS: data.ers };
+  const reached = data.reachedTier?.trim().toUpperCase() || undefined;
+  const reachedIdx = reached
+    ? TIER_ORDER.indexOf(reached as (typeof TIER_ORDER)[number])
+    : -1;
+
+  const met = (key: (typeof TIER_ORDER)[number], idx: number) => {
+    if (reachedIdx >= 0 && reachedIdx >= idx) return true;
+    return data.oaSa >= targets[key];
+  };
+
+  let firstUnreached = -1;
+  for (let i = 0; i < TIER_ORDER.length; i++) {
+    if (!met(TIER_ORDER[i], i)) {
+      firstUnreached = i;
+      break;
+    }
+  }
+
+  const statusFor = (
+    key: (typeof TIER_ORDER)[number],
+    idx: number,
+  ): TierStatus => {
+    if (met(key, idx)) {
+      if (key === "FRS") {
+        const over =
+          data.exceedFrs > 0
+            ? data.exceedFrs
+            : Math.max(0, data.oaSa - data.frs);
+        if (over > 0) return { kind: "reached_over", detail: formatMoney(over) };
+      }
+      return { kind: "reached" };
+    }
+    if (firstUnreached === idx && data.nextEstimate) {
+      return { kind: "next", detail: data.nextEstimate };
+    }
+    return { kind: "not_yet" };
+  };
+
+  return {
+    BRS: statusFor("BRS", 0),
+    FRS: statusFor("FRS", 1),
+    ERS: statusFor("ERS", 2),
+  };
+}
+
+function statusTag(status: TierStatus) {
+  switch (status.kind) {
+    case "reached":
+      return <span className={"chip chipOver"}>已达</span>;
+    case "reached_over":
+      return (
+        <span className={"chip chipOver"}>
+          已达，超出 {status.detail}
+        </span>
+      );
+    case "next":
+      return (
+        <span className={"chip chipNext"}>
+          下一档，约 {status.detail}
+        </span>
+      );
+    case "not_yet":
+      return <span className={"chip chipNeutral"}>未到</span>;
+  }
+}
 
 export function CpfProgress({
   data,
@@ -34,11 +124,9 @@ export function CpfProgress({
     frs: FRS,
     ers: ERS,
     exceedFrs,
+    reachedTier,
+    nextEstimate,
     hitBhs,
-    hitBrs,
-    hitFrs,
-    hitErs,
-    footnote,
   } = data;
   const maPct = Math.min(100, (ma / bhs) * 100);
   const brsX = (BRS / ERS) * 100;
@@ -46,6 +134,15 @@ export function CpfProgress({
   const nowX = Math.min(100, (oaSa / ERS) * 100);
   const solidToFrs = frsX;
   const overshootW = Math.max(0, nowX - frsX);
+  const statuses = resolveRetirementStatuses({
+    oaSa,
+    brs: BRS,
+    frs: FRS,
+    ers: ERS,
+    exceedFrs,
+    reachedTier,
+    nextEstimate,
+  });
 
   return (
     <>
@@ -76,7 +173,13 @@ export function CpfProgress({
             >
               <ProgressSvg
                 marks={[
-                  { key: "BHS", label: "BHS", sub: "7.5万", x: 100, end: true },
+                  {
+                    key: "BHS",
+                    label: "BHS",
+                    sub: formatWan(bhs),
+                    x: 100,
+                    end: true,
+                  },
                 ]}
                 solid={maPct}
                 overshoot={0}
@@ -121,12 +224,12 @@ export function CpfProgress({
             >
               <ProgressSvg
                 marks={[
-                  { key: "BRS", label: "BRS", sub: "11万", x: brsX },
-                  { key: "FRS", label: "FRS", sub: "22万", x: frsX },
+                  { key: "BRS", label: "BRS", sub: formatWan(BRS), x: brsX },
+                  { key: "FRS", label: "FRS", sub: formatWan(FRS), x: frsX },
                   {
                     key: "ERS",
                     label: "ERS",
-                    sub: "44万",
+                    sub: formatWan(ERS),
                     x: 100,
                     end: true,
                   },
@@ -142,41 +245,23 @@ export function CpfProgress({
                 <span>
                   BRS {formatMoney(BRS)}（{Math.round((oaSa / BRS) * 100)}%）
                 </span>
-                <b>
-                  {oaSa >= BRS ? (
-                    <span className={"chip chipOver"}>
-                      已达{hitBrs ? ` · ${hitBrs}` : ""}
-                    </span>
-                  ) : null}
-                </b>
+                <b>{statusTag(statuses.BRS)}</b>
               </div>
               <div>
                 <span>
                   FRS {formatMoney(FRS)}（{Math.round((oaSa / FRS) * 100)}%）
                 </span>
-                <b>
-                  {oaSa >= FRS ? (
-                    <span className={"chip chipOver"}>
-                      已达，超出 {formatMoney(exceedFrs)}
-                      {hitFrs ? ` · ${hitFrs}` : ""}
-                    </span>
-                  ) : null}
-                </b>
+                <b>{statusTag(statuses.FRS)}</b>
               </div>
               <div>
                 <span>
                   下一档 ERS {formatMoney(ERS)}（{Math.round(nowX)}%）
                 </span>
-                <b>
-                  {hitErs ? (
-                    <span className={"chip chipNext"}>约 {hitErs}</span>
-                  ) : null}
-                </b>
+                <b>{statusTag(statuses.ERS)}</b>
               </div>
             </div>
           </div>
         </div>
-        {footnote ? <div className={"k-mini"}>{footnote}</div> : null}
       </div>
     </>
   );
