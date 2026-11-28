@@ -31,9 +31,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://dashboard:dashboard@127.0.0.1:5432/dashboard
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -55,8 +55,12 @@ jobs:
           PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
           for f in supabase/migrations/*.sql; do
             echo "Applying $f"
-            PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+            # --single-transaction: each file is atomic (Supabase wraps migrations
+            # the same way; do not embed BEGIN/COMMIT inside migration files).
+            PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f "$f"
           done
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rpc_smoke.sql
+          PGPASSWORD=dashboard ./scripts/verify-drop-goals-guard.sh
 
       - name: Lint
         run: npm run lint
@@ -68,8 +72,6 @@ jobs:
         run: npm test
         env:
           SESSION_SECRET: ci-test-session-secret-at-least-32-chars
-          OWNER_EMAIL: owner@example.com
-          SUPABASE_ANON_KEY: test-anon-placeholder-not-a-real-key
           WEBAUTHN_ORIGIN: https://desk.nopaiseh.com
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: test-placeholder-not-a-real-key
@@ -81,9 +83,7 @@ jobs:
           # 构建期不连接真实服务；仅满足模块对变量名的存在性检查
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: build-placeholder-not-a-real-key
-          SUPABASE_ANON_KEY: build-anon-placeholder-not-a-real-key
           SESSION_SECRET: ci-build-session-secret-at-least-32-chars
-          OWNER_EMAIL: owner@example.com
           WEBAUTHN_RP_ID: desk.nopaiseh.com
           WEBAUTHN_ORIGIN: https://desk.nopaiseh.com
           SITE_NAME: 玄机阁

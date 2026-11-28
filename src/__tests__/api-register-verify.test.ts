@@ -21,8 +21,7 @@ describe("register verify API", () => {
     expect(res.status).toBe(400);
   });
 
-  it("completes via RPC after attestation succeeds", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+  it("rejects leftover bootstrap challenges", async () => {
     const maybeSingle = vi.fn().mockResolvedValue({
       data: {
         id: "11111111-1111-4111-8111-111111111111",
@@ -35,19 +34,48 @@ describe("register verify API", () => {
       error: null,
     });
 
-    const consumeSetupGrantJti = vi.fn().mockResolvedValue(undefined);
-    vi.doMock("@/lib/setup-grant", () => ({
-      readValidSetupGrantJti: async () => "grant-jti-1",
-      consumeSetupGrantJti,
-      SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
-      clearedSetupGrantCookieOptions: () => ({
-        httpOnly: true,
-        secure: true,
-        sameSite: "strict",
-        path: "/",
-        maxAge: 0,
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle }),
+              }),
+            }),
+          }),
+        }),
+        rpc: vi.fn(),
       }),
     }));
+
+    const { POST } = await import("@/app/api/auth/register/verify/route");
+    const res = await POST(
+      new Request("http://localhost/api/auth/register/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          challenge_id: "11111111-1111-4111-8111-111111111111",
+          attestation: { id: "cred-1" },
+        }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("completes via RPC after attestation succeeds (invite)", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        id: "11111111-1111-4111-8111-111111111111",
+        challenge: "chal",
+        purpose: "register",
+        authorized: true,
+        registration_mode: "invite",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+      error: null,
+    });
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
@@ -98,6 +126,5 @@ describe("register verify API", () => {
         p_credential_id: "cred-1",
       }),
     );
-    expect(consumeSetupGrantJti).toHaveBeenCalledWith("grant-jti-1");
   });
 });

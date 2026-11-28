@@ -3,11 +3,35 @@ import {
   CREDENTIAL_ID_MAX,
   authVerifySchema,
   createItemSchema,
+  kindValidationErrorMessage,
   patchItemSchema,
   registerOptionsSchema,
 } from "@/lib/validation";
 
 describe("input validation", () => {
+  it("rejects removed question kinds with a clear message", () => {
+    for (const kind of ["question_to_user", "question_from_user"] as const) {
+      const parsed = createItemSchema.safeParse({ kind, title: "t" });
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) {
+        const msg = kindValidationErrorMessage(parsed.error);
+        expect(msg).toContain(kind);
+        expect(msg).toContain("has been removed");
+      }
+    }
+
+    const ok = createItemSchema.safeParse({ kind: "todo", title: "t" });
+    expect(ok.success).toBe(true);
+
+    const patch = patchItemSchema.safeParse({ kind: "question_to_user" });
+    expect(patch.success).toBe(false);
+    if (!patch.success) {
+      expect(kindValidationErrorMessage(patch.error)).toContain(
+        "question_to_user",
+      );
+    }
+  });
+
   it("rejects non-https source_url and enforces datetime due_at", () => {
     expect(
       createItemSchema.safeParse({
@@ -69,8 +93,8 @@ describe("input validation", () => {
     ).toBe(true);
   });
 
-  it("allows empty register options body; token optional for invite", () => {
-    expect(registerOptionsSchema.safeParse({}).success).toBe(true);
+  it("requires invite token on register options", () => {
+    expect(registerOptionsSchema.safeParse({}).success).toBe(false);
     expect(
       registerOptionsSchema.safeParse({ token: "x" }).success,
     ).toBe(true);

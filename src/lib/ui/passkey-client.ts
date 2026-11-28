@@ -60,14 +60,13 @@ export async function loginWithPasskey(): Promise<void> {
 }
 
 /**
- * 首次登记：依赖 httpOnly setup-grant cookie → options → startRegistration → verify。
- * 新设备 invite 可传入一次性 token。
+ * 新设备登记：须带 invite 一次性 token → options → startRegistration → verify。
  */
-export async function registerWithPasskey(token?: string): Promise<void> {
+export async function registerWithPasskey(token: string): Promise<void> {
   const optRes = await fetch("/api/auth/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(token ? { token } : {}),
+    body: JSON.stringify({ token }),
   });
   if (!optRes.ok) {
     throw new PasskeyError(await readError(optRes), optRes.status);
@@ -96,6 +95,28 @@ export async function registerWithPasskey(token?: string): Promise<void> {
 
 export type DecisionAction = "approve" | "reject" | "reply";
 
+async function requestStepUpOptions(
+  body: Record<string, unknown>,
+): Promise<{
+  challenge_id: string;
+  options: PublicKeyCredentialRequestOptionsJSON;
+  binding?: string;
+}> {
+  const optRes = await fetch("/api/auth/options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!optRes.ok) {
+    throw new PasskeyError(await readError(optRes), optRes.status);
+  }
+  return (await optRes.json()) as {
+    challenge_id: string;
+    options: PublicKeyCredentialRequestOptionsJSON;
+    binding?: string;
+  };
+}
+
 export async function decideWithPasskey(input: {
   itemId: string;
   action: DecisionAction;
@@ -103,21 +124,10 @@ export async function decideWithPasskey(input: {
   optionKey?: string;
   replyText?: string;
 }): Promise<void> {
-  const optRes = await fetch("/api/auth/options", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      purpose: "step_up",
-      item_id: input.itemId,
-    }),
+  const optBody = await requestStepUpOptions({
+    purpose: "step_up",
+    item_id: input.itemId,
   });
-  if (!optRes.ok) {
-    throw new PasskeyError(await readError(optRes), optRes.status);
-  }
-  const optBody = (await optRes.json()) as {
-    challenge_id: string;
-    options: PublicKeyCredentialRequestOptionsJSON;
-  };
 
   const assertion = await startAuthentication({
     optionsJSON: optBody.options,
@@ -143,5 +153,112 @@ export async function decideWithPasskey(input: {
   }
   if (!decideRes.ok) {
     throw new PasskeyError(await readError(decideRes), decideRes.status);
+  }
+}
+
+async function assertWithBoundStepUp(optionsBody: Record<string, unknown>) {
+  const optBody = await requestStepUpOptions(optionsBody);
+  if (!optBody.binding) {
+    throw new PasskeyError("missing binding", 500);
+  }
+  const assertion = await startAuthentication({
+    optionsJSON: optBody.options,
+  });
+  return {
+    challenge_id: optBody.challenge_id,
+    assertion,
+    binding: optBody.binding,
+  };
+}
+
+export async function createAgentWithPasskey(input: {
+  slug: string;
+  name: string;
+  area: string;
+  botId?: string | null;
+}): Promise<void> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "create_agent",
+  });
+  const res = await fetch("/api/owner/agents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slug: input.slug,
+      name: input.name,
+      area: input.area,
+      bot_id: input.botId ?? null,
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
+}
+
+export async function issueAgentTokenWithPasskey(input: {
+  agentId: string;
+  revokePrevious: boolean;
+}): Promise<{
+  token: string;
+  token_id: string;
+  id_suffix: string;
+  created_at: string;
+  agent_slug: string;
+}> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "issue_agent_token",
+    agent_id: input.agentId,
+  });
+  const res = await fetch(`/api/owner/agents/${input.agentId}/tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+      revoke_previous: input.revokePrevious,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
+  return (await res.json()) as {
+    token: string;
+    token_id: string;
+    id_suffix: string;
+    created_at: string;
+    agent_slug: string;
+  };
+}
+
+export async function revokeAgentTokenWithPasskey(input: {
+  agentId: string;
+  tokenId: string;
+}): Promise<void> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "revoke_agent_token",
+    agent_id: input.agentId,
+    token_id: input.tokenId,
+  });
+  const res = await fetch(
+    `/api/owner/agents/${input.agentId}/tokens/${input.tokenId}/revoke`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        assertion: step.assertion,
+        challenge_id: step.challenge_id,
+        binding: step.binding,
+      }),
+    },
+  );
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
   }
 }

@@ -15,9 +15,9 @@ export default async function WaitingPage() {
     return (
       <AppShell active="waiting" counts={counts} siteName={siteName}>
         <div className={"qj-pageTitleRow"}>
-          <h1>等别人</h1>
+          <h1>待回音</h1>
         </div>
-        <ItemList items={items} emptyText="没有在等别人的事项" />
+        <ItemList items={items} emptyText="没有待回音的事项" />
       </AppShell>
     );
   });

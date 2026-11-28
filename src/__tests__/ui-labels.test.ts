@@ -23,12 +23,10 @@ describe("ui labels", () => {
       "today",
       "pending",
       "todo",
-      "qa-in",
-      "qa-out",
       "waiting",
       "held",
       "sisters",
-      "goals",
+      "settings",
     ]);
     expect(KIND_LABELS.approval).toBe("待批");
     expect(ACTION_LABELS.update).toBe("更新");

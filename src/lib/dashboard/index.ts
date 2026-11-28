@@ -1,0 +1,46 @@
+export {
+  assertDashboardStoredPayload,
+  decryptBlockPayload,
+  decryptBlockPayloadStrict,
+  encryptBlockPayload,
+  DASHBOARD_BLOCKS_ENTITY,
+  DASHBOARD_PAYLOAD_COLUMN,
+} from "@/lib/dashboard/crypto";
+export {
+  runDerivedCompute,
+  type DashboardDerivedComputer,
+} from "@/lib/dashboard/compute";
+export {
+  assertBlockOwnedByAgent,
+  assertSectionOwnedByAgent,
+  extractHeadline,
+  planCreateBlock,
+  planCreateSection,
+  planPatchBlock,
+  planPatchSection,
+} from "@/lib/dashboard/logic";
+export {
+  containsSingaporeNricOrFin,
+  isForbiddenDashboardIdentifierKey,
+} from "@/lib/dashboard/nric-guard";
+export {
+  DASHBOARD_INVALID_PAYLOAD_ERROR,
+  dashboardInvalidPayloadResponse,
+} from "@/lib/dashboard/write-errors";
+export {
+  DASHBOARD_BLOCK_TYPES,
+  type ChartSeriesPayload,
+  type DashboardBlockAction,
+  type DashboardBlockPublic,
+  type DashboardBlockRow,
+  type DashboardBlockType,
+  type DashboardPayload,
+  type DashboardReadResult,
+  type DashboardSectionPublic,
+  type DashboardSectionRow,
+  type HeadlinePayload,
+  type ListPayload,
+  type MetricPayload,
+  type ProgressPayload,
+  type TextPayload,
+} from "@/lib/dashboard/types";

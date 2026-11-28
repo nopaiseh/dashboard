@@ -4,6 +4,8 @@
 
 > 注意：本仓库已开 Supabase「Deploy to production」（分支 `main`）。合并到 `main` 后迁移会自动上 prod。
 
+**预览构建**：`vercel.json` 的 `ignoreCommand`（`scripts/vercel-ignore-build.sh`）会跳过多数预览部署以省费用；生产永远构建。需要预览时在**提交 subject（第一行）**加 `[preview]`，或改动前端界面文件（详见脚本注释）。
+
 ## 表结构
 
 | 对象 | 说明 |
@@ -12,9 +14,11 @@
 | `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发 |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
-| `goals` / `daily_summaries` | 目标与每日小结 |
+| `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密） |
+| `dashboard_block_events` | 区块审计，只增不改（禁止 UPDATE/DELETE/TRUNCATE） |
+| `daily_summaries` | 每日小结 |
 | `webauthn_credentials` | 本人 passkey |
-| `webauthn_registration` | 单行：`open` **默认 false**；`one_time_token_hash`；`bootstrap_consumed_at`（首次登记成功时写入）；`consumed_setup_grant_jti`（setup-grant 单次消费） |
+| `webauthn_registration` | 单行：`open` **默认 false**；`one_time_token_hash`；历史列 `bootstrap_consumed_at` / `consumed_setup_grant_jti` 仍在库中（首次登记路径已从应用层移除，无新写入） |
 | `webauthn_challenges` | 短时 challenge；注册挑战带 `authorized=true` |
 | `login_attempts` | 只按 IP 锁定；凭据 / 全站只告警；`auth_options` 限流计数 |
 | `stale_items` | open 且 7 天无活动（`security_invoker`） |
@@ -25,31 +29,11 @@
 
 ## 注册与认证
 
-1. **首次登记（魔法链接）**：`/setup` 收集邮箱 → `POST /api/auth/setup/request`。仅当邮箱与 `OWNER_EMAIL` 大小写不敏感匹配时，经 Supabase Auth `signInWithOtp`（`shouldCreateUser: false`）发信；**始终返回同一中性文案**，按 IP **进程内**限流，并对匹配/非匹配路径做 **~400ms** 最短响应时间填充（缩小时序差）。邮件链接落到 `/setup/confirm?token_hash=…&type=email`；**页面仅展示确认按钮，须 POST 后再 `verifyOtp`**（避免聊天/邮件预览消费 token）。校验通过后签发约 **10 分钟**、httpOnly、signed 的 `xjg_setup_grant` cookie（含 `aud` + `jti`）。
-2. **WebAuthn 登记**：持有效 setup-grant 且库中**尚无任何凭据**时，`POST /api/auth/register/options` 以 `bootstrap` 模式创建 `authorized` 挑战；`verify` 成功写入凭据后**消费 jti**（写入 `consumed_setup_grant_jti`）并**清除 grant cookie**。同 jti 不可再用于登记。有凭据后 bootstrap 永久失效（fail closed）。`pubKeyCredParams` **仅** ES256 (`-7`) 与 RS256 (`-257`)，禁止 ML-DSA-44 (`-48`)。`residentKey` 仍为 `required`。
-3. **中途失败恢复**：options 成功但 verify 失败且尚无凭据时，同一 setup-grant 在过期前可重试。complete RPC 对注册配置行 `FOR UPDATE`，成功后删除其余注册挑战。
-4. **新设备**：已登录 + passkey → `POST /api/auth/register/invite`（一次性令牌，与首次登记无关）。
-5. **登录**：会话 cookie 闲置 12h，绝对上限 7 天（`iat` 首次签发，滑动续期不改）；锁定逻辑集中 `evaluateLoginLockout`（只按 IP 锁 15 分钟；凭据与全站失败只告警——options 未登录可拿到凭据 ID，按凭据锁会被换 IP 锁死主人）。
-6. **决定 step-up**：须带 `content_hash`；挑战抢占；`apply_item_decision` 事务条件更新；前端只见通用错误。
-
-### 邮件 / OTP（SMTP 与过期）
-
-| 项 | 现状 |
-|----|------|
-| SMTP | **当前**使用 Supabase 内置邮件（Auth 仪表盘 Email provider）；免费档**每小时发送上限较低**，仅够主人自用首次登记。**计划**后续换自定义 SMTP（Resend / 其它），本仓库暂不改 env。 |
-| Magic link / OTP 过期 | **计划**在 Auth 仪表盘将 Email OTP / magic link 有效期设为 **15 分钟**（与 setup-grant ~10 分钟衔接：先点邮件再登记）。以仪表盘实际配置为准；Agent 不改远程 Auth 设置。 |
-
-### Supabase Auth 仪表盘配置（合并后由本人操作；本 PR 不改远程配置）
-
-| 项 | 要求 |
-|----|------|
-| Email provider | 开启（内置 mailer；见上表 SMTP） |
-| 允许新用户注册 / signups | **关闭** |
-| Site URL | `https://desk.nopaiseh.com` |
-| Redirect URLs | 含 `https://desk.nopaiseh.com/**`（至少 `/setup/confirm`） |
-| Magic Link 邮件模板 | 使用 `token_hash`，例如链到 `{{ .SiteURL }}/setup/confirm?token_hash={{ .TokenHash }}&type=email` |
-| OTP / magic link 过期 | 计划 **15 分钟**（仪表盘配置） |
-| 用户 | 预先在 Auth 中创建与 `OWNER_EMAIL` 相同的用户（因 `shouldCreateUser: false` + 禁止注册） |
+1. **首次登记已关闭**：`/setup`、`/setup/confirm`、`/api/auth/setup/*` 一律 **404**。无魔法链接、无 setup-grant、应用层不再走 `bootstrap` 模式。
+2. **新设备（已登录 invite）**：已登录 + 现场 passkey → `POST /api/auth/register/invite` 签发短时一次性令牌；新设备持令牌调用 `POST /api/auth/register/options`（`one_time`）→ WebAuthn 登记 → `verify`。`pubKeyCredParams` **仅** ES256 (`-7`) 与 RS256 (`-257`)，禁止 ML-DSA-44 (`-48`)。`residentKey` 仍为 `required`。目前**无 UI** 暴露 invite；API 保留不变。
+3. **登录**：会话 cookie 闲置 12h，绝对上限 7 天（`iat` 首次签发，滑动续期不改）；锁定逻辑集中 `evaluateLoginLockout`（只按 IP 锁 15 分钟；凭据与全站失败只告警——options 未登录可拿到凭据 ID，按凭据锁会被换 IP 锁死主人）。
+4. **决定 / 所有者操作 step-up**：须带 `content_hash` 或动作绑定；挑战抢占；前端只见通用错误。
+5. **丢失全部 passkey**：无自助恢复。须在 Supabase 侧人工介入（例如 SQL 写入 invite one-time token 或新凭据）后再登录。
 
 ## 姐妹接口
 
@@ -58,10 +42,22 @@
 | POST | `/api/agent/items` | 新建 |
 | PATCH | `/api/agent/items/:id` | RPC `apply_agent_item_patch` 单事务 FOR UPDATE；不回写旧 status；冲突 `SQLSTATE XJ409`→409；approval 且 open 时只能 `withdrawn`；改内容 → 退回 open；**内容字段与 `status: withdrawn` 同时传入 → 400**；有本人决定后禁改 kind |
 | GET | `/api/agent/inbox?since=` | 已决定事项 + 流水；`invalidated` 表示内容事后变更 |
+| POST | `/api/agent/dashboard/sections` | 新建分区（`agent_id`=自己） |
+| PATCH | `/api/agent/dashboard/sections/:id` | 更新自己的分区 |
+| POST | `/api/agent/dashboard/blocks` | 新建区块（加密 payload；无 DELETE） |
+| PATCH | `/api/agent/dashboard/blocks/:id` | 更新自己的区块 |
 
 ## 本人读接口
 
-`GET /api/items`、`/api/goals`、`/api/summaries`（需登录）。决定无批量接口。
+`GET /api/items`、`/api/dashboard`、`/api/summaries`（需登录）。决定无批量接口。
+
+### Dashboard 加密字段
+
+| 明文 | 密文（`dashboard_blocks.payload` JSON） |
+|------|----------------------------------------|
+| `category`、`block_type`、`sort_order`、`agent_id`、时间戳 | 标题、数值、正文、一行标题、列表、进度、图表序列等 |
+
+AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信封版本查密钥）。`payload` 仅允许 `''` 或 `^v[0-9]+:` 前缀（无遗留明文）。服务端派生值接口：`runDerivedCompute`（内存解密→计算→返回；不落库/不缓存/不打明文日志）。
 
 ## 防护
 
@@ -72,7 +68,7 @@
 - RPC：`REVOKE EXECUTE FROM public, anon, authenticated`，仅 `service_role`；冲突/禁止/未找到用自定义 SQLSTATE `XJ409` / `XJ403` / `XJ404`。
 - 安全头：HSTS、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`、`X-Robots-Tag`。
 - **上线后**：姐妹接口内存限流由 **Vercel 防火墙规则**兜底（本仓库暂不改内存限流实现）。
-- **setup request/confirm 限流**：`src/lib/rate-limit.ts` 为**进程内** Map；多实例 / 冷启动各自计数且可重置，在 Serverless 下弱于全局限流。登录与 `register/options` 已走 DB；setup 路径本轮**仅文档化局限**，不加迁移（避免无谓 prod schema 变更）。若日后需强限流，再迁 Redis/库表或防火墙。
+- **进程内限流**：`src/lib/rate-limit.ts` 为 Map；多实例 / 冷启动各自计数。登录与 `register/options` 已走 DB。
 
 ## 输入校验
 
@@ -108,16 +104,14 @@
 |------|------|
 | `SUPABASE_URL` | Supabase API URL（服务器） |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role；仅服务器；业务 DB |
-| `SUPABASE_ANON_KEY` | 仅 Auth OTP（`signInWithOtp` / `verifyOtp`）；服务器专用，勿用 `NEXT_PUBLIC_` |
-| `SESSION_SECRET` | 会话 JWT 与 setup-grant HMAC；≥32 字节，不足则拒绝 |
-| `OWNER_EMAIL` | 唯一允许首次登记魔法链接的邮箱；服务器专用 |
+| `SESSION_SECRET` | 会话 JWT HMAC；≥32 字节，不足则拒绝 |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | Passkey RP 与 Origin 校验 |
 | `SITE_NAME` | 登录页站名 |
 | `FIELD_ENCRYPTION_KEY` | 字段加密主密钥（base64 32 字节）；或与 `FIELD_ENCRYPTION_KEY_Vn` / `FIELD_ENCRYPTION_KEYS` + `FIELD_ENCRYPTION_KEY_CURRENT` 组成密钥环 |
 | `FIELD_ENCRYPTION_STRICT` | `1` 时拒绝遗留明文 / 无 AAD 密文 / 旧 SHA content_hash |
 | `CONTENT_HASH_KEY` | content_hash HMAC 密钥（base64 32 字节；与字段加密密钥分离） |
 
-已移除：`BOOTSTRAP_TOKEN`（改由 `OWNER_EMAIL` + setup-grant 承担首次登记授权）。
+已移除（应用不再读取；Vercel / Auth 侧可择机清理）：`BOOTSTRAP_TOKEN`、`OWNER_EMAIL`、`SUPABASE_ANON_KEY`（曾仅用于首次登记魔法链接 OTP）。
 
 ## 技术栈
 

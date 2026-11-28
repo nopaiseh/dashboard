@@ -186,7 +186,10 @@ export function planAgentPatch(
     source_url,
     due_at,
   };
-  const reopened = contentChanged(item, nextHashFields);
+  // 仅当请求带了内容字段时才按 hash 判断重开；纯 status/project 变更保留库内 hash。
+  // 避免 kind 迁移后（content_hash 仍含旧 kind）仅改 status 被误判为内容变更。
+  const reopened =
+    contentFieldsPresent && contentChanged(item, nextHashFields);
 
   // 明文内容未变时保留库里原 hash（含过渡期旧 SHA），避免仅改状态就写新 HMAC
   // 导致历史批准事件被误判作废。

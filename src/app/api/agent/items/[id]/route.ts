@@ -13,7 +13,10 @@ import {
 } from "@/lib/pg-errors";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemRow } from "@/lib/types";
-import { patchItemSchema } from "@/lib/validation";
+import {
+  kindValidationErrorMessage,
+  patchItemSchema,
+} from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -41,7 +44,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const parsed = patchItemSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    const kindError = kindValidationErrorMessage(parsed.error);
+    return jsonError(400, kindError ?? "invalid body", {
+      details: parsed.error.flatten(),
+    });
   }
 
   // 轻量预检（所有权 / 状态规则）；真正更新在 RPC 事务内 FOR UPDATE

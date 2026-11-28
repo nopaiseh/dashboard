@@ -16,20 +16,39 @@ import { isSessionSecretConfigured } from "@/lib/env";
 
 const PUBLIC_PATHS = new Set([
   "/login",
-  "/setup",
-  "/setup/confirm",
   "/robots.txt",
   "/favicon.ico",
 ]);
+
+/** 已移除路径：一律 404（勿重定向到 /login）。 */
+const REMOVED_PATHS = new Set(["/setup", "/setup/confirm"]);
 
 const PUBLIC_API_PREFIXES = [
   "/api/auth/options",
   "/api/auth/verify",
   // 尾斜杠：避免 /api/auth/registerX 被 startsWith 误放行
   "/api/auth/register/",
-  "/api/auth/setup/",
   "/api/agent/",
 ];
+
+function isRemovedPath(pathname: string): boolean {
+  if (REMOVED_PATHS.has(pathname)) {
+    return true;
+  }
+  if (
+    pathname === "/api/auth/setup" ||
+    pathname.startsWith("/api/auth/setup/")
+  ) {
+    return true;
+  }
+  // One-time admin migrate-goals UI removed; keep unauthenticated → 404.
+  return (
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    pathname === "/api/admin" ||
+    pathname.startsWith("/api/admin/")
+  );
+}
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) {
@@ -76,6 +95,17 @@ export async function proxy(request: NextRequest) {
 
   if (isPublicStaticAsset(pathname)) {
     return withSecurity(request, nextWithNonce(request, nonce), nonce);
+  }
+
+  if (isRemovedPath(pathname)) {
+    return withSecurity(
+      request,
+      new NextResponse(null, {
+        status: 404,
+        headers: { "Cache-Control": "no-store" },
+      }),
+      nonce,
+    );
   }
 
   if (isPublic(pathname)) {

@@ -6,8 +6,6 @@
  *   全局限流弱于单机。
  * - 仅适合骨架期防连刷；生产若需跨实例强限流，应换 Redis / 库表
  *   （登录与 register/options 已走 DB 限流）或 Vercel 防火墙。
- *
- * setup/request 与 setup/confirm 目前仍用本模块；见 docs/architecture.md。
  */
 
 export interface RateLimitResult {

@@ -1,9 +1,4 @@
-export type ItemKind =
-  | "approval"
-  | "todo"
-  | "question_to_user"
-  | "question_from_user"
-  | "waiting";
+export type ItemKind = "approval" | "todo" | "waiting";
 
 export type ItemStatus =
   | "open"
@@ -104,7 +99,5 @@ export const ALLOWED_DECISIONS_BY_KIND: Record<
 > = {
   approval: new Set(["approve", "reject"]),
   todo: new Set(["reply"]),
-  question_to_user: new Set(["reply"]),
-  question_from_user: new Set(["reply"]),
   waiting: new Set(["reply"]),
 };
