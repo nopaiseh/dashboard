@@ -86,8 +86,13 @@ async function main(): Promise<void> {
       );
 
   console.log(
-    `[migrate-goals-to-blocks] done scanned=${counts.scanned} skippedMigrated=${counts.skippedMigrated} conflictSkip=${counts.conflictSkip} wouldUpsert=${counts.wouldUpsert} inserted=${counts.inserted}`,
+    `[migrate-goals-to-blocks] done scanned=${counts.scanned} skippedMigrated=${counts.skippedMigrated} conflictSkip=${counts.conflictSkip} wouldUpsert=${counts.wouldUpsert} inserted=${counts.inserted} errors=${counts.errors}`,
   );
+  for (const f of counts.failures) {
+    console.error(
+      `[migrate-goals-to-blocks] item failed goalId=${f.goalId ?? ""} blockId=${f.blockId ?? ""} code=${f.code}`,
+    );
+  }
 
   if (!dryRun) {
     const verify = await verifyGoalsMigration(supabase);
@@ -99,7 +104,6 @@ async function main(): Promise<void> {
         for (const id of verify.missingBlockIds) {
           console.error(`[migrate-goals-to-blocks] missing block id=${id}`);
         }
-        throw new Error("verify failed: not every goal has a progress block");
       }
       for (const id of verify.decryptFailedBlockIds) {
         console.error(
@@ -107,12 +111,19 @@ async function main(): Promise<void> {
         );
       }
       throw new Error(
-        `verify failed: ${verify.decryptFailed} block(s) could not be decrypted`,
+        verify.missingCount > 0
+          ? "verify failed: not every goal has a progress block"
+          : `verify failed: ${verify.decryptFailed} block(s) could not be decrypted`,
       );
     }
     console.log(
       `[migrate-goals-to-blocks] verify ok goals=${verify.goalsCount} blocks=${verify.blocksExpected} decrypted=${verify.decryptOk}`,
     );
+    if (counts.errors > 0) {
+      throw new Error(
+        `migration finished with ${counts.errors} item error(s)`,
+      );
+    }
   }
 }
 

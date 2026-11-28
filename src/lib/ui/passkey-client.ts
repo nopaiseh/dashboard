@@ -282,6 +282,11 @@ export type MigrateGoalsExecuteResponse = {
   inserted: number;
   conflict_skip: number;
   errors: number;
+  failures: Array<{
+    goal_id?: string;
+    block_id?: string;
+    code: string;
+  }>;
   verify: {
     counts_match: boolean;
     goals: number;

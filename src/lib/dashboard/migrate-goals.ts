@@ -3,6 +3,7 @@
  * Never logs plaintext payloads or encryption secrets — only counts, ids, error codes.
  */
 
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   decryptBlockPayloadStrict,
@@ -18,6 +19,13 @@ import {
   resetFieldKeyringCache,
 } from "@/lib/crypto/fields-core";
 
+/** Per-item failure: ids + error code only (never messages / stacks / plaintext). */
+export type MigrateGoalsFailure = {
+  goalId?: string;
+  blockId?: string;
+  code: string;
+};
+
 export type MigrateGoalsCounts = {
   scanned: number;
   skippedMigrated: number;
@@ -25,6 +33,7 @@ export type MigrateGoalsCounts = {
   inserted: number;
   conflictSkip: number;
   errors: number;
+  failures: MigrateGoalsFailure[];
 };
 
 export type MigrateGoalsPlanResult = {
@@ -38,7 +47,7 @@ export type MigrateGoalsVerifyResult = {
   goalsCount: number;
   blocksExpected: number;
   missingCount: number;
-  /** First missing block ids (capped) for CLI logging — never payloads. */
+  /** First missing block ids (capped) for CLI / UI — never payloads. */
   missingBlockIds: string[];
   decryptOk: number;
   decryptFailed: number;
@@ -64,6 +73,8 @@ export type MigrateGoalsRunOptions = {
 };
 
 const DEFAULT_BATCH = 100;
+const VERIFY_PAGE = 500;
+const FAILURE_IDS_CAP = 50;
 
 /** Hard kill switch for the one-time web UI (flip false / delete page in follow-up). */
 export const MIGRATE_GOALS_WEB_ENABLED = true;
@@ -100,44 +111,76 @@ export async function loadExistingBlockIds(
   return found;
 }
 
+/** Paginate goals.id so PostgREST's ~1000-row default cannot truncate. */
+export async function loadAllGoalIds(
+  supabase: SupabaseClient,
+): Promise<string[]> {
+  const ids: string[] = [];
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("goals")
+      .select("id")
+      .order("id", { ascending: true })
+      .range(offset, offset + VERIFY_PAGE - 1);
+    if (error) {
+      throw new Error("failed to load goal ids");
+    }
+    const rows = (data ?? []) as Array<{ id: string }>;
+    if (rows.length === 0) break;
+    for (const row of rows) ids.push(row.id);
+    offset += rows.length;
+    if (rows.length < VERIFY_PAGE) break;
+  }
+  return ids;
+}
+
 async function migrateOne(
   supabase: SupabaseClient,
   plan: Extract<ReturnType<typeof planGoalMigration>, { action: "upsert" }>,
-  hooks?: MigrateGoalsHooks,
-): Promise<"inserted" | "already_migrated"> {
-  const encrypted = encryptBlockPayload(plan.block.id, plan.block.payload);
-  const { data, error } = await supabase.rpc(
-    "migrate_dashboard_progress_block",
-    {
-      p_preferred_section_id: plan.section.id,
-      p_category: plan.section.category,
-      p_section_sort_order: plan.section.sort_order,
-      p_section_agent_id: plan.section.agent_id,
-      p_block_id: plan.block.id,
-      p_block_sort_order: plan.block.sort_order,
-      p_block_agent_id: plan.block.agent_id,
-      p_payload: encrypted,
-    },
-  );
+): Promise<
+  | { ok: true; result: "inserted" | "already_migrated" }
+  | { ok: false; code: string }
+> {
+  try {
+    const encrypted = encryptBlockPayload(plan.block.id, plan.block.payload);
+    const { data, error } = await supabase.rpc(
+      "migrate_dashboard_progress_block",
+      {
+        p_preferred_section_id: plan.section.id,
+        p_category: plan.section.category,
+        p_section_sort_order: plan.section.sort_order,
+        p_section_agent_id: plan.section.agent_id,
+        p_block_id: plan.block.id,
+        p_block_sort_order: plan.block.sort_order,
+        p_block_agent_id: plan.block.agent_id,
+        p_payload: encrypted,
+      },
+    );
 
-  if (error) {
-    hooks?.onError?.({
-      goalId: plan.goalId,
-      blockId: plan.block.id,
-      code: (error as { code?: string }).code ?? "rpc_error",
-    });
-    throw new Error(`failed to migrate goal id=${plan.goalId}`);
+    if (error) {
+      return {
+        ok: false,
+        code: (error as { code?: string }).code ?? "rpc_error",
+      };
+    }
+
+    const status = (data as { status?: string } | null)?.status;
+    if (status === "already_migrated") {
+      return { ok: true, result: "already_migrated" };
+    }
+    if (status === "inserted") {
+      return { ok: true, result: "inserted" };
+    }
+    return { ok: false, code: "unexpected_status" };
+  } catch {
+    return { ok: false, code: "migrate_exception" };
   }
-
-  const status = (data as { status?: string } | null)?.status;
-  if (status === "already_migrated") return "already_migrated";
-  if (status === "inserted") return "inserted";
-  throw new Error(`unexpected migrate status for block id=${plan.block.id}`);
 }
 
 /**
  * Plan (dry-run) or execute migration. Idempotent block ids (UUIDv5).
- * Dry-run performs no writes.
+ * Dry-run performs no writes. Execute catches per-item errors and continues.
  */
 export async function runGoalsMigration(
   supabase: SupabaseClient,
@@ -155,6 +198,7 @@ export async function runGoalsMigration(
     inserted: 0,
     conflictSkip: 0,
     errors: 0,
+    failures: [],
   };
 
   for (;;) {
@@ -197,29 +241,39 @@ export async function runGoalsMigration(
         continue;
       }
 
-      try {
-        const result = await migrateOne(supabase, plan, hooks);
-        if (result === "already_migrated") {
-          counts.conflictSkip += 1;
-          existing.add(plan.block.id);
-          hooks?.onExecute?.({
-            goalId: goal.id,
-            blockId: plan.block.id,
-            result: "already_migrated",
-          });
-          continue;
+      const migrated = await migrateOne(supabase, plan);
+      if (!migrated.ok) {
+        counts.errors += 1;
+        const failure: MigrateGoalsFailure = {
+          goalId: goal.id,
+          blockId: plan.block.id,
+          code: migrated.code,
+        };
+        if (counts.failures.length < FAILURE_IDS_CAP) {
+          counts.failures.push(failure);
         }
-        counts.inserted += 1;
+        hooks?.onError?.(failure);
+        continue;
+      }
+
+      if (migrated.result === "already_migrated") {
+        counts.conflictSkip += 1;
         existing.add(plan.block.id);
         hooks?.onExecute?.({
           goalId: goal.id,
           blockId: plan.block.id,
-          result: "inserted",
+          result: "already_migrated",
         });
-      } catch {
-        counts.errors += 1;
-        throw new Error(`failed to migrate goal id=${goal.id}`);
+        continue;
       }
+
+      counts.inserted += 1;
+      existing.add(plan.block.id);
+      hooks?.onExecute?.({
+        goalId: goal.id,
+        blockId: plan.block.id,
+        result: "inserted",
+      });
     }
 
     offset += rows.length;
@@ -269,17 +323,8 @@ export async function verifyGoalsMigration(
     throw new Error("verify: failed to count goals");
   }
 
-  const { data: goals, error: goalsLoadError } = await supabase
-    .from("goals")
-    .select("id")
-    .order("id", { ascending: true });
-  if (goalsLoadError) {
-    throw new Error("verify: failed to load goal ids");
-  }
-
-  const expectedIds = ((goals ?? []) as Array<{ id: string }>).map((g) =>
-    blockIdForGoal(g.id),
-  );
+  const goalIds = await loadAllGoalIds(supabase);
+  const expectedIds = goalIds.map((id) => blockIdForGoal(id));
   const existing = await loadExistingBlockIds(supabase, expectedIds);
   const missing = expectedIds.filter((id) => !existing.has(id));
 
@@ -338,21 +383,14 @@ export async function verifyGoalsMigration(
 
 /**
  * True when every goal already has a progress block (safe to hide the web UI).
- * Does not decrypt payloads.
+ * Does not decrypt payloads. Paginates goal ids.
  */
 export async function isGoalsMigrationComplete(
   supabase: SupabaseClient,
 ): Promise<boolean> {
-  const { data: goals, error } = await supabase
-    .from("goals")
-    .select("id")
-    .order("id", { ascending: true });
-  if (error) {
-    throw new Error("failed to check migration completeness");
-  }
-  const rows = (goals ?? []) as Array<{ id: string }>;
-  if (rows.length === 0) return true;
-  const expectedIds = rows.map((g) => blockIdForGoal(g.id));
+  const goalIds = await loadAllGoalIds(supabase);
+  if (goalIds.length === 0) return true;
+  const expectedIds = goalIds.map((id) => blockIdForGoal(id));
   const existing = await loadExistingBlockIds(supabase, expectedIds);
   return expectedIds.every((id) => existing.has(id));
 }
@@ -409,7 +447,7 @@ export async function withMigrateExecuteLock<T>(
     throw new MigrateGoalsBusyError();
   }
 
-  const holder = `web:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+  const holder = randomUUID();
   const acquired = await acquireMigrateGoalsDbLock(supabase, holder);
   if (!acquired) {
     throw new MigrateGoalsBusyError();
@@ -433,28 +471,48 @@ export function resetMigrateExecuteLockForTests(): void {
   executeLock = null;
 }
 
-export function auditMigrateGoalsWeb(event: {
-  action: "plan" | "execute";
-  credential_id: string;
+export type MigrateGoalsAuditEvent = {
+  action:
+    | "plan"
+    | "execute"
+    | "step_up_failed"
+    | "busy"
+    | "plan_error"
+    | "execute_error";
+  credential_id?: string | null;
   scanned?: number;
   inserted?: number;
   skippedMigrated?: number;
   conflictSkip?: number;
   wouldUpsert?: number;
+  errors?: number;
   verifyOk?: boolean;
-}): void {
+  /** Error / step-up failure code only. */
+  error_code?: string;
+  /** Failed item ids + codes (capped); never plaintext. */
+  failures?: Array<{
+    goal_id?: string;
+    block_id?: string;
+    code: string;
+  }>;
+};
+
+export function auditMigrateGoalsWeb(event: MigrateGoalsAuditEvent): void {
   console.info(
     JSON.stringify({
       audit: "migrate_goals_web",
       actor_type: "user",
       action: event.action,
-      credential_id: event.credential_id,
+      credential_id: event.credential_id ?? null,
       scanned: event.scanned ?? null,
       inserted: event.inserted ?? null,
       skipped_migrated: event.skippedMigrated ?? null,
       conflict_skip: event.conflictSkip ?? null,
       would_upsert: event.wouldUpsert ?? null,
+      errors: event.errors ?? null,
       verify_ok: event.verifyOk ?? null,
+      error_code: event.error_code ?? null,
+      failures: event.failures ?? null,
       at: new Date().toISOString(),
     }),
   );

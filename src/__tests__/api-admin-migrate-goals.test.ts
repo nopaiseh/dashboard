@@ -60,7 +60,14 @@ describe("POST /api/admin/migrate-goals", () => {
     }));
   });
 
-  function mockGoalsClient(goals: LegacyGoalRow[], existingIds?: Set<string>) {
+  function mockGoalsClient(
+    goals: LegacyGoalRow[],
+    existingIds?: Set<string>,
+    migrateRpc?: (args: Record<string, unknown>) => {
+      data: { status: string } | null;
+      error: { code?: string } | null;
+    },
+  ) {
     const existing = new Set(existingIds ?? []);
     let rpcWrites = 0;
     let lockHeld: string | null = null;
@@ -152,6 +159,13 @@ describe("POST /api/admin/migrate-goals", () => {
           if (existing.has(blockId)) {
             return { data: { status: "already_migrated" }, error: null };
           }
+          if (migrateRpc) {
+            const result = migrateRpc(args);
+            if (result.data?.status === "inserted") {
+              existing.add(blockId);
+            }
+            return result;
+          }
           existing.add(blockId);
           return { data: { status: "inserted" }, error: null };
         },
@@ -192,7 +206,8 @@ describe("POST /api/admin/migrate-goals", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("rejects missing / invalid step-up binding", async () => {
+  it("rejects missing / invalid step-up binding and audits failure", async () => {
+    const auditSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.doMock("@/lib/origin", () => ({
       assertSameOrigin: () => ({ ok: true }),
     }));
@@ -223,6 +238,10 @@ describe("POST /api/admin/migrate-goals", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid binding");
+    const auditLine = String(auditSpy.mock.calls[0]?.[0]);
+    expect(auditLine).toContain('"action":"step_up_failed"');
+    expect(auditLine).toContain('"error_code":"invalid_binding"');
+    auditSpy.mockRestore();
   });
 
   it("rejects expired step-up binding", async () => {
@@ -390,6 +409,7 @@ describe("POST /api/admin/migrate-goals", () => {
 
   it("execute rejects without confirm / csrf / recent step-up", async () => {
     const { client } = mockGoalsClient([GOAL]);
+    const auditSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.doMock("@/lib/origin", () => ({
       assertSameOrigin: () => ({ ok: true }),
     }));
@@ -468,6 +488,15 @@ describe("POST /api/admin/migrate-goals", () => {
     );
     expect(noStepUp.status).toBe(404);
     expect(noStepUp.headers.get("Cache-Control")).toBe("no-store");
+    const stepUpAudit = auditSpy.mock.calls.map((c) => String(c[0]));
+    expect(
+      stepUpAudit.some(
+        (l) =>
+          l.includes('"action":"step_up_failed"') &&
+          l.includes("missing_recent_step_up"),
+      ),
+    ).toBe(true);
+    auditSpy.mockRestore();
   });
 
   it("execute with confirm+csrf+step-up writes once then kill-switches", async () => {
@@ -589,8 +618,9 @@ describe("POST /api/admin/migrate-goals", () => {
     expect(second.status).toBe(404);
   });
 
-  it("returns 409 when DB advisory lock is held", async () => {
+  it("returns 409 when DB advisory lock is held and audits busy", async () => {
     const { client } = mockGoalsClient([GOAL]);
+    const auditSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     // Force lock acquire to fail
     const lockedClient = {
       ...client,
@@ -664,5 +694,122 @@ describe("POST /api/admin/migrate-goals", () => {
     );
     expect(res.status).toBe(409);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const auditLine = String(auditSpy.mock.calls.at(-1)?.[0]);
+    expect(auditLine).toContain('"action":"busy"');
+    expect(auditLine).toContain("migration_in_progress");
+    auditSpy.mockRestore();
+  });
+
+  it("partial item failure returns written count, failure ids/codes, and verify", async () => {
+    const goal2: LegacyGoalRow = {
+      ...GOAL,
+      id: "44444444-4444-4444-8444-444444444444",
+      title: "second-secret-title",
+    };
+    let attempts = 0;
+    const { client, getWrites } = mockGoalsClient([GOAL, goal2], undefined, () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return { data: null, error: { code: "XJ409" } };
+      }
+      return { data: { status: "inserted" }, error: null };
+    });
+    const auditSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.doMock("@/lib/origin", () => ({
+      assertSameOrigin: () => ({ ok: true }),
+    }));
+    vi.doMock("@/lib/auth-guard", () => ({
+      requireSession: async () => ({ ok: true }),
+    }));
+    vi.doMock("@/lib/passkey-step-up", () => ({
+      consumePasskeyAssertion: async () => ({
+        ok: true,
+        credentialId: CRED_ID,
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => client,
+    }));
+
+    const { createAgentTokenStepUpBinding } = await import(
+      "@/lib/agent-token-stepup"
+    );
+    const { createMigrateGoalsCsrfToken } = await import(
+      "@/lib/migrate-goals-csrf"
+    );
+    const { createMigrateGoalsStepUpToken } = await import(
+      "@/lib/migrate-goals-stepup"
+    );
+    const { resetMigrateExecuteLockForTests } = await import(
+      "@/lib/dashboard/migrate-goals"
+    );
+    resetMigrateExecuteLockForTests();
+
+    cookieStore.value = await createMigrateGoalsStepUpToken({
+      credentialId: CRED_ID,
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const csrf = await createMigrateGoalsCsrfToken({
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const binding = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "migrate_goals_execute",
+    });
+
+    const { POST } = await import("@/app/api/admin/migrate-goals/route");
+    const res = await POST(
+      new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          action: "execute",
+          challenge_id: CHALLENGE_ID,
+          assertion: { id: CRED_ID },
+          binding,
+          csrf_token: csrf,
+          plan_challenge_id: PLAN_CHALLENGE_ID,
+          confirm: true,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const body = (await res.json()) as {
+      inserted: number;
+      errors: number;
+      failures: Array<{ goal_id?: string; block_id?: string; code: string }>;
+      verify: {
+        ok: boolean;
+        missing: number;
+        missing_ids: string[];
+        decrypt_ok: number;
+      };
+    };
+    expect(body.inserted).toBe(1);
+    expect(body.errors).toBe(1);
+    expect(body.failures).toEqual([
+      {
+        goal_id: GOAL.id,
+        block_id: blockIdForGoal(GOAL.id),
+        code: "XJ409",
+      },
+    ]);
+    expect(body.verify.missing).toBe(1);
+    expect(body.verify.missing_ids).toContain(blockIdForGoal(GOAL.id));
+    expect(body.verify.decrypt_ok).toBe(1);
+    expect(body.verify.ok).toBe(false);
+    expect(getWrites()).toBe(2);
+    expect(JSON.stringify(body)).not.toContain("OA 余额");
+    expect(JSON.stringify(body)).not.toContain("second-secret-title");
+
+    const auditLine = String(auditSpy.mock.calls.at(-1)?.[0]);
+    expect(auditLine).toContain('"action":"execute"');
+    expect(auditLine).toContain("XJ409");
+    expect(auditLine).not.toContain("OA 余额");
+    auditSpy.mockRestore();
   });
 });

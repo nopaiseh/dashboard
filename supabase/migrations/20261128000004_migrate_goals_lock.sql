@@ -26,7 +26,7 @@ CREATE OR REPLACE FUNCTION public.try_acquire_migrate_goals_lock(
 )
 RETURNS boolean
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
@@ -67,7 +67,7 @@ CREATE OR REPLACE FUNCTION public.release_migrate_goals_lock(
 )
 RETURNS boolean
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE

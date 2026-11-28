@@ -38,6 +38,22 @@ import { NextResponse } from "next/server";
 const RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 60_000;
 
+function verifyPayload(verify: Awaited<ReturnType<typeof verifyGoalsMigration>>) {
+  return {
+    counts_match:
+      verify.missingCount === 0 &&
+      verify.goalsCount === verify.blocksExpected,
+    goals: verify.goalsCount,
+    blocks_expected: verify.blocksExpected,
+    missing: verify.missingCount,
+    missing_ids: verify.missingBlockIds,
+    decrypt_ok: verify.decryptOk,
+    decrypt_failed: verify.decryptFailed,
+    decrypt_failed_ids: verify.decryptFailedBlockIds,
+    ok: verify.ok,
+  };
+}
+
 /**
  * POST /api/admin/migrate-goals
  * One-time owner-only goals → dashboard_blocks migration (plan | execute).
@@ -94,6 +110,10 @@ export async function POST(request: Request) {
     action: stepAction,
   });
   if (!bindingOk) {
+    auditMigrateGoalsWeb({
+      action: "step_up_failed",
+      error_code: "invalid_binding",
+    });
     return jsonErrorNoStore(400, "invalid binding");
   }
 
@@ -104,6 +124,10 @@ export async function POST(request: Request) {
       return jsonErrorNoStore(404, "not found");
     }
   } catch {
+    auditMigrateGoalsWeb({
+      action: "execute_error",
+      error_code: "complete_check_failed",
+    });
     return jsonErrorNoStore(500, "unavailable");
   }
 
@@ -114,6 +138,10 @@ export async function POST(request: Request) {
     assertion: parsed.data.assertion,
   });
   if (!passkey.ok) {
+    auditMigrateGoalsWeb({
+      action: "step_up_failed",
+      error_code: passkey.error.replace(/\s+/g, "_").slice(0, 64),
+    });
     return jsonErrorNoStore(passkey.status, passkey.error);
   }
 
@@ -157,6 +185,11 @@ export async function POST(request: Request) {
       );
       return response;
     } catch {
+      auditMigrateGoalsWeb({
+        action: "plan_error",
+        credential_id: passkey.credentialId,
+        error_code: "plan_failed",
+      });
       return jsonErrorNoStore(500, "plan failed");
     }
   }
@@ -165,10 +198,20 @@ export async function POST(request: Request) {
   const jar = await cookies();
   const recent = jar.get(MIGRATE_GOALS_STEPUP_COOKIE)?.value;
   if (!recent) {
+    auditMigrateGoalsWeb({
+      action: "step_up_failed",
+      credential_id: passkey.credentialId,
+      error_code: "missing_recent_step_up",
+    });
     return jsonErrorNoStore(404, "not found");
   }
   const recentOk = await verifyMigrateGoalsStepUpToken(recent);
   if (!recentOk.ok) {
+    auditMigrateGoalsWeb({
+      action: "step_up_failed",
+      credential_id: passkey.credentialId,
+      error_code: "expired_recent_step_up",
+    });
     return jsonErrorNoStore(404, "not found");
   }
 
@@ -176,13 +219,22 @@ export async function POST(request: Request) {
     planChallengeId: parsed.data.plan_challenge_id,
   });
   if (!csrfOk) {
+    auditMigrateGoalsWeb({
+      action: "step_up_failed",
+      credential_id: passkey.credentialId,
+      error_code: "invalid_csrf",
+    });
     return jsonErrorNoStore(400, "invalid csrf");
   }
   if (recentOk.planChallengeId !== parsed.data.plan_challenge_id) {
+    auditMigrateGoalsWeb({
+      action: "step_up_failed",
+      credential_id: passkey.credentialId,
+      error_code: "csrf_challenge_mismatch",
+    });
     return jsonErrorNoStore(400, "invalid csrf");
   }
 
-  // confirm is z.literal(true) in schema — still assert for clarity
   if (parsed.data.confirm !== true) {
     return jsonErrorNoStore(400, "confirm required");
   }
@@ -202,7 +254,13 @@ export async function POST(request: Request) {
       skippedMigrated: result.counts.skippedMigrated,
       conflictSkip: result.counts.conflictSkip,
       wouldUpsert: result.counts.wouldUpsert,
+      errors: result.counts.errors,
       verifyOk: result.verify.ok,
+      failures: result.counts.failures.map((f) => ({
+        goal_id: f.goalId,
+        block_id: f.blockId,
+        code: f.code,
+      })),
     });
 
     return jsonOkNoStore({
@@ -213,24 +271,27 @@ export async function POST(request: Request) {
       inserted: result.counts.inserted,
       conflict_skip: result.counts.conflictSkip,
       errors: result.counts.errors,
-      verify: {
-        counts_match:
-          result.verify.missingCount === 0 &&
-          result.verify.goalsCount === result.verify.blocksExpected,
-        goals: result.verify.goalsCount,
-        blocks_expected: result.verify.blocksExpected,
-        missing: result.verify.missingCount,
-        missing_ids: result.verify.missingBlockIds,
-        decrypt_ok: result.verify.decryptOk,
-        decrypt_failed: result.verify.decryptFailed,
-        decrypt_failed_ids: result.verify.decryptFailedBlockIds,
-        ok: result.verify.ok,
-      },
+      failures: result.counts.failures.map((f) => ({
+        goal_id: f.goalId,
+        block_id: f.blockId,
+        code: f.code,
+      })),
+      verify: verifyPayload(result.verify),
     });
   } catch (err) {
     if (err instanceof MigrateGoalsBusyError) {
+      auditMigrateGoalsWeb({
+        action: "busy",
+        credential_id: passkey.credentialId,
+        error_code: "migration_in_progress",
+      });
       return jsonErrorNoStore(409, "migration in progress");
     }
+    auditMigrateGoalsWeb({
+      action: "execute_error",
+      credential_id: passkey.credentialId,
+      error_code: "execute_failed",
+    });
     return jsonErrorNoStore(500, "execute failed");
   }
 }

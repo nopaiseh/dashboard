@@ -250,6 +250,46 @@ describe("migrate goals shared module", () => {
     expect(existing.has(blockIdForGoal(GOAL.id))).toBe(true);
   });
 
+  it("continues after per-item failure and records failure codes", async () => {
+    const goal2: LegacyGoalRow = {
+      ...GOAL,
+      id: "44444444-4444-4444-8444-444444444444",
+      title: "second",
+    };
+    let attempts = 0;
+    const { client, getWrites } = mockSupabase({
+      goals: [GOAL, goal2],
+      rpc: () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { data: null, error: { code: "XJ409" } };
+        }
+        return { data: { status: "inserted" }, error: null };
+      },
+    });
+    const { runGoalsMigration, verifyGoalsMigration } = await import(
+      "@/lib/dashboard/migrate-goals"
+    );
+
+    const counts = await runGoalsMigration(client as never, { dryRun: false });
+    expect(counts.errors).toBe(1);
+    expect(counts.inserted).toBe(1);
+    expect(counts.failures).toEqual([
+      {
+        goalId: GOAL.id,
+        blockId: blockIdForGoal(GOAL.id),
+        code: "XJ409",
+      },
+    ]);
+    expect(getWrites()).toBe(2);
+
+    const verify = await verifyGoalsMigration(client as never);
+    expect(verify.missingCount).toBe(1);
+    expect(verify.missingBlockIds).toContain(blockIdForGoal(GOAL.id));
+    expect(verify.decryptOk).toBe(1);
+    expect(verify.ok).toBe(false);
+  });
+
   it("withMigrateExecuteLock uses DB lock RPCs and rejects when busy", async () => {
     let held: string | null = null;
     const client = {

@@ -24,6 +24,11 @@ type ExecuteResult = {
   inserted: number;
   conflict_skip: number;
   errors: number;
+  failures: Array<{
+    goal_id?: string;
+    block_id?: string;
+    code: string;
+  }>;
   verify: {
     counts_match: boolean;
     goals: number;
@@ -199,6 +204,17 @@ export function MigrateGoalsPanel({
             {result.verify.decrypt_ok + result.verify.decrypt_failed}
             {result.verify.ok ? " · 通过" : " · 未通过"}
           </p>
+          {result.failures.length > 0 ? (
+            <p>
+              失败项：
+              {result.failures
+                .map(
+                  (f) =>
+                    `${f.block_id ?? f.goal_id ?? "?"} (${f.code})`,
+                )
+                .join(", ")}
+            </p>
+          ) : null}
           {result.verify.missing_ids.length > 0 ? (
             <p>
               缺失 id：{result.verify.missing_ids.join(", ")}
