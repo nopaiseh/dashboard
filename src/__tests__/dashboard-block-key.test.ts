@@ -249,10 +249,15 @@ function cpfSection() {
           if (table === "dashboard_writers") {
             return {
               select: () => ({
-                eq: (_c: string, category: string) => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -331,10 +336,15 @@ function cpfSection() {
           if (table === "dashboard_writers") {
             return {
               select: () => ({
-                eq: (_c: string, category: string) => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -421,10 +431,15 @@ function cpfSection() {
           if (table === "dashboard_writers") {
             return {
               select: () => ({
-                eq: (_c: string, category: string) => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -523,10 +538,15 @@ function cpfSection() {
           if (table === "dashboard_writers") {
             return {
               select: () => ({
-                eq: (_c: string, category: string) => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -637,10 +657,15 @@ function cpfSection() {
           if (table === "dashboard_writers") {
             return {
               select: () => ({
-                eq: (_c: string, category: string) => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -736,10 +761,15 @@ function cpfSection() {
           if (table === "dashboard_writers") {
             return {
               select: () => ({
-                eq: (_c: string, category: string) => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),

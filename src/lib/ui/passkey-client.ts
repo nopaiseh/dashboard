@@ -263,32 +263,32 @@ export async function revokeAgentTokenWithPasskey(input: {
   }
 }
 
-/** Owner assigns / changes the designated writer for a dashboard category. */
-export async function setDashboardWriterWithPasskey(input: {
+/** Owner adds a writer for a dashboard category. */
+export async function addDashboardWriterWithPasskey(input: {
   category: string;
-  writerAgentId: string;
+  agentId: string;
 }): Promise<{
   writer: {
     category: string;
-    writer_agent_id: string;
-    updated_at: string;
+    agent_id: string;
+    created_at: string;
   };
 }> {
   const step = await assertWithBoundStepUp({
     purpose: "step_up",
-    action: "set_dashboard_writer",
+    action: "add_dashboard_writer",
     category: input.category,
-    agent_id: input.writerAgentId,
+    agent_id: input.agentId,
   });
   const res = await fetch("/api/owner/dashboard/writers", {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       assertion: step.assertion,
       challenge_id: step.challenge_id,
       binding: step.binding,
       category: input.category,
-      writer_agent_id: input.writerAgentId,
+      agent_id: input.agentId,
     }),
   });
   if (!res.ok) {
@@ -297,8 +297,35 @@ export async function setDashboardWriterWithPasskey(input: {
   return (await res.json()) as {
     writer: {
       category: string;
-      writer_agent_id: string;
-      updated_at: string;
+      agent_id: string;
+      created_at: string;
     };
   };
+}
+
+/** Owner removes a writer for a dashboard category. */
+export async function removeDashboardWriterWithPasskey(input: {
+  category: string;
+  agentId: string;
+}): Promise<void> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "remove_dashboard_writer",
+    category: input.category,
+    agent_id: input.agentId,
+  });
+  const res = await fetch("/api/owner/dashboard/writers", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+      category: input.category,
+      agent_id: input.agentId,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
 }

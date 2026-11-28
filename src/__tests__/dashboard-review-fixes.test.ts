@@ -251,9 +251,14 @@ describe("dashboard route review fixes", () => {
             return {
               select: () => ({
                 eq: () => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -320,9 +325,14 @@ describe("dashboard route review fixes", () => {
             return {
               select: () => ({
                 eq: () => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -406,9 +416,14 @@ describe("dashboard route review fixes", () => {
             return {
               select: () => ({
                 eq: () => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),
@@ -496,9 +511,14 @@ describe("dashboard route review fixes", () => {
             return {
               select: () => ({
                 eq: () => ({
-                  maybeSingle: async () => ({
-                    data: { writer_agent_id: AGENT_A },
-                    error: null,
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
                 }),
               }),

@@ -33,10 +33,11 @@ export {
   normalizeDashboardCategories,
 } from "@/lib/dashboard/category";
 export {
+  addDashboardWriter,
   assertAgentIsCategoryWriter,
   backfillDashboardWriters,
   listDashboardWriters,
-  upsertDashboardWriter,
+  removeDashboardWriter,
 } from "@/lib/dashboard/writers";
 export {
   isBlockKeyAllowedForCategory,

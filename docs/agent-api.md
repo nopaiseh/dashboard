@@ -152,7 +152,7 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 明文只允许：`category`、`block_type`、`sort_order`、拥有姐妹 `agent_id`、可选明文 `block_key`、时间戳。  
 标题 / 数值 / 正文 / 一行标题 / 列表等内容一律进加密 `payload`（与 items 相同的 AES-256-GCM 信封 `v{N}:…`；AAD=`dashboard_blocks:{id}:payload:v{N}`；无遗留明文）。  
 **无 DELETE**：只提供 POST/PATCH/PUT（按 key upsert）；写入经 RPC 与 `dashboard_block_events` 同事务。  
-**看板写入人**：每个 `category` 在 `dashboard_writers` 指定一位 `writer_agent_id`。agent 对该分类的一切写操作（建分区、建/改/upsert block）仅当令牌所属 agent 等于该写入人时允许；**未指定写入人 → 一律 403**。写入人只能由 owner 在登录后设置/修改（`PUT /api/owner/dashboard/writers`，session + passkey step-up）；agent 不能改。令牌本身不再带分类白名单。  
+**看板写入人**：`dashboard_writers(category, agent_id)` 多对多。agent 对该分类的一切写操作（建分区、建/改/upsert block）仅当令牌所属 agent 在该分类写入人列表中才允许；**列表为空 → 一律 403**。owner 可添加/移除/列出（`POST`/`DELETE`/`GET /api/owner/dashboard/writers`，写操作须 session + passkey step-up）；agent 不能改。令牌本身不再带分类白名单。  
 返回解密 body 的响应带 `Cache-Control: no-store`。更改 `block_type` 时必须同时提交符合新类型的 `payload`，否则 `400`。
 
 ### `block_key` 按分区白名单
@@ -274,6 +274,7 @@ curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_
 
 ## 看板写入人（所有者）
 
-- `GET /api/owner/dashboard/writers`：列出 `category → writer_agent_id`（须登录会话）。
-- `PUT /api/owner/dashboard/writers`：指定/修改写入人；body 含 `category`、`writer_agent_id` + 通行密钥 step-up（`action=set_dashboard_writer`）。
-- 迁移回填：每个分类若恰有一个 agent 拥有该分类分区 → 设为写入人；`bank` 回填为与 `cpf` 相同的写入人；多 agent 共有同一分类 → **不回填**（须 owner 手工指定）。不硬编码任何 agent id。
+- `GET /api/owner/dashboard/writers?category=`：列出写入人（可选按分类过滤；须登录会话）。
+- `POST /api/owner/dashboard/writers`：添加写入人；body 含 `category`、`agent_id` + 通行密钥 step-up（`action=add_dashboard_writer`）。
+- `DELETE /api/owner/dashboard/writers`：移除写入人；同上 body + step-up（`action=remove_dashboard_writer`）。
+- 迁移回填：每个分类把**所有**已拥有该分类分区的 agent 都加为写入人；`bank` 再并入 `cpf` 的写入人集合。不硬编码任何 agent id。

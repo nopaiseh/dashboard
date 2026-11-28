@@ -12,14 +12,15 @@ export type AgentTokenStepUpAction =
   | "issue_agent_token"
   | "revoke_agent_token"
   | "create_agent"
-  | "set_dashboard_writer";
+  | "add_dashboard_writer"
+  | "remove_dashboard_writer";
 
 export interface AgentTokenStepUpBinding {
   challengeId: string;
   action: AgentTokenStepUpAction;
   agentId?: string;
   tokenId?: string;
-  /** Normalized category for set_dashboard_writer. */
+  /** Normalized category for add/remove_dashboard_writer. */
   category?: string;
 }
 

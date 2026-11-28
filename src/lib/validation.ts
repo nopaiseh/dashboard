@@ -178,7 +178,15 @@ export const stepUpOptionsSchema = z.union([
   z
     .object({
       purpose: z.literal("step_up"),
-      action: z.literal("set_dashboard_writer"),
+      action: z.literal("add_dashboard_writer"),
+      category: z.string().min(1).max(64),
+      agent_id: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("remove_dashboard_writer"),
       category: z.string().min(1).max(64),
       agent_id: z.string().uuid(),
     })
@@ -222,20 +230,23 @@ export const revokeAgentTokenSchema = z
   })
   .strict();
 
-/** Owner sets / changes the designated writer for a dashboard category. */
-export const setDashboardWriterSchema = z
+/** Owner adds a writer for a dashboard category. */
+export const addDashboardWriterSchema = z
   .object({
     assertion: webauthnCredentialPayloadSchema,
     challenge_id: z.string().uuid(),
     binding: z.string().min(1).max(4096),
     category: z.string().min(1).max(64),
-    writer_agent_id: z.string().uuid(),
+    agent_id: z.string().uuid(),
   })
   .strict()
   .transform((val) => ({
     ...val,
     category: normalizeDashboardCategory(val.category),
   }));
+
+/** Owner removes a writer for a dashboard category. */
+export const removeDashboardWriterSchema = addDashboardWriterSchema;
 
 export const inviteSchema = z
   .object({

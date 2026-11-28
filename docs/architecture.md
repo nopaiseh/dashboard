@@ -14,7 +14,7 @@
 | `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发（令牌本身不带分类白名单） |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
-| `dashboard_writers` | 每个看板分类一位写入专员（`category` PK → `writer_agent_id`）；无行则该分类一切 agent 写入 403；仅 owner（session + step-up）可设 |
+| `dashboard_writers` | 看板写入人多对多（PK `(category, agent_id)`）；列表为空则该分类一切 agent 写入 403；仅 owner（session + step-up）可添加/移除 |
 | `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密）；可选明文 `block_key` + 部分唯一索引 `(section_id, block_key)` |
 | `dashboard_block_events` | 区块审计，只增不改（禁止 UPDATE/DELETE/TRUNCATE） |
 | `daily_summaries` | 每日小结 |
@@ -48,7 +48,7 @@
 | POST | `/api/agent/dashboard/blocks` | 新建区块（加密 payload；无 DELETE；须为分区分类写入人） |
 | PATCH | `/api/agent/dashboard/blocks/:id` | 更新区块（须为分区分类写入人） |
 | PUT | `/api/agent/dashboard/sections/:id/blocks/:block_key` | 按 `block_key` upsert（明文列 + 唯一索引；RPC 原子） |
-| GET/PUT | `/api/owner/dashboard/writers` | 所有者查看/指定看板写入人（PUT 须 passkey step-up） |
+| GET/POST/DELETE | `/api/owner/dashboard/writers` | 所有者列出/添加/移除看板写入人（POST/DELETE 须 passkey step-up） |
 
 ## 本人读接口
 

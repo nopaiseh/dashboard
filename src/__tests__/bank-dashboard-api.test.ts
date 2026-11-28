@@ -100,20 +100,20 @@ describe("bank block_key whitelist (28 keys + cross category)", () => {
 });
 
 describe("dashboard writers", () => {
-  it("backfill: unique section owner becomes writer; bank inherits cpf", () => {
+  it("backfill: every section owner becomes writer; bank inherits cpf writers", () => {
     expect(
       backfillDashboardWriters([
         { category: "cpf", agent_id: AGENT_A },
         { category: "travel", agent_id: AGENT_B },
       ]),
     ).toEqual([
-      { category: "bank", writer_agent_id: AGENT_A },
-      { category: "cpf", writer_agent_id: AGENT_A },
-      { category: "travel", writer_agent_id: AGENT_B },
+      { category: "bank", agent_id: AGENT_A },
+      { category: "cpf", agent_id: AGENT_A },
+      { category: "travel", agent_id: AGENT_B },
     ]);
   });
 
-  it("backfill: multi-owner category omitted; bank still inherits cpf", () => {
+  it("backfill: multi-owner category lists all agents", () => {
     expect(
       backfillDashboardWriters([
         { category: "cpf", agent_id: AGENT_A },
@@ -121,8 +121,10 @@ describe("dashboard writers", () => {
         { category: "travel", agent_id: AGENT_B },
       ]),
     ).toEqual([
-      { category: "bank", writer_agent_id: AGENT_A },
-      { category: "cpf", writer_agent_id: AGENT_A },
+      { category: "bank", agent_id: AGENT_A },
+      { category: "cpf", agent_id: AGENT_A },
+      { category: "travel", agent_id: AGENT_A },
+      { category: "travel", agent_id: AGENT_B },
     ]);
   });
 

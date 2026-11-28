@@ -524,37 +524,36 @@ DECLARE
   v_result jsonb;
   v_count int;
 BEGIN
-  -- Unique section owner for cpf → writer; bank inherits cpf writer.
-  INSERT INTO public.dashboard_writers (category, writer_agent_id)
-  SELECT
+  -- Every section owner becomes a writer; bank inherits cpf writers.
+  INSERT INTO public.dashboard_writers (category, agent_id)
+  SELECT DISTINCT
     lower(trim(s.category)),
-    (array_agg(DISTINCT s.agent_id))[1]
+    s.agent_id
   FROM public.dashboard_sections s
   WHERE s.agent_id IS NOT NULL
     AND char_length(trim(s.category)) > 0
-  GROUP BY lower(trim(s.category))
-  HAVING count(DISTINCT s.agent_id) = 1
-  ON CONFLICT (category) DO NOTHING;
+  ON CONFLICT (category, agent_id) DO NOTHING;
 
-  INSERT INTO public.dashboard_writers (category, writer_agent_id, updated_at)
-  SELECT 'bank', w.writer_agent_id, now()
+  INSERT INTO public.dashboard_writers (category, agent_id, created_at)
+  SELECT 'bank', w.agent_id, now()
   FROM public.dashboard_writers w
   WHERE w.category = 'cpf'
-  ON CONFLICT (category) DO UPDATE
-  SET writer_agent_id = EXCLUDED.writer_agent_id, updated_at = now();
+  ON CONFLICT (category, agent_id) DO NOTHING;
 
-  SELECT writer_agent_id INTO v_writer
+  SELECT agent_id INTO v_writer
   FROM public.dashboard_writers
-  WHERE category = 'cpf';
+  WHERE category = 'cpf'
+  LIMIT 1;
   IF v_writer IS DISTINCT FROM 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' THEN
     RAISE EXCEPTION 'cpf writer should be section owner, got %', v_writer;
   END IF;
 
-  SELECT writer_agent_id INTO v_bank_writer
+  SELECT agent_id INTO v_bank_writer
   FROM public.dashboard_writers
-  WHERE category = 'bank';
-  IF v_bank_writer IS DISTINCT FROM v_writer THEN
-    RAISE EXCEPTION 'bank writer should match cpf writer';
+  WHERE category = 'bank'
+    AND agent_id = v_writer;
+  IF v_bank_writer IS NULL THEN
+    RAISE EXCEPTION 'bank should include cpf writer';
   END IF;
 
   -- Upsert by block_key: insert then replace

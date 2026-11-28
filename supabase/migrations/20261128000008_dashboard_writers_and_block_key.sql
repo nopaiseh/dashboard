@@ -3,12 +3,13 @@
 -- Do NOT wrap in BEGIN/COMMIT (Supabase already wraps each migration).
 
 -- ---------------------------------------------------------------------------
--- 1) dashboard_writers: one designated writer agent per category
+-- 1) dashboard_writers: many writers per category (category, agent_id)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.dashboard_writers (
-  category text PRIMARY KEY,
-  writer_agent_id uuid NOT NULL REFERENCES public.agents (id) ON DELETE RESTRICT,
-  updated_at timestamptz NOT NULL DEFAULT now(),
+  category text NOT NULL,
+  agent_id uuid NOT NULL REFERENCES public.agents (id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (category, agent_id),
   CONSTRAINT dashboard_writers_category_normalized CHECK (
     char_length(category) BETWEEN 1 AND 64
     AND category = lower(category)
@@ -17,16 +18,16 @@ CREATE TABLE IF NOT EXISTS public.dashboard_writers (
 );
 
 COMMENT ON TABLE public.dashboard_writers IS
-  'Owner-assigned writer agent per dashboard category. No row → all agent writes denied.';
+  'Owner-assigned writer agents per dashboard category (many-to-many). Empty list → all agent writes denied.';
 
 COMMENT ON COLUMN public.dashboard_writers.category IS
-  'Normalized lowercase dashboard section category (primary key).';
+  'Normalized lowercase dashboard section category.';
 
-COMMENT ON COLUMN public.dashboard_writers.writer_agent_id IS
+COMMENT ON COLUMN public.dashboard_writers.agent_id IS
   'Agent whose Bearer tokens may write this category. Set only by owner (session + step-up).';
 
-CREATE INDEX IF NOT EXISTS dashboard_writers_writer_agent_id_idx
-  ON public.dashboard_writers (writer_agent_id);
+CREATE INDEX IF NOT EXISTS dashboard_writers_agent_id_idx
+  ON public.dashboard_writers (agent_id);
 
 ALTER TABLE public.dashboard_writers ENABLE ROW LEVEL SECURITY;
 
@@ -34,29 +35,23 @@ REVOKE ALL ON TABLE public.dashboard_writers FROM PUBLIC;
 REVOKE ALL ON TABLE public.dashboard_writers FROM anon, authenticated;
 -- service_role bypasses RLS; owner/agent APIs use the service client only.
 
--- Backfill: for each category, if exactly one agent owns sections of that
--- category, set them as writer. No agent ids hardcoded.
--- Categories with multiple distinct owners are left unset (owner must assign).
-INSERT INTO public.dashboard_writers (category, writer_agent_id)
-SELECT
+-- Backfill: every agent that owns a section of a category becomes a writer.
+-- No agent ids hardcoded.
+INSERT INTO public.dashboard_writers (category, agent_id)
+SELECT DISTINCT
   lower(trim(s.category)) AS category,
-  (array_agg(DISTINCT s.agent_id))[1] AS writer_agent_id
+  s.agent_id
 FROM public.dashboard_sections s
 WHERE s.agent_id IS NOT NULL
   AND char_length(trim(s.category)) > 0
-GROUP BY lower(trim(s.category))
-HAVING count(DISTINCT s.agent_id) = 1
-ON CONFLICT (category) DO NOTHING;
+ON CONFLICT (category, agent_id) DO NOTHING;
 
--- bank always inherits the cpf writer when cpf has one (CPF sister also writes bank).
-INSERT INTO public.dashboard_writers (category, writer_agent_id, updated_at)
-SELECT 'bank', w.writer_agent_id, now()
+-- bank writers = cpf writers (CPF sister(s) also write bank).
+INSERT INTO public.dashboard_writers (category, agent_id, created_at)
+SELECT 'bank', w.agent_id, now()
 FROM public.dashboard_writers w
 WHERE w.category = 'cpf'
-ON CONFLICT (category) DO UPDATE
-SET
-  writer_agent_id = EXCLUDED.writer_agent_id,
-  updated_at = now();
+ON CONFLICT (category, agent_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- 2) dashboard_blocks.block_key (plaintext) + unique (section_id, block_key)
@@ -80,7 +75,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS dashboard_blocks_section_block_key_uidx
   WHERE block_key IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
--- 3) Helper: is this agent the designated writer for a category?
+-- 3) Helper: is this agent among the writers for a category?
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.is_dashboard_category_writer(
   p_agent_id uuid,
@@ -96,7 +91,7 @@ AS $$
     SELECT 1
     FROM public.dashboard_writers w
     WHERE w.category = lower(trim(p_category))
-      AND w.writer_agent_id = p_agent_id
+      AND w.agent_id = p_agent_id
   );
 $$;
 
