@@ -1,11 +1,9 @@
 /**
- * 简易**进程内**内存限流。
+ * 简易**进程内**内存限流（兜底）。
  *
- * 局限（故意保留，本 PR 不加 DB 迁移）：
- * - 按实例/isolate 各自计数；Vercel Serverless 多实例与冷启动会重置桶，
- *   全局限流弱于单机。
- * - 仅适合骨架期防连刷；生产若需跨实例强限流，应换 Redis / 库表
- *   （登录与 register/options 已走 DB 限流）或 Vercel 防火墙。
+ * 姐妹 Bearer 鉴权主路径已走库表 + `rate_limit_check` RPC（跨实例）。
+ * 本 Map 仅在 RPC 不可用时回退使用；多实例 / 冷启动仍各自计数。
+ * 登录与 register/options 另有专用 DB 限流。
  */
 
 export interface RateLimitResult {

@@ -19,7 +19,7 @@ Authorization: Bearer xjg_at_…
 
 - 前缀 `xjg_at_` 为固定可识别前缀。
 - 无效、缺失或已吊销 → `401`。
-- 限流（按令牌哈希，进程内）：约 **60 次 / 分钟**；超限 → `429`（可能带 `retryAfterSeconds`）。生产另有 Vercel 防火墙兜底。
+- 限流（按令牌哈希，**跨实例**库表）：**60 次 / 分钟** 且 **1000 次 / 天**；超限 → `429`（`Retry-After` 头 + body `retryAfterSeconds`）。RPC 不可用时回退进程内限流；生产另有 Vercel 防火墙兜底。
 
 ## 字段约定（以代码为准）
 

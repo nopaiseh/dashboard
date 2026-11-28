@@ -444,6 +444,44 @@ BEGIN
 END;
 $$;
 
+-- rate_limit_check：窗口内计数、超限拒绝、返回 remaining / retry_after_seconds
+DELETE FROM public.rate_limit_buckets;
+DO $$
+DECLARE
+  v jsonb;
+  i int;
+BEGIN
+  v := public.rate_limit_check('agent:smoke-hash', 3, 60);
+  IF NOT (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION 'first call should be allowed';
+  END IF;
+  IF (v->>'remaining')::int <> 2 THEN
+    RAISE EXCEPTION 'expected remaining 2, got %', v->>'remaining';
+  END IF;
+  IF (v->>'retry_after_seconds')::int < 1 THEN
+    RAISE EXCEPTION 'retry_after_seconds must be >= 1';
+  END IF;
+
+  FOR i IN 1..2 LOOP
+    v := public.rate_limit_check('agent:smoke-hash', 3, 60);
+  END LOOP;
+  IF NOT (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION '3rd call at limit should still be allowed';
+  END IF;
+  IF (v->>'remaining')::int <> 0 THEN
+    RAISE EXCEPTION 'expected remaining 0 at limit, got %', v->>'remaining';
+  END IF;
+
+  v := public.rate_limit_check('agent:smoke-hash', 3, 60);
+  IF (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION '4th call should be denied';
+  END IF;
+  IF (v->>'remaining')::int <> 0 THEN
+    RAISE EXCEPTION 'denied remaining must be 0';
+  END IF;
+END;
+$$;
+
 ROLLBACK;
 
 \echo OK rpc_smoke
