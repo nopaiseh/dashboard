@@ -107,21 +107,22 @@ describe("bank block_key whitelist (28 keys + cross category)", () => {
 });
 
 describe("dashboard writers", () => {
-  it("backfill: ordinary cats get all owners; unique cpf → cpf+bank", () => {
+  it("backfill: ordinary cats get all owners; unique cpf → cpf+bank; travel skipped", () => {
     expect(
       backfillDashboardWriters([
         { category: "cpf", agent_id: AGENT_A },
         { category: "travel", agent_id: AGENT_B },
         { category: "bank", agent_id: AGENT_B },
+        { category: "ops", agent_id: AGENT_B },
       ]),
     ).toEqual([
       { category: "bank", agent_id: AGENT_A },
       { category: "cpf", agent_id: AGENT_A },
-      { category: "travel", agent_id: AGENT_B },
+      { category: "ops", agent_id: AGENT_B },
     ]);
   });
 
-  it("backfill: multi-owner ordinary cats list all; multi cpf skips cpf+bank", () => {
+  it("backfill: multi cpf skips cpf+bank; travel never backfilled", () => {
     expect(
       backfillDashboardWriters([
         { category: "cpf", agent_id: AGENT_A },
@@ -130,10 +131,7 @@ describe("dashboard writers", () => {
         { category: "travel", agent_id: AGENT_B },
         { category: "bank", agent_id: AGENT_A },
       ]),
-    ).toEqual([
-      { category: "travel", agent_id: AGENT_A },
-      { category: "travel", agent_id: AGENT_B },
-    ]);
+    ).toEqual([]);
   });
 
   it("writer may create section; non-writer and unset category → 403", async () => {

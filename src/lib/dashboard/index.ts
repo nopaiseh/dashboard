@@ -50,6 +50,7 @@ export {
   parseBankBlockPayload,
   type BankUnit,
 } from "@/lib/dashboard/bank-validation";
+export { parseTravelBlockPayload } from "@/lib/dashboard/travel-validation";
 export {
   DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
   DASHBOARD_INVALID_PAYLOAD_ERROR,

@@ -7,7 +7,8 @@ import { decryptBlockPayload } from "@/lib/dashboard/crypto";
 import type { BankBlockKey } from "@/lib/bank-block-keys";
 import type { CpfBlockKey } from "@/lib/cpf-block-keys";
 
-export type DashboardBlockKey = CpfBlockKey | BankBlockKey;
+/** Travel keys include trip-scoped forms; stored as plain strings. */
+export type DashboardBlockKey = CpfBlockKey | BankBlockKey | string;
 
 /**
  * Read a validated payload's optional block_key.

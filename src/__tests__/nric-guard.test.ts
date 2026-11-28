@@ -46,6 +46,14 @@ describe("forbidden identifier key names", () => {
       "SWIFT",
       "pan",
       "PAN",
+      "passport",
+      "passport_no",
+      "booking_ref",
+      "pnr",
+      "password",
+      "confirmation_code",
+      "ticket_number",
+      "cvv",
     ]) {
       expect(isForbiddenDashboardIdentifierKey(key)).toBe(true);
       expect(containsSingaporeNricOrFin({ [key]: "x" })).toBe(true);

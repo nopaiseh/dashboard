@@ -37,6 +37,24 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
   "iban",
   "swift",
   "pan",
+  // Travel / booking / credential identifiers
+  "passport",
+  "passportno",
+  "passportnumber",
+  "bookingref",
+  "bookingreference",
+  "confirmation",
+  "confirmationcode",
+  "confirmationnumber",
+  "pnr",
+  "password",
+  "passwd",
+  "ticketno",
+  "ticketnumber",
+  "eticket",
+  "creditcard",
+  "cvv",
+  "cvc",
 ]);
 
 /**
@@ -45,6 +63,12 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
  * dates like 2026-01-01 into digit runs and false-positive CPF text).
  */
 const LONG_DIGIT_RUN = /\d{9,}/;
+
+/**
+ * Passport-like: letter + 7–9 digits, optional trailing letter, after the
+ * same separator strip as NRIC. Does not log the match.
+ */
+const PASSPORT_LIKE = /[A-Z]\d{7,9}[A-Z]?/i;
 
 /** Request ids / section ids are UUIDs and must not trip the digit-run check. */
 const UUID_STRING =
@@ -90,17 +114,42 @@ export function stringContainsLongDigitRun(value: string): boolean {
   return LONG_DIGIT_RUN.test(value);
 }
 
+/** Passport-like after separator normalization (never log the match). */
+export function stringContainsPassportLike(value: string): boolean {
+  return PASSPORT_LIKE.test(normalizeForNricScan(value));
+}
+
+/** Flight/train-style service numbers (e.g. SQ321, AF1234) — not booking refs. */
+const SERVICE_NUMBER_SHAPE = /^[A-Z]{2}\d{1,4}[A-Z]?$/i;
+
+/**
+ * Entire trimmed value looks like a full booking / confirmation code.
+ * Airline PNRs are uppercase alphanumeric; mixed-case notes like `1x32kg`
+ * are not flagged. Short service numbers and `ref_tail` (≤2) are excluded.
+ */
+export function stringIsFullBookingRef(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length < 6 || trimmed.length > 14) return false;
+  // Canonical booking refs are uppercase A–Z / 0–9 only.
+  if (!/^[A-Z0-9]+$/.test(trimmed)) return false;
+  if (!/[A-Z]/.test(trimmed) || !/\d/.test(trimmed)) return false;
+  if (SERVICE_NUMBER_SHAPE.test(trimmed)) return false;
+  return true;
+}
+
 export function looksLikeUuidString(value: string): boolean {
   return UUID_STRING.test(value.trim());
 }
 
 /**
- * Privacy hit: NRIC/FIN shape and/or a long digit run.
+ * Privacy hit: NRIC/FIN, passport-like, full booking ref, and/or long digit run.
  * UUID-shaped strings are exempt from the digit-run check (section/block ids).
  * Error responses must not echo the matched substring.
  */
 export function stringContainsBlockedIdentifier(value: string): boolean {
   if (stringContainsSingaporeNricOrFin(value)) return true;
+  if (stringContainsPassportLike(value)) return true;
+  if (stringIsFullBookingRef(value)) return true;
   if (looksLikeUuidString(value)) return false;
   return stringContainsLongDigitRun(value);
 }
@@ -114,10 +163,12 @@ export function looksLikeJsonContainer(raw: string): boolean {
 }
 
 /**
- * Privacy blocking for dashboard writes (CPF + bank):
- * (a) reject forbidden object keys at any depth (nric, fin, accountno, cardno, …)
- * (b) regex-scan all string values for NRIC/FIN (after separator normalization)
- *     and for 9+ consecutive digits (raw string)
+ * Privacy blocking for dashboard writes (CPF + bank + travel):
+ * (a) reject forbidden object keys at any depth (nric, fin, accountno, cardno,
+ *     passport, bookingref, pnr, password, …)
+ * (b) regex-scan all string values for NRIC/FIN / passport-like (after
+ *     separator normalization), full booking-ref values, and 9+ consecutive
+ *     digits (raw string; card-like)
  *
  * Also rejects keys whose *name* itself matches the NRIC/FIN pattern or a
  * long digit run.
@@ -129,6 +180,7 @@ export function looksLikeJsonContainer(raw: string): boolean {
  *
  * Safe for existing CPF fixtures: amounts stay numeric (not digit-scanned);
  * money within ±10_000_000 has ≤8 digits before the decimal.
+ * Travel `ref_tail` (≤2) and short service numbers stay under booking-ref length.
  */
 export function containsSingaporeNricOrFin(value: unknown): boolean {
   const seen = new WeakSet<object>();

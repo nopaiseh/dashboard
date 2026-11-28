@@ -8,6 +8,8 @@ import {
   blockKeyPolicyCategory,
   isBlockKeyAllowedForCategory,
 } from "@/lib/dashboard/block-key-policy";
+import { parseTravelBlockPayload } from "@/lib/dashboard/travel-validation";
+import { isTravelBlockKey } from "@/lib/travel-block-keys";
 import {
   dashboardBlockTypeSchema,
   dashboardPayloadSchemaFor,
@@ -27,7 +29,8 @@ export type EarlyPayloadValidateResult =
 /**
  * Fast-fail payload shape before the section row is loaded.
  * - bank block_key → strict bank schema
- * - otherwise → CPF-oriented schema (status quo for non-bank keys / no key)
+ * - travel block_key → strict travel schema
+ * - otherwise → CPF-oriented schema (status quo for non-bank/travel keys / no key)
  * Category cross-checks still happen in `parseDashboardBlockPayload`.
  */
 export function earlyValidateDashboardPayload(
@@ -48,6 +51,11 @@ export function earlyValidateDashboardPayload(
     if (parsed.ok) return { ok: true };
     return { ok: false, error: parsed.error };
   }
+  if (typeof key === "string" && isTravelBlockKey(key)) {
+    const parsed = parseTravelBlockPayload(blockType, record, key);
+    if (parsed.ok) return { ok: true };
+    return { ok: false, error: parsed.error };
+  }
   // Non-string / unknown keys fail the CPF-oriented enum here.
   const parsed = dashboardPayloadSchemaFor(blockType).safeParse(payload);
   if (!parsed.success) {
@@ -58,6 +66,7 @@ export function earlyValidateDashboardPayload(
 
 /**
  * - bank partition: strict bank schemas; block_key required and must be a bank key
+ * - travel partition: strict travel schemas; block_key required and must be a travel key
  * - cpf / other: existing CPF-oriented schemas; block_key must pass category whitelist
  */
 export function parseDashboardBlockPayload(
@@ -68,7 +77,7 @@ export function parseDashboardBlockPayload(
 ): DashboardPayloadParseResult {
   const policy = blockKeyPolicyCategory(category);
 
-  if (policy === "bank") {
+  if (policy === "bank" || policy === "travel") {
     const keyFromPayload =
       typeof payload === "object" &&
       payload !== null &&
@@ -99,7 +108,10 @@ export function parseDashboardBlockPayload(
               : {}),
             block_key: blockKey,
           };
-    return parseBankBlockPayload(blockType, withKey, blockKey);
+    if (policy === "bank") {
+      return parseBankBlockPayload(blockType, withKey, blockKey);
+    }
+    return parseTravelBlockPayload(blockType, withKey, blockKey);
   }
 
   const parsed = dashboardPayloadSchemaFor(blockType).safeParse(payload);
@@ -126,7 +138,8 @@ export function parseDashboardBlockPayload(
   if (
     policy === "cpf" &&
     effectiveKey !== undefined &&
-    (BANK_BLOCK_KEYS as readonly string[]).includes(effectiveKey)
+    ((BANK_BLOCK_KEYS as readonly string[]).includes(effectiveKey) ||
+      isTravelBlockKey(effectiveKey))
   ) {
     return { ok: false };
   }

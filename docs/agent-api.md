@@ -159,10 +159,90 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 
 - `category` 规范化后为 `bank`：只接受 `BANK_BLOCK_KEYS`（见 `src/lib/bank-block-keys.ts`，28 个，如 `bank_conclusion`、`bank_acc_hsbc`、`bank_prog_emergency`、`bank_net`、`bank_ledger`、`bank_todos`…）。银行区块另走严格 zod（金额 number、`unit` 白名单、等式校验等；见下）。
 - `category` 为 `cpf`：只接受 `CPF_BLOCK_KEYS`。
+- `category` 为 `travel`：只接受 `travel_<slot>` 或 `travel_<trip>_<slot>`（见 `src/lib/travel-block-keys.ts`；slot：`overview` / `transport` / `stays` / `itinerary` / `documents` / `budget` / `todos` / `packing_emergency` / `candidates`）。旅行区块另走严格 zod（见下）。
 - 其他分类：维持原状（若带 `block_key` 仍按 CPF 白名单）。
-- 交叉写入（CPF key → bank 分区，或反之）→ `400`（`invalid payload`，不回显命中内容）。
+- 交叉写入（CPF/bank/travel key 写入错误分区）→ `400`（`invalid payload`，不回显命中内容）。
 
-明文列 `dashboard_blocks.block_key` + 唯一索引 `(section_id, block_key) WHERE block_key IS NOT NULL`（本迁移新增）用于 upsert 原子性；加密 payload 内仍镜像同一 key。
+明文列 `dashboard_blocks.block_key` + 唯一索引 `(section_id, block_key) WHERE block_key IS NOT NULL` 用于 upsert 原子性；加密 payload 内仍镜像同一 key。
+
+### 旅行看板（`category: travel`）写入指南
+
+复用同一套分区 / 区块 / `dashboard_writers` / 按 key upsert；**不**另开表或写入通道。owner 经现有 owner API 把 agent 加为 `travel` 写入人；迁移**不**预置写入人（空列表 → 一律 403）。
+
+**隐私（强制）**
+
+- 订票 / 订单号最多存 `ref_tail`（≤2 字符）或 `booked` 布尔；禁止完整 booking ref / PNR / confirmation。
+- 禁止护照号、卡号、密码；禁用键名（`passport` / `booking_ref` / `pnr` / `password` / `card_number` 等）与护照形态 / 完整订票码 / ≥9 位连续数字 → 整包 `400`（`invalid payload`，不回显命中内容）。
+- 证件块只允许状态枚举 `已备` / `未备` + 可选 `expiry_month`（`YYYY-MM`），不要号码。
+- 时间：ISO 8601 **带显式偏移**（如 `2027-01-10T08:30+08:00`）+ IANA 时区名（如 `Asia/Kuala_Lumpur`）；写入方不必换算，前端按本地显示。
+- 预算：仅金额（`estimate` / `actual` / `currency` / `per_person`）；**不**写银行看板（日后只读引用，永不交叉写入）。
+- `travel_candidates` 仅展示比价；不触发下单或支付。
+
+**区块与 `block_type`**
+
+| block_key（可加 `travel_<trip>_` 前缀） | block_type | 要点 |
+|---|---|---|
+| `travel_overview` | `text` | `destinations[]`、`start_date` / `end_date`、`companions[]`（展示名）、`statuses[]`（`已订`/`待订`/`待定`）；倒计时由日期推导，不入库 |
+| `travel_transport` | `list` | `legs[]`：`mode`、`service_number`、出发/到达时间+tz、航站楼、`ref_tail`、值机方式、行李、`status` |
+| `travel_stays` | `list` | `stays[]`：名称、地址、入住/离店时间+tz、`ref_tail`、免费取消 + 截止 |
+| `travel_itinerary` | `list` | `days[]` → `items[]`（sight/restaurant/reservation）+ 时间+tz + 交通备注 |
+| `travel_documents` | `list` | `items[]`：passport/visa/e_arrival/insurance/other + `已备`/`未备` + 可选到期月 |
+| `travel_budget` | `text` | `estimate` / `actual?` / `currency` / `per_person?` |
+| `travel_todos` | `list` | `items[]`：`title`、`due?`、`done`、`kind`（book/check_in/…） |
+| `travel_packing_emergency` | `text` | `packing[]`（label+done）、`emergency[]`（label+phone；电话须分隔以免触发 ≥9 位数字规则） |
+| `travel_candidates` | `list` | `flights[]` / `hotels[]`：price、currency、notes、source |
+
+FAKE 示例（upsert overview；勿用真实订票数据）：
+
+```bash
+curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_UUID/blocks/travel_overview' \
+  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "block_type": "text",
+    "payload": {
+      "block_key": "travel_overview",
+      "title": "FAKE trip",
+      "destinations": ["Kuala Lumpur"],
+      "start_date": "2027-01-10",
+      "end_date": "2027-01-14",
+      "companions": ["Alex", "Sam"],
+      "statuses": [
+        { "label": "flight", "status": "已订" },
+        { "label": "hotel", "status": "待订" }
+      ]
+    }
+  }'
+```
+
+运输腿 FAKE（仅 `ref_tail`）：
+
+```bash
+curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_UUID/blocks/travel_transport' \
+  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "block_type": "list",
+    "payload": {
+      "block_key": "travel_transport",
+      "legs": [{
+        "mode": "flight",
+        "service_number": "SQ321",
+        "depart_at": "2027-01-10T08:30+08:00",
+        "depart_tz": "Asia/Singapore",
+        "arrive_at": "2027-01-10T09:35+08:00",
+        "arrive_tz": "Asia/Kuala_Lumpur",
+        "from_terminal": "T3",
+        "to_terminal": "T1",
+        "ref_tail": "7K",
+        "booked": true,
+        "check_in": "app",
+        "baggage": "1x32kg",
+        "status": "已订"
+      }]
+    }
+  }'
+```
 
 ### 银行区块字段（以 `bank-validation.ts` 为准）
 
@@ -334,3 +414,4 @@ curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_
 - 迁移回填（不硬编码 agent id）：
   - **普通分类**：把所有已拥有该分类分区的 agent 都加为写入人。
   - **`cpf` / `bank`**：只能回填一位——仅当恰好一个 agent 拥有 `cpf` 分区时，把它加为 `cpf` 与 `bank` 的写入人；否则两者都不回填（留空即拒写，须 owner 手工指定）。
+  - **`travel`**：从不自动回填；须 owner 手工指定（空列表即拒写）。
