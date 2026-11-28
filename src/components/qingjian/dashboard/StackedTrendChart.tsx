@@ -84,6 +84,27 @@ export function buildTwelveMonthXLabels(
   });
 }
 
+/**
+ * Sort trend points by parsed time for drawing order.
+ * On equal timestamps, year (年底数) comes before month so the year hit stays reachable.
+ */
+export function sortTrendPointsByTime(
+  points: CpfTrendPoint[],
+): CpfTrendPoint[] {
+  return [...points].sort((a, b) => {
+    const ta = parsePointTime(a.t);
+    const tb = parsePointTime(b.t);
+    const aKey = ta == null || !Number.isFinite(ta) ? Number.POSITIVE_INFINITY : ta;
+    const bKey = tb == null || !Number.isFinite(tb) ? Number.POSITIVE_INFINITY : tb;
+    if (aKey !== bKey) return aKey - bKey;
+    if (a.grain !== b.grain) {
+      if (a.grain === "year") return -1;
+      if (b.grain === "year") return 1;
+    }
+    return a.t.localeCompare(b.t);
+  });
+}
+
 /** Year-end instant matching `parsePointTime("YYYY")` (Dec 31, +08). */
 export function yearEndMs(year: number): number {
   return parsePointTime(String(year)) ?? NaN;
@@ -342,15 +363,18 @@ function TrendSvg({
   const innerW = W - PAD.left - PAD.right;
   const innerH = H - PAD.top - PAD.bottom;
 
-  const totals = points.map(
+  // Draw in time order (year before month on ties) so paths never go backwards.
+  const ordered = sortTrendPointsByTime(points);
+
+  const totals = ordered.map(
     (p) => p.balances.OA + p.balances.SA + p.balances.MA,
   );
   const guideMax = data.guides.reduce((m, g) => Math.max(m, g.amount), 0);
   const maxV =
-    (points.length === 0
+    (ordered.length === 0
       ? Math.max(guideMax * 0.3, 1)
       : Math.max(...totals, guideMax * 0.3, 1)) * 1.08;
-  const pointTimes = points.map((p) => parsePointTime(p.t));
+  const pointTimes = ordered.map((p) => parsePointTime(p.t));
   const xAt = xPositionsForDates(pointTimes, PAD.left, innerW);
   const validTimes = pointTimes.filter(
     (t): t is number => t != null && Number.isFinite(t),
@@ -368,13 +392,13 @@ function TrendSvg({
     key: keyof AccBalances,
     baseline: (p: CpfTrendPoint) => number,
   ) => {
-    const idxs = points
+    const idxs = ordered
       .map((p, i) => ({ p, i }))
       .filter(({ p }) => p.phase === phase);
     if (idxs.length === 0) return "";
     let seq = idxs;
     if (phase === "projected") {
-      const lastActual = [...points.entries()]
+      const lastActual = [...ordered.entries()]
         .reverse()
         .find(([, p]) => p.phase === "actual");
       if (lastActual) {
@@ -394,11 +418,11 @@ function TrendSvg({
   };
 
   const topLine = (phase: "actual" | "projected") => {
-    let seq = points
+    let seq = ordered
       .map((p, i) => ({ p, i }))
       .filter(({ p }) => p.phase === phase);
     if (phase === "projected") {
-      const lastActual = [...points.entries()]
+      const lastActual = [...ordered.entries()]
         .reverse()
         .find(([, p]) => p.phase === "actual");
       if (lastActual) seq = [{ p: lastActual[1], i: lastActual[0] }, ...seq];
@@ -419,14 +443,14 @@ function TrendSvg({
 
   const xLabels: Array<{ label: string; x: number }> =
     mode === "12m"
-      ? buildTwelveMonthXLabels(points).map((xl) => ({
+      ? buildTwelveMonthXLabels(ordered).map((xl) => ({
           label: xl.label,
           x: xAt[xl.i] ?? PAD.left,
         }))
       : buildYearXTicks(tMin, tMax, PAD.left, innerW);
 
   const janIdx = data.janInterestAt
-    ? points.findIndex((p) => p.t === data.janInterestAt)
+    ? ordered.findIndex((p) => p.t === data.janInterestAt)
     : -1;
 
   const employer = data.events.filter((e) => e.kind === "employer_change");
@@ -440,7 +464,7 @@ function TrendSvg({
       aria-labelledby={`${baseId}-sum`}
     >
       <title id={`${baseId}-sum`}>
-        {`三户口堆叠走势，共 ${points.length} 个点`}
+        {`三户口堆叠走势，共 ${ordered.length} 个点`}
       </title>
 
       {gridVals.map((v) => {
@@ -538,7 +562,7 @@ function TrendSvg({
           ))
         : null}
 
-      {points.map((p, i) => {
+      {ordered.map((p, i) => {
         if (p.phase === "projected") return null;
         const tot = p.balances.OA + p.balances.SA + p.balances.MA;
         const { x, y } = xy(i, tot);
@@ -569,7 +593,7 @@ function TrendSvg({
       })}
 
       {employer.map((ev) => {
-        const i = nearestIndex(points, ev.t);
+        const i = nearestIndex(ordered, ev.t);
         if (i < 0) return null;
         const { x } = xy(i, 0);
         return (
@@ -589,12 +613,12 @@ function TrendSvg({
         );
       })}
       {transfers.map((tr) => {
-        const i = nearestIndex(points, tr.t);
+        const i = nearestIndex(ordered, tr.t);
         if (i < 0) return null;
         const tot =
-          points[i].balances.OA +
-          points[i].balances.SA +
-          points[i].balances.MA;
+          ordered[i]!.balances.OA +
+          ordered[i]!.balances.SA +
+          ordered[i]!.balances.MA;
         const { x, y } = xy(i, tot);
         return (
           <g key={`flag-${tr.t}-${tr.short ?? tr.label}`}>

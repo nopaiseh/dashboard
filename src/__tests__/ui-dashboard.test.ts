@@ -12,6 +12,7 @@ import {
   StackedTrendChart,
   buildTwelveMonthXLabels,
   buildYearXTicks,
+  sortTrendPointsByTime,
   yearEndMs,
   xPositionsForDates,
 } from "@/components/qingjian/dashboard/StackedTrendChart";
@@ -329,6 +330,17 @@ describe("StackedTrendChart date scale", () => {
   const padLeft = 48;
   const innerW = 640 - 48 - 16;
 
+  it("parses YYYY-MM as month-end so YYYY-12 matches YYYY year-end", () => {
+    expect(parsePointTime("2025")).toBe(parsePointTime("2025-12"));
+    expect(parsePointTime("2025-11")).toBe(
+      Date.parse("2025-11-30T00:00:00+08:00"),
+    );
+    expect(parsePointTime("2026-01")).toBe(
+      Date.parse("2026-01-31T00:00:00+08:00"),
+    );
+    expect(parsePointTime("2025")!).toBeGreaterThan(parsePointTime("2025-11")!);
+  });
+
   it("positions mixed yearly+monthly points by date (monotonic, not index-even)", () => {
     // Synthetic 「全部」 mix: sparse yearly points then dense 2026 months.
     const ts = [
@@ -450,7 +462,7 @@ describe("StackedTrendChart date scale", () => {
     const ticks = buildYearXTicks(tMin, tMax, padLeft, allInnerW);
 
     expect(ticks.length).toBeGreaterThanOrEqual(3);
-    // Anchored at year-end, not at 2026-01.
+    // Anchored at year-end, not at 2026-01 (month-end Jan).
     const jan2026 = parsePointTime("2026-01")!;
     for (const tick of ticks) {
       expect(tick.t).toBe(yearEndMs(tick.year));
@@ -477,6 +489,43 @@ describe("StackedTrendChart date scale", () => {
     const fake2026AtJan =
       padLeft + ((jan2026 - tMin) / (tMax - tMin)) * allInnerW;
     expect(fake2026AtJan - x2024!).toBeLessThan(twoYearGap * 0.7);
+  });
+
+  it("drawn order is non-decreasing for 2025 year + 2025-11..2026-01 months", () => {
+    // String order from parseCpfModel puts "2025" before "2025-11", but with
+    // month-start parsing that would place Nov left of year-end → path backtracks.
+    const raw = [
+      { t: "2025", grain: "year" as const },
+      { t: "2025-11", grain: "month" as const },
+      { t: "2025-12", grain: "month" as const },
+      { t: "2026-01", grain: "month" as const },
+    ].map((p) => ({
+      ...p,
+      balances: { OA: 1, SA: 1, MA: 1 },
+      phase: "actual" as const,
+    }));
+
+    const ordered = sortTrendPointsByTime(raw);
+    expect(ordered.map((p) => p.t)).toEqual([
+      "2025-11",
+      "2025",
+      "2025-12",
+      "2026-01",
+    ]);
+    // Equal time: year before month so year hit is not covered.
+    expect(ordered[1]!.grain).toBe("year");
+    expect(ordered[2]!.grain).toBe("month");
+    expect(parsePointTime("2025")).toBe(parsePointTime("2025-12"));
+
+    const xs = xPositionsForDates(
+      ordered.map((p) => parsePointTime(p.t)),
+      padLeft,
+      innerW,
+    );
+    expect(xs.every((x) => Number.isFinite(x))).toBe(true);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]!).toBeGreaterThanOrEqual(xs[i - 1]!);
+    }
   });
 });
 
