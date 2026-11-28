@@ -62,7 +62,12 @@ export function CpfLedger({
           {rows.length === 0 ? (
             <EmptyBlock message="暂无流水记录" />
           ) : (
-            <div className={"k-tblScroll"}>
+            <div
+              className={"k-tblScroll"}
+              tabIndex={0}
+              role="region"
+              aria-label="流水表格"
+            >
               <table className={"k-tbl"}>
                 <thead>
                   <tr>
