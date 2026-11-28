@@ -76,6 +76,7 @@ describe("agent auth", () => {
       },
     ]);
     expect(agent?.agentId).toBe("agent-1");
+    expect(agent?.tokenHash).toBe(hashAgentToken(raw));
   });
 });
 

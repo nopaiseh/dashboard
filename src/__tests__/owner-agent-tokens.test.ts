@@ -321,6 +321,12 @@ describe("owner agent token APIs", () => {
               select: (cols: string) => {
                 void cols;
                 return {
+                  is: () =>
+                    Promise.resolve({
+                      // After revoke_previous, no active tokens remain.
+                      data: [],
+                      error: null,
+                    }),
                   order: () =>
                     Promise.resolve({
                       data: [
@@ -329,12 +335,27 @@ describe("owner agent token APIs", () => {
                           agent_id: AGENT_ID,
                           created_at: "2026-11-27T00:00:00.000Z",
                           revoked_at: null,
-                        },
+                                      },
                       ],
                       error: null,
                     }),
                 };
               },
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () =>
+                Promise.resolve({
+                  data: [
+                    {
+                      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                      agent_id: AGENT_ID,
+                      category: "cpf",
+                    },
+                  ],
+                  error: null,
+                }),
             };
           }
           if (table === "agents") {
@@ -450,7 +471,7 @@ describe("owner agent token APIs", () => {
                         agent_id: AGENT_ID,
                         created_at: "2026-11-27T00:00:00.000Z",
                         revoked_at: null,
-                      },
+                                  },
                     ],
                     error: null,
                   }),

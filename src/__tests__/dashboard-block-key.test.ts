@@ -75,7 +75,7 @@ describe("block_key payload whitelist", () => {
     }
   });
 
-  it("rejects an unknown block_key with schema failure (API → 400)", () => {
+  it("rejects an unknown block_key with schema failure (API → 400)", async () => {
     const parsed = dashboardPayloadSchemaFor("metric").safeParse({
       title: "OA",
       value: 1,
@@ -83,6 +83,7 @@ describe("block_key payload whitelist", () => {
     });
     expect(parsed.success).toBe(false);
 
+    // Structural create schema defers category-scoped key checks to parseDashboardBlockPayload.
     const createParsed = createDashboardBlockSchema.safeParse({
       section_id: SECTION_ID,
       block_type: "metric",
@@ -92,7 +93,21 @@ describe("block_key payload whitelist", () => {
         block_key: "not_in_whitelist",
       },
     });
-    expect(createParsed.success).toBe(false);
+    expect(createParsed.success).toBe(true);
+    const { parseDashboardBlockPayload } = await import(
+      "@/lib/dashboard/parse-payload"
+    );
+    expect(
+      parseDashboardBlockPayload(
+        "metric",
+        {
+          title: "OA",
+          value: 1,
+          block_key: "not_in_whitelist",
+        },
+        "cpf",
+      ).ok,
+    ).toBe(false);
   });
 
   it("rejects a non-string block_key", () => {
@@ -128,6 +143,18 @@ describe("block_key payload whitelist", () => {
 });
 
 describe("block_key API uniqueness", () => {
+
+function cpfSection() {
+  return {
+    id: SECTION_ID,
+    category: "cpf",
+    sort_order: 0,
+    agent_id: AGENT_A,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
   function mockAuth() {
     vi.doMock("@/lib/require-request", () => ({
       requireRequest: async () => undefined,
@@ -219,6 +246,23 @@ describe("block_key API uniqueness", () => {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -289,6 +333,23 @@ describe("block_key API uniqueness", () => {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -366,36 +427,67 @@ describe("block_key API uniqueness", () => {
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: (col: string) => {
-              if (col === "id") {
-                return {
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
                   maybeSingle: async () => ({
-                    data: {
-                      id: BLOCK_ID,
-                      section_id: SECTION_ID,
-                      block_type: "metric",
-                      sort_order: 0,
-                      agent_id: AGENT_A,
-                      payload: selfEnc,
-                      created_at: "2026-01-01T00:00:00.000Z",
-                      updated_at: "2026-01-01T00:00:00.000Z",
-                    },
+                    data: cpfSection(),
                     error: null,
                   }),
-                };
-              }
-              return Promise.resolve({
-                data: [
-                  { id: BLOCK_ID, payload: selfEnc },
-                  { id: OTHER_BLOCK_ID, payload: otherEnc },
-                ],
-                error: null,
-              });
-            },
-          }),
-        }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: (col: string) => {
+                if (col === "id") {
+                  return {
+                    maybeSingle: async () => ({
+                      data: {
+                        id: BLOCK_ID,
+                        section_id: SECTION_ID,
+                        block_type: "metric",
+                        sort_order: 0,
+                        agent_id: AGENT_A,
+                        payload: selfEnc,
+                        created_at: "2026-01-01T00:00:00.000Z",
+                        updated_at: "2026-01-01T00:00:00.000Z",
+                      },
+                      error: null,
+                    }),
+                  };
+                }
+                return Promise.resolve({
+                  data: [
+                    { id: BLOCK_ID, payload: selfEnc },
+                    { id: OTHER_BLOCK_ID, payload: otherEnc },
+                  ],
+                  error: null,
+                });
+              },
+            }),
+          };
+        },
         rpc: async () => {
           throw new Error("rpc should not be called on conflict");
         },
@@ -442,33 +534,64 @@ describe("block_key API uniqueness", () => {
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: (col: string) => {
-              if (col === "id") {
-                return {
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
                   maybeSingle: async () => ({
-                    data: {
-                      id: BLOCK_ID,
-                      section_id: SECTION_ID,
-                      block_type: "metric",
-                      sort_order: 0,
-                      agent_id: AGENT_A,
-                      payload: selfEnc,
-                      created_at: "2026-01-01T00:00:00.000Z",
-                      updated_at: "2026-01-01T00:00:00.000Z",
-                    },
+                    data: cpfSection(),
                     error: null,
                   }),
-                };
-              }
-              return Promise.resolve({
-                data: [{ id: BLOCK_ID, payload: selfEnc }],
-                error: null,
-              });
-            },
-          }),
-        }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: (col: string) => {
+                if (col === "id") {
+                  return {
+                    maybeSingle: async () => ({
+                      data: {
+                        id: BLOCK_ID,
+                        section_id: SECTION_ID,
+                        block_type: "metric",
+                        sort_order: 0,
+                        agent_id: AGENT_A,
+                        payload: selfEnc,
+                        created_at: "2026-01-01T00:00:00.000Z",
+                        updated_at: "2026-01-01T00:00:00.000Z",
+                      },
+                      error: null,
+                    }),
+                  };
+                }
+                return Promise.resolve({
+                  data: [{ id: BLOCK_ID, payload: selfEnc }],
+                  error: null,
+                });
+              },
+            }),
+          };
+        },
         rpc: async () => {
           rpcCalled = true;
           return {
@@ -530,33 +653,64 @@ describe("block_key API uniqueness", () => {
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: (col: string) => {
-              if (col === "id") {
-                return {
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
                   maybeSingle: async () => ({
-                    data: {
-                      id: BLOCK_ID,
-                      section_id: SECTION_ID,
-                      block_type: "metric",
-                      sort_order: 0,
-                      agent_id: AGENT_A,
-                      payload: selfEnc,
-                      created_at: "2026-01-01T00:00:00.000Z",
-                      updated_at: "2026-01-01T00:00:00.000Z",
-                    },
+                    data: cpfSection(),
                     error: null,
                   }),
-                };
-              }
-              return Promise.resolve({
-                data: [{ id: BLOCK_ID, payload: selfEnc }],
-                error: null,
-              });
-            },
-          }),
-        }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: (col: string) => {
+                if (col === "id") {
+                  return {
+                    maybeSingle: async () => ({
+                      data: {
+                        id: BLOCK_ID,
+                        section_id: SECTION_ID,
+                        block_type: "metric",
+                        sort_order: 0,
+                        agent_id: AGENT_A,
+                        payload: selfEnc,
+                        created_at: "2026-01-01T00:00:00.000Z",
+                        updated_at: "2026-01-01T00:00:00.000Z",
+                      },
+                      error: null,
+                    }),
+                  };
+                }
+                return Promise.resolve({
+                  data: [{ id: BLOCK_ID, payload: selfEnc }],
+                  error: null,
+                });
+              },
+            }),
+          };
+        },
         rpc: async (name: string) => {
           expect(name).toBe("apply_agent_dashboard_block_patch");
           return {
@@ -604,6 +758,23 @@ describe("block_key API uniqueness", () => {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({

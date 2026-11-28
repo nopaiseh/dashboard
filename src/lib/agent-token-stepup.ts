@@ -11,13 +11,17 @@ export const AGENT_TOKEN_STEPUP_TYP = "agent_token_stepup";
 export type AgentTokenStepUpAction =
   | "issue_agent_token"
   | "revoke_agent_token"
-  | "create_agent";
+  | "create_agent"
+  | "add_dashboard_writer"
+  | "remove_dashboard_writer";
 
 export interface AgentTokenStepUpBinding {
   challengeId: string;
   action: AgentTokenStepUpAction;
   agentId?: string;
   tokenId?: string;
+  /** Normalized category for add/remove_dashboard_writer. */
+  category?: string;
 }
 
 /**
@@ -43,6 +47,7 @@ export async function createAgentTokenStepUpBinding(
   };
   if (input.agentId) claims.agent_id = input.agentId;
   if (input.tokenId) claims.token_id = input.tokenId;
+  if (input.category) claims.category = input.category;
 
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
@@ -80,10 +85,14 @@ export async function verifyAgentTokenStepUpBinding(
     }
     const agentId = (payload as { agent_id?: string }).agent_id;
     const tokenId = (payload as { token_id?: string }).token_id;
+    const category = (payload as { category?: string }).category;
     if ((expected.agentId ?? undefined) !== (agentId ?? undefined)) {
       return false;
     }
     if ((expected.tokenId ?? undefined) !== (tokenId ?? undefined)) {
+      return false;
+    }
+    if ((expected.category ?? undefined) !== (category ?? undefined)) {
       return false;
     }
     return true;

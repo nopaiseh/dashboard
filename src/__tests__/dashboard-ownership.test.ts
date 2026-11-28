@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertBlockOwnedByAgent,
+  assertSectionOwnedByAgent,
   planCreateBlock,
   planPatchBlock,
   planPatchSection,
@@ -43,8 +44,8 @@ function block(overrides: Partial<DashboardBlockRow> = {}): DashboardBlockRow {
   };
 }
 
-describe("dashboard sister ownership", () => {
-  it("rejects sister writing another sister's block", () => {
+describe("dashboard sister ownership helpers", () => {
+  it("rejects sister claiming another sister's block", () => {
     const owned = assertBlockOwnedByAgent(AGENT_B, block({ agent_id: AGENT_A }));
     expect(owned.ok).toBe(false);
     if (!owned.ok) {
@@ -53,52 +54,48 @@ describe("dashboard sister ownership", () => {
     }
   });
 
-  it("rejects patch of another sister's block", () => {
-    const planned = planPatchBlock(AGENT_B, block({ agent_id: AGENT_A }), {
-      sort_order: 2,
-    });
-    expect(planned.ok).toBe(false);
-    if (!planned.ok) {
-      expect(planned.status).toBe(403);
+  it("rejects sister claiming another sister's section", () => {
+    const owned = assertSectionOwnedByAgent(
+      AGENT_B,
+      section({ agent_id: AGENT_A }),
+    );
+    expect(owned.ok).toBe(false);
+    if (!owned.ok) {
+      expect(owned.status).toBe(403);
     }
   });
 
-  it("rejects create into another sister's section", () => {
+  it("treats null agent_id as not owned", () => {
+    expect(assertBlockOwnedByAgent(AGENT_A, block({ agent_id: null })).ok).toBe(
+      false,
+    );
+  });
+
+  it("planCreateBlock no longer gates on section.agent_id (writer check is separate)", () => {
     const planned = planCreateBlock(AGENT_B, section({ agent_id: AGENT_A }), {
       section_id: SECTION_ID,
       block_type: "headline",
       payload: { text: "hi" },
     });
-    expect(planned.ok).toBe(false);
-    if (!planned.ok) {
-      expect(planned.status).toBe(403);
-    }
+    expect(planned.ok).toBe(true);
   });
 
-  it("rejects patch of another sister's section", () => {
-    const planned = planPatchSection(AGENT_B, section({ agent_id: AGENT_A }), {
-      sort_order: 3,
-    });
-    expect(planned.ok).toBe(false);
-    if (!planned.ok) {
-      expect(planned.status).toBe(403);
-    }
+  it("planPatchBlock / planPatchSection plan without row ownership", () => {
+    expect(
+      planPatchBlock(AGENT_B, block({ agent_id: AGENT_A }), { sort_order: 2 })
+        .ok,
+    ).toBe(true);
+    expect(
+      planPatchSection(AGENT_B, section({ agent_id: AGENT_A }), {
+        sort_order: 3,
+      }).ok,
+    ).toBe(true);
   });
 
-  it("allows owner sister to patch own block", () => {
+  it("allows planning patch of own block", () => {
     const planned = planPatchBlock(AGENT_A, block({ agent_id: AGENT_A }), {
       payload: { title: "x", progress: 1 },
     });
     expect(planned.ok).toBe(true);
-  });
-
-  it("treats null agent_id blocks as not owned by any sister", () => {
-    const planned = planPatchBlock(AGENT_A, block({ agent_id: null }), {
-      sort_order: 1,
-    });
-    expect(planned.ok).toBe(false);
-    if (!planned.ok) {
-      expect(planned.status).toBe(403);
-    }
   });
 });

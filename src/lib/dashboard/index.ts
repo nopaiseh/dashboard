@@ -22,11 +22,30 @@ export {
 export {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  stringContainsLongDigitRun,
 } from "@/lib/dashboard/nric-guard";
 export {
+  collectLegacyBlockKeyMatches,
   readPayloadBlockKey,
   sectionHasBlockKeyConflict,
 } from "@/lib/dashboard/block-key";
+export {
+  normalizeDashboardCategory,
+  normalizeDashboardCategories,
+} from "@/lib/dashboard/category";
+export {
+  addDashboardWriter,
+  assertAgentIsCategoryWriter,
+  backfillDashboardWriters,
+  listDashboardWriters,
+  removeDashboardWriter,
+} from "@/lib/dashboard/writers";
+export {
+  isBlockKeyAllowedForCategory,
+  allowedBlockKeysForCategory,
+} from "@/lib/dashboard/block-key-policy";
+export { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
+export { parseBankBlockPayload } from "@/lib/dashboard/bank-validation";
 export {
   DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
   DASHBOARD_INVALID_PAYLOAD_ERROR,

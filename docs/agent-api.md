@@ -149,10 +149,20 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 
 ## Dashboard 区块（目标页并入后的通用数据层）
 
-明文只允许：`category`、`block_type`、`sort_order`、拥有姐妹 `agent_id`、时间戳。  
+明文只允许：`category`、`block_type`、`sort_order`、拥有姐妹 `agent_id`、可选明文 `block_key`、时间戳。  
 标题 / 数值 / 正文 / 一行标题 / 列表等内容一律进加密 `payload`（与 items 相同的 AES-256-GCM 信封 `v{N}:…`；AAD=`dashboard_blocks:{id}:payload:v{N}`；无遗留明文）。  
-**无 DELETE**：只提供 POST/PATCH；写入经 RPC 与 `dashboard_block_events` 同事务。姐妹只能写 `agent_id` 为自己的分区/区块。  
+**无 DELETE**：只提供 POST/PATCH/PUT（按 key upsert）；写入经 RPC 与 `dashboard_block_events` 同事务。  
+**看板写入人**：`dashboard_writers(category, agent_id)` 多对多。agent 对该分类的一切写操作（建分区、建/改/upsert block）仅当令牌所属 agent 在该分类写入人列表中才允许；**列表为空 → 一律 403**。owner 可添加/移除/列出（`POST`/`DELETE`/`GET /api/owner/dashboard/writers`，写操作须 session + passkey step-up）；agent 不能改。令牌本身不再带分类白名单。  
 返回解密 body 的响应带 `Cache-Control: no-store`。更改 `block_type` 时必须同时提交符合新类型的 `payload`，否则 `400`。
+
+### `block_key` 按分区白名单
+
+- `category` 规范化后为 `bank`：只接受 `BANK_BLOCK_KEYS`（见 `src/lib/bank-block-keys.ts`，28 个，如 `bank_conclusion`、`bank_acc_hsbc`、`bank_prog_emergency`、`bank_net`、`bank_ledger`、`bank_todos`…）。银行区块另走严格 zod（金额 number、`unit` 固定 `"S$"`、等式校验等）。
+- `category` 为 `cpf`：只接受 `CPF_BLOCK_KEYS`。
+- 其他分类：维持原状（若带 `block_key` 仍按 CPF 白名单）。
+- 交叉写入（CPF key → bank 分区，或反之）→ `400`（`invalid payload`，不回显命中内容）。
+
+明文列 `dashboard_blocks.block_key` + 唯一索引 `(section_id, block_key) WHERE block_key IS NOT NULL`（本迁移新增）用于 upsert 原子性；加密 payload 内仍镜像同一 key。
 
 ### POST `/api/agent/dashboard/sections` — 新建分区
 
@@ -163,18 +173,18 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/sections' \
   -d '{"category":"cpf","sort_order":0}'
 ```
 
-成功：`201`，body 含 `section`（`agent_id` 固定为令牌所属姐妹）。
+成功：`201`，body 含 `section`（`agent_id` 固定为令牌所属姐妹）。非该分类写入人 / 未指定写入人 → `403`。
 
 ### PATCH `/api/agent/dashboard/sections/:id` — 更新分区
 
-仅可改自己名下分区的 `category` / `sort_order`。越权 → `403`。
+可改 `category` / `sort_order`。须为当前分类写入人；改 `category` 时亦须为目标分类写入人。否则 → `403`。
 
 ### POST `/api/agent/dashboard/blocks` — 新建区块
 
 `block_type`：`headline` | `metric` | `progress` | `list` | `text` | `chart_series`。  
-`payload` 按类型校验（接口收明文，入库前加密）。须落在自己拥有的 `section_id` 下。
+`payload` 按类型 + 分区分类校验（接口收明文，入库前加密）。须为该分区 `category` 的写入人。
 
-可选字段 `payload.block_key`：仅允许白名单枚举（见 `src/lib/cpf-block-keys.ts` 的 `CPF_BLOCK_KEYS`），例如 `cpf_conclusion`、`cpf_acc_oa`、`cpf_prog_ma`、`cpf_trend_oa`、`cpf_contrib`、`cpf_todos`、`cpf_ledger`、`cpf_assumptions` 等。未知值或非字符串 → `400`（`invalid payload`）。`block_key` **只存在于加密 payload 内**，无明文列、无 migration。同一 `section_id` 下每个 `block_key` 至多属于一个区块；POST 重复，或 PATCH 改到已被占用的 key → `409`（`conflict`，不回显 payload）。PATCH 保留本块自己的 key 允许。**改 payload 时要把 `block_key` 一起带上，否则原 key 会丢失**（整份 payload 替换，未写的字段不会保留）。
+可选字段 `payload.block_key`：须属于该分区 category 的白名单（见上）。未知值、分区不匹配或非字符串 → `400`（`invalid payload`）。同一 `section_id` 下每个 `block_key` 至多属于一个区块；POST 重复，或 PATCH 改到已被占用的 key → `409`（`conflict`，不回显 payload）。PATCH 保留本块自己的 key 允许。**改 payload 时要把 `block_key` 一起带上，否则原 key 会丢失**（整份 payload 替换，未写的字段不会保留）。
 
 ```bash
 curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
@@ -212,12 +222,34 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
 
 ### PATCH `/api/agent/dashboard/blocks/:id` — 更新区块
 
-仅可改自己名下区块。可传 `block_type` / `sort_order` / `payload`。无 DELETE。  
+须为该区块所属分区分类的写入人。可传 `block_type` / `sort_order` / `payload`。无 DELETE。  
 改 `payload` 时要把 `block_key` 一起带上，否则原 key 会丢失。
+
+### PUT `/api/agent/dashboard/sections/:id/blocks/:block_key` — 按 key upsert
+
+存在则整份替换 `payload`（及 `block_type` / `sort_order`），不存在则创建。路径上的 `block_key` 必须属于该分区白名单；`payload.block_key` 若出现须与路径一致（可省略，由服务端注入）。鉴权（看板写入人）、校验、限流与 POST/PATCH 相同。成功：新建 `201`，替换 `200`。
+
+```bash
+curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_UUID/blocks/bank_acc_hsbc' \
+  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "block_type": "metric",
+    "payload": {
+      "block_key": "bank_acc_hsbc",
+      "title": "FAKE HSBC",
+      "role_tag": "薪资",
+      "group": "hub",
+      "value": 0,
+      "label": "FAKE",
+      "unit": "S$"
+    }
+  }'
+```
 
 ### 所有者读取
 
-登录后 `GET /api/dashboard`：返回 `headline`（无一行标题块时为 `""`，前端可回退默认文案）与 `sections[].blocks`（已解密）。
+登录后 `GET /api/dashboard`：返回 `headline`（无一行标题块时为 `""`，前端可回退默认文案）与 `sections[].blocks`（已解密）。**银行分区与 CPF 相同**：仅所有者会话可读，经 `(protected)` 布局 + `requireSession` / 通行密钥登录保护；agent Bearer **不能**读 dashboard。
 
 ---
 
@@ -227,7 +259,7 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
 |------|------|
 | 400 | 参数 / body 不合法 |
 | 401 | 缺令牌、无效或已吊销 |
-| 403 | 越权（如改他人事项 / 他人 dashboard 区块） |
+| 403 | 越权（如改他人事项 / 非看板写入人 / 未指定写入人） |
 | 404 | 资源不存在 |
 | 409 | 冲突（并发 / 条件不满足） |
 | 422 | 敏感字段解密失败 |
@@ -236,6 +268,15 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
 
 ## 令牌生命周期（所有者）
 
-- 签发 / 吊销：专员详情页「令牌」标签（`/agents/[id]?tab=tokens`）（每次操作重新验通行密钥）。
-- 库中只存 SHA-256 哈希；吊销写 `revoked_at`，不删行；吊销后立即 `401`。
-- 默认发新令牌时勾选「同时吊销旧令牌」。
+- 签发 / 吊销：专员详情页「令牌」标签（`/agents/[id]?tab=tokens`）（每次操作重新验通行密钥）。令牌**不**附带分类白名单。
+- 签发 `POST /api/owner/agents/:id/tokens`：通行密钥 step-up；库中只存 SHA-256 哈希。
+- 吊销写 `revoked_at`，不删行；吊销后立即 `401`。默认发新令牌时勾选「同时吊销旧令牌」。
+
+## 看板写入人（所有者）
+
+- `GET /api/owner/dashboard/writers?category=`：列出写入人（可选按分类过滤；须登录会话）。
+- `POST /api/owner/dashboard/writers`：添加写入人；body 含 `category`、`agent_id` + 通行密钥 step-up（`action=add_dashboard_writer`）。
+- `DELETE /api/owner/dashboard/writers`：移除写入人；同上 body + step-up（`action=remove_dashboard_writer`）。
+- 迁移回填（不硬编码 agent id）：
+  - **普通分类**：把所有已拥有该分类分区的 agent 都加为写入人。
+  - **`cpf` / `bank`**：只能回填一位——仅当恰好一个 agent 拥有 `cpf` 分区时，把它加为 `cpf` 与 `bank` 的写入人；否则两者都不回填（留空即拒写，须 owner 手工指定）。

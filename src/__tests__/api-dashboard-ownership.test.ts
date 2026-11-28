@@ -33,6 +33,23 @@ describe("dashboard block PATCH ownership (route)", () => {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_blocks") {
             return {
               select: () => ({
@@ -58,6 +75,25 @@ describe("dashboard block PATCH ownership (route)", () => {
                     select: () => ({
                       maybeSingle: async () => ({ data: null, error: null }),
                     }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "cpf",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
                   }),
                 }),
               }),

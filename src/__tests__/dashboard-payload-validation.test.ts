@@ -414,12 +414,16 @@ describe("dashboard payload CPF field relaxation", () => {
         empty_text: "nope",
       }).success,
     ).toBe(false);
+    // Structural create schema defers payload .strict() to category-aware parse.
     expect(
       createDashboardBlockSchema.safeParse({
         section_id: SECTION_ID,
         block_type: "metric",
         payload: { title: "OA", value: 1, foo: 1 },
       }).success,
+    ).toBe(true);
+    expect(
+      parsePayload("metric", { title: "OA", value: 1, foo: 1 }).success,
     ).toBe(false);
   });
 });

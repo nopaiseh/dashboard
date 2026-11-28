@@ -287,6 +287,13 @@ BEGIN
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   );
 
+  -- 写入 RPC 要求 agent 在 dashboard_writers 中
+  INSERT INTO public.dashboard_writers (category, agent_id)
+  VALUES
+    ('cpf', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+    ('bank', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  ON CONFLICT (category, agent_id) DO NOTHING;
+
   -- 明文 payload 被 CHECK 拒绝
   BEGIN
     INSERT INTO public.dashboard_blocks (
@@ -512,6 +519,139 @@ BEGIN
   END IF;
   IF v_invalid_count < 3 THEN
     RAISE EXCEPTION 'expected invalid key count >= 3, got %', v_invalid_count;
+  END IF;
+END;
+$$;
+
+-- dashboard_writers backfill + block_key unique + upsert
+DO $$
+DECLARE
+  v_writer uuid;
+  v_bank_writer uuid;
+  v_result jsonb;
+  v_count int;
+  v_sqlstate text;
+  v_payload text;
+BEGIN
+  -- Ordinary categories: all owners. cpf/bank: only unique cpf owner.
+  INSERT INTO public.dashboard_writers (category, agent_id)
+  SELECT DISTINCT
+    lower(trim(s.category)),
+    s.agent_id
+  FROM public.dashboard_sections s
+  WHERE s.agent_id IS NOT NULL
+    AND char_length(trim(s.category)) > 0
+    AND lower(trim(s.category)) NOT IN ('cpf', 'bank')
+  ON CONFLICT (category, agent_id) DO NOTHING;
+
+  INSERT INTO public.dashboard_writers (category, agent_id)
+  SELECT cats.category, u.agent_id
+  FROM (
+    SELECT (array_agg(DISTINCT s.agent_id))[1] AS agent_id
+    FROM public.dashboard_sections s
+    WHERE s.agent_id IS NOT NULL
+      AND lower(trim(s.category)) = 'cpf'
+    HAVING count(DISTINCT s.agent_id) = 1
+  ) u
+  CROSS JOIN (VALUES ('cpf'::text), ('bank'::text)) AS cats(category)
+  ON CONFLICT (category, agent_id) DO NOTHING;
+
+  SELECT agent_id INTO v_writer
+  FROM public.dashboard_writers
+  WHERE category = 'cpf'
+  LIMIT 1;
+  IF v_writer IS DISTINCT FROM 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' THEN
+    RAISE EXCEPTION 'cpf writer should be unique section owner, got %', v_writer;
+  END IF;
+
+  SELECT agent_id INTO v_bank_writer
+  FROM public.dashboard_writers
+  WHERE category = 'bank'
+    AND agent_id = v_writer;
+  IF v_bank_writer IS NULL THEN
+    RAISE EXCEPTION 'bank should include unique cpf writer';
+  END IF;
+
+  -- Upsert by block_key: insert then replace (same id required; ciphertext AAD)
+  v_result := public.upsert_dashboard_block_by_key(
+    'abababab-abab-4aba-8bab-abababababab',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    'cpf_conclusion',
+    'text',
+    7,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'v1:smoke:tag:cipher-upsert-1'
+  );
+  IF NOT (v_result->>'inserted')::boolean THEN
+    RAISE EXCEPTION 'first upsert should insert';
+  END IF;
+  IF (v_result->'block'->>'sort_order')::int <> 7 THEN
+    RAISE EXCEPTION 'first upsert sort_order should be 7';
+  END IF;
+
+  -- Overwrite without sort_order (NULL) must preserve existing 7
+  v_result := public.upsert_dashboard_block_by_key(
+    'abababab-abab-4aba-8bab-abababababab',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    'cpf_conclusion',
+    'text',
+    NULL,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'v1:smoke:tag:cipher-upsert-2'
+  );
+  IF (v_result->>'inserted')::boolean THEN
+    RAISE EXCEPTION 'second upsert should update';
+  END IF;
+  IF v_result->'block'->>'id' IS DISTINCT FROM 'abababab-abab-4aba-8bab-abababababab' THEN
+    RAISE EXCEPTION 'upsert should keep original row id';
+  END IF;
+  IF v_result->'block'->>'payload' IS DISTINCT FROM 'v1:smoke:tag:cipher-upsert-2' THEN
+    RAISE EXCEPTION 'upsert should replace payload';
+  END IF;
+  IF (v_result->'block'->>'sort_order')::int <> 7 THEN
+    RAISE EXCEPTION 'omit sort_order should preserve 7, got %',
+      v_result->'block'->>'sort_order';
+  END IF;
+
+  -- Concurrent-style id mismatch must abort (XJ409), not corrupt ciphertext
+  BEGIN
+    PERFORM public.upsert_dashboard_block_by_key(
+      'cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'cpf_conclusion',
+      'text',
+      0,
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      'v1:smoke:tag:cipher-upsert-race'
+    );
+    RAISE EXCEPTION 'expected XJ409 for upsert id mismatch';
+  EXCEPTION
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      IF v_sqlstate IS DISTINCT FROM 'XJ409' THEN
+        RAISE EXCEPTION 'expected XJ409 for id mismatch, got %', v_sqlstate;
+      END IF;
+  END;
+
+  -- Payload must remain the pre-race value (failed upsert rolls back)
+  SELECT payload INTO v_payload
+  FROM public.dashboard_blocks
+  WHERE id = 'abababab-abab-4aba-8bab-abababababab';
+  IF v_payload IS DISTINCT FROM 'v1:smoke:tag:cipher-upsert-2' THEN
+    RAISE EXCEPTION 'id-mismatch upsert must not overwrite payload';
+  END IF;
+
+  -- NULL agent id must not pass the writer gate
+  IF public.is_dashboard_category_writer(NULL, 'cpf') IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'NULL agent must not be a category writer';
+  END IF;
+
+  SELECT count(*) INTO v_count
+  FROM public.dashboard_blocks
+  WHERE section_id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    AND block_key = 'cpf_conclusion';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'expected one block for cpf_conclusion, got %', v_count;
   END IF;
 END;
 $$;

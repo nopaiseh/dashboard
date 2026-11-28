@@ -9,9 +9,15 @@ import {
 } from "@/lib/dashboard/crypto";
 import { planPatchBlock } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import {
+  earlyValidateDashboardPayload,
+  parseDashboardBlockPayload,
+} from "@/lib/dashboard/parse-payload";
+import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
+  DashboardSectionRow,
 } from "@/lib/dashboard/types";
 import {
   dashboardBlockKeyConflictResponse,
@@ -24,10 +30,7 @@ import {
   isPgNotFound,
 } from "@/lib/pg-errors";
 import { getServiceClient } from "@/lib/supabase/server";
-import {
-  dashboardPayloadSchemaFor,
-  patchDashboardBlockSchema,
-} from "@/lib/validation";
+import { patchDashboardBlockSchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -101,15 +104,49 @@ export async function PATCH(request: Request, context: RouteContext) {
     return dashboardInvalidPayloadResponse();
   }
 
+  const { data: section, error: sectionError } = await supabase
+    .from("dashboard_sections")
+    .select("*")
+    .eq("id", block.section_id)
+    .maybeSingle();
+
+  if (sectionError) {
+    return jsonError(500, "failed to load section");
+  }
+  if (!section) {
+    return jsonError(404, "section not found");
+  }
+
+  const sectionRow = section as DashboardSectionRow;
+
+  const writer = await assertAgentIsCategoryWriter(
+    supabase,
+    auth.agent.agentId,
+    sectionRow.category,
+  );
+  if (!writer.ok) {
+    return jsonError(writer.status, writer.error);
+  }
+
   let nextPayload: Record<string, unknown> | undefined;
+  let nextBlockKey: string | null | undefined;
+  let touchBlockKey = false;
+
   if (parsed.data.payload !== undefined) {
-    const payloadParsed = dashboardPayloadSchemaFor(nextType).safeParse(
-      parsed.data.payload,
-    );
-    if (!payloadParsed.success) {
+    if (!earlyValidateDashboardPayload(nextType, parsed.data.payload)) {
       return dashboardInvalidPayloadResponse();
     }
-    nextPayload = payloadParsed.data as Record<string, unknown>;
+    const payloadParsed = parseDashboardBlockPayload(
+      nextType,
+      parsed.data.payload,
+      sectionRow.category,
+    );
+    if (!payloadParsed.ok) {
+      return dashboardInvalidPayloadResponse();
+    }
+    nextPayload = payloadParsed.data;
+    nextBlockKey = readPayloadBlockKey(nextPayload) ?? null;
+    touchBlockKey = true;
   }
 
   const planned = planPatchBlock(auth.agent.agentId, block, {
@@ -121,28 +158,27 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(planned.status, planned.error);
   }
 
-  if (nextPayload !== undefined) {
-    const blockKey = readPayloadBlockKey(nextPayload);
-    if (blockKey !== undefined) {
-      // Race window: concurrent writers can both pass before either commits
-      // (acceptable for a single-writer agent; key is encrypted, not a DB column).
-      const { data: siblings, error: siblingsError } = await supabase
-        .from("dashboard_blocks")
-        .select("id, payload")
-        .eq("section_id", block.section_id);
+  if (nextPayload !== undefined && nextBlockKey) {
+    const { data: siblings, error: siblingsError } = await supabase
+      .from("dashboard_blocks")
+      .select("id, payload, block_key")
+      .eq("section_id", block.section_id);
 
-      if (siblingsError) {
-        return jsonError(500, "failed to load section blocks");
-      }
-      if (
-        sectionHasBlockKeyConflict(
-          (siblings ?? []) as Array<{ id: string; payload: string }>,
-          blockKey,
-          id,
-        )
-      ) {
-        return dashboardBlockKeyConflictResponse();
-      }
+    if (siblingsError) {
+      return jsonError(500, "failed to load section blocks");
+    }
+    if (
+      sectionHasBlockKeyConflict(
+        (siblings ?? []) as Array<{
+          id: string;
+          payload: string;
+          block_key?: string | null;
+        }>,
+        nextBlockKey,
+        id,
+      )
+    ) {
+      return dashboardBlockKeyConflictResponse();
     }
   }
 
@@ -162,6 +198,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       p_sort_order: planned.plan.sort_order ?? block.sort_order,
       p_touch_payload: touchPayload,
       p_payload: encryptedPayload,
+      p_touch_block_key: touchBlockKey,
+      p_block_key: touchBlockKey ? (nextBlockKey ?? null) : null,
     },
   );
 
@@ -170,6 +208,9 @@ export async function PATCH(request: Request, context: RouteContext) {
       blockId: id,
       code: (error as { code?: string }).code ?? "unknown",
     });
+    if ((error as { code?: string }).code === "23505") {
+      return dashboardBlockKeyConflictResponse();
+    }
     if (isPgConflict(error)) {
       return jsonError(409, "conflict");
     }

@@ -2,6 +2,7 @@ import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planPatchSection } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import type { DashboardSectionRow } from "@/lib/dashboard/types";
+import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -53,9 +54,32 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(404, "section not found");
   }
 
+  const sectionRow = existing as DashboardSectionRow;
+
+  // Must be writer of the current category; if renaming, also of the new one.
+  const currentWriter = await assertAgentIsCategoryWriter(
+    supabase,
+    auth.agent.agentId,
+    sectionRow.category,
+  );
+  if (!currentWriter.ok) {
+    return jsonError(currentWriter.status, currentWriter.error);
+  }
+
+  if (parsed.data.category !== undefined) {
+    const nextWriter = await assertAgentIsCategoryWriter(
+      supabase,
+      auth.agent.agentId,
+      parsed.data.category,
+    );
+    if (!nextWriter.ok) {
+      return jsonError(nextWriter.status, nextWriter.error);
+    }
+  }
+
   const planned = planPatchSection(
     auth.agent.agentId,
-    existing as DashboardSectionRow,
+    sectionRow,
     parsed.data,
   );
   if (!planned.ok) {
@@ -74,7 +98,6 @@ export async function PATCH(request: Request, context: RouteContext) {
     .from("dashboard_sections")
     .update(patch)
     .eq("id", id)
-    .eq("agent_id", auth.agent.agentId)
     .select("*")
     .maybeSingle();
 
@@ -85,7 +108,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(500, "failed to update section");
   }
   if (!section) {
-    return jsonError(403, "forbidden");
+    return jsonError(404, "section not found");
   }
 
   return jsonOk({ section });

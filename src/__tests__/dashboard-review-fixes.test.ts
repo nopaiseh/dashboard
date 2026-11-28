@@ -179,8 +179,8 @@ describe("PATCH block_type requires payload", () => {
   });
 });
 
-describe("sister cannot write into another sister section", () => {
-  it("planCreateBlock returns 403", () => {
+describe("planCreateBlock ignores section.agent_id (writer enforced at route)", () => {
+  it("plans create even when section.agent_id differs", () => {
     const section: DashboardSectionRow = {
       id: SECTION_ID,
       category: "cpf",
@@ -194,8 +194,7 @@ describe("sister cannot write into another sister section", () => {
       block_type: "headline",
       payload: { text: "nope" },
     });
-    expect(planned.ok).toBe(false);
-    if (!planned.ok) expect(planned.status).toBe(403);
+    expect(planned.ok).toBe(true);
   });
 });
 
@@ -235,7 +234,7 @@ describe("dashboard route review fixes", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("POST /blocks into another sister section returns 403", async () => {
+  it("POST /blocks by non-writer returns 403", async () => {
     vi.doMock("@/lib/require-request", () => ({
       requireRequest: async () => undefined,
     }));
@@ -247,23 +246,42 @@ describe("dashboard route review fixes", () => {
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: SECTION_ID,
-                  category: "cpf",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: SECTION_ID,
+                    category: "cpf",
+                    sort_order: 0,
+                    agent_id: AGENT_A,
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
               }),
             }),
-          }),
-        }),
+          };
+        },
         rpc: async () => {
           throw new Error("rpc should not be called");
         },
@@ -302,23 +320,42 @@ describe("dashboard route review fixes", () => {
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: SECTION_ID,
-                  category: "cpf",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: SECTION_ID,
+                    category: "cpf",
+                    sort_order: 0,
+                    agent_id: AGENT_A,
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
               }),
             }),
-          }),
-        }),
+          };
+        },
         rpc: async (name: string, args: Record<string, unknown>) => {
           rpcCalled = true;
           expect(name).toBe("create_dashboard_block");
@@ -374,28 +411,66 @@ describe("dashboard route review fixes", () => {
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: BLOCK_ID,
-                  section_id: SECTION_ID,
-                  block_type: "progress",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  payload: encryptBlockPayload(BLOCK_ID, {
-                    title: "t",
-                    progress: 0,
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
+                }),
+              }),
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "cpf",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: BLOCK_ID,
+                    section_id: SECTION_ID,
+                    block_type: "progress",
+                    sort_order: 0,
+                    agent_id: AGENT_A,
+                    payload: encryptBlockPayload(BLOCK_ID, {
+                      title: "t",
+                      progress: 0,
+                    }),
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
               }),
             }),
-          }),
-        }),
+          };
+        },
         rpc: async () => {
           throw new Error("rpc should not be called");
         },
@@ -431,28 +506,66 @@ describe("dashboard route review fixes", () => {
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: BLOCK_ID,
-                  section_id: SECTION_ID,
-                  block_type: "progress",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  payload: encryptBlockPayload(BLOCK_ID, {
-                    title: "t",
-                    progress: 0,
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (_c: string, agentId: string) => ({
+                    maybeSingle: async () => ({
+                      data:
+                        agentId === AGENT_A
+                          ? { agent_id: AGENT_A }
+                          : null,
+                      error: null,
+                    }),
                   }),
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
+                }),
+              }),
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "cpf",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: BLOCK_ID,
+                    section_id: SECTION_ID,
+                    block_type: "progress",
+                    sort_order: 0,
+                    agent_id: AGENT_A,
+                    payload: encryptBlockPayload(BLOCK_ID, {
+                      title: "t",
+                      progress: 0,
+                    }),
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
               }),
             }),
-          }),
-        }),
+          };
+        },
         rpc: async () => ({
           data: null,
           error: { code: "XJ409", message: "failed to write event" },

@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { BANK_BLOCK_KEYS } from "@/lib/bank-block-keys";
 import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
+import { normalizeDashboardCategory } from "@/lib/dashboard/category";
 
 export const TITLE_MAX = 200;
 export const BODY_MAX = 10_000;
@@ -173,6 +175,22 @@ export const stepUpOptionsSchema = z.union([
       action: z.literal("create_agent"),
     })
     .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("add_dashboard_writer"),
+      category: z.string().min(1).max(64),
+      agent_id: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("remove_dashboard_writer"),
+      category: z.string().min(1).max(64),
+      agent_id: z.string().uuid(),
+    })
+    .strict(),
 ]);
 
 const agentSlugSchema = z
@@ -211,6 +229,24 @@ export const revokeAgentTokenSchema = z
     binding: z.string().min(1).max(4096),
   })
   .strict();
+
+/** Owner adds a writer for a dashboard category. */
+export const addDashboardWriterSchema = z
+  .object({
+    assertion: webauthnCredentialPayloadSchema,
+    challenge_id: z.string().uuid(),
+    binding: z.string().min(1).max(4096),
+    category: z.string().min(1).max(64),
+    agent_id: z.string().uuid(),
+  })
+  .strict()
+  .transform((val) => ({
+    ...val,
+    category: normalizeDashboardCategory(val.category),
+  }));
+
+/** Owner removes a writer for a dashboard category. */
+export const removeDashboardWriterSchema = addDashboardWriterSchema;
 
 export const inviteSchema = z
   .object({
@@ -344,8 +380,17 @@ const chartEventSchema = z
   })
   .strict();
 
-/** Optional encrypted-payload slot key; whitelist only (see CPF_BLOCK_KEYS). */
-const dashboardBlockKeySchema = z.enum(CPF_BLOCK_KEYS);
+/**
+ * Optional encrypted-payload slot key.
+ * Accepts CPF ∪ bank keys at the zod layer; category-scoped rejection happens
+ * in `parseDashboardBlockPayload` / API routes (wrong partition → 400).
+ */
+export const DASHBOARD_BLOCK_KEYS = [
+  ...CPF_BLOCK_KEYS,
+  ...BANK_BLOCK_KEYS,
+] as const;
+
+const dashboardBlockKeySchema = z.enum(DASHBOARD_BLOCK_KEYS);
 
 const headlinePayloadSchema = z
   .object({
@@ -445,6 +490,14 @@ export function dashboardPayloadSchemaFor(
   }
 }
 
+export const upsertDashboardBlockSchema = z
+  .object({
+    block_type: dashboardBlockTypeSchema,
+    sort_order: z.number().int().min(0).max(1_000_000).optional(),
+    payload: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
 export const createDashboardSectionSchema = z
   .object({
     category: z.string().min(1).max(DASHBOARD_CATEGORY_MAX),
@@ -459,6 +512,10 @@ export const patchDashboardSectionSchema = z
   })
   .strict();
 
+/**
+ * Structural create body only. Payload shape is validated after the section
+ * category is known (`parseDashboardBlockPayload`) so bank vs CPF schemas can differ.
+ */
 export const createDashboardBlockSchema = z
   .object({
     section_id: z.string().uuid(),
@@ -466,19 +523,7 @@ export const createDashboardBlockSchema = z
     sort_order: z.number().int().min(0).max(1_000_000).optional(),
     payload: z.record(z.string(), z.unknown()),
   })
-  .strict()
-  .superRefine((val, ctx) => {
-    const parsed = dashboardPayloadSchemaFor(val.block_type).safeParse(
-      val.payload,
-    );
-    if (!parsed.success) {
-      ctx.addIssue({
-        code: "custom",
-        message: "invalid payload for block_type",
-        path: ["payload"],
-      });
-    }
-  });
+  .strict();
 
 export const patchDashboardBlockSchema = z
   .object({
@@ -495,18 +540,5 @@ export const patchDashboardBlockSchema = z
         message: "payload is required when changing block_type",
         path: ["payload"],
       });
-      return;
-    }
-    if (val.payload !== undefined && val.block_type !== undefined) {
-      const parsed = dashboardPayloadSchemaFor(val.block_type).safeParse(
-        val.payload,
-      );
-      if (!parsed.success) {
-        ctx.addIssue({
-          code: "custom",
-          message: "invalid payload for block_type",
-          path: ["payload"],
-        });
-      }
     }
   });

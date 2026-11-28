@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planCreateSection } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -35,6 +36,15 @@ export async function POST(request: Request) {
   const parsed = createDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
     return dashboardInvalidPayloadResponse();
+  }
+
+  const writer = await assertAgentIsCategoryWriter(
+    supabase,
+    auth.agent.agentId,
+    parsed.data.category,
+  );
+  if (!writer.ok) {
+    return jsonError(writer.status, writer.error);
   }
 
   const planned = planCreateSection(auth.agent.agentId, parsed.data);

@@ -28,7 +28,25 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
   "cpfaccountno",
   "accountnumber",
   "nricnumber",
+  // Bank / card / transfer identifiers (normalized: lowercase, strip non-alnum)
+  "cardno",
+  "cardnumber",
+  "last4",
+  "iban",
+  "swift",
+  "pan",
 ]);
+
+/**
+ * Nine or more consecutive ASCII digits in a string (account / card style).
+ * Applied on the raw string only — do not strip separators (that would fuse
+ * dates like 2026-01-01 into digit runs and false-positive CPF text).
+ */
+const LONG_DIGIT_RUN = /\d{9,}/;
+
+/** Request ids / section ids are UUIDs and must not trip the digit-run check. */
+const UUID_STRING =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Max times we unwrap JSON-looking string values (DoS guard). */
 export const MAX_EMBEDDED_JSON_DEPTH = 5;
@@ -57,6 +75,26 @@ export function stringContainsSingaporeNricOrFin(value: string): boolean {
   return SINGAPORE_NRIC_OR_FIN.test(normalizeForNricScan(value));
 }
 
+/** True when the string contains 9+ consecutive digits (raw, no separator strip). */
+export function stringContainsLongDigitRun(value: string): boolean {
+  return LONG_DIGIT_RUN.test(value);
+}
+
+export function looksLikeUuidString(value: string): boolean {
+  return UUID_STRING.test(value.trim());
+}
+
+/**
+ * Privacy hit: NRIC/FIN shape and/or a long digit run.
+ * UUID-shaped strings are exempt from the digit-run check (section/block ids).
+ * Error responses must not echo the matched substring.
+ */
+export function stringContainsBlockedIdentifier(value: string): boolean {
+  if (stringContainsSingaporeNricOrFin(value)) return true;
+  if (looksLikeUuidString(value)) return false;
+  return stringContainsLongDigitRun(value);
+}
+
 /** True when trimmed value starts with `{` or `[` (JSON object/array shape). */
 export function looksLikeJsonContainer(raw: string): boolean {
   const trimmed = raw.trim();
@@ -66,16 +104,21 @@ export function looksLikeJsonContainer(raw: string): boolean {
 }
 
 /**
- * Two-layer NRIC / CPF-account blocking:
- * (a) reject forbidden object keys at any depth (nric, fin, cpf_account, …)
- * (b) regex-scan all string values after separator normalization
+ * Privacy blocking for dashboard writes (CPF + bank):
+ * (a) reject forbidden object keys at any depth (nric, fin, accountno, cardno, …)
+ * (b) regex-scan all string values for NRIC/FIN (after separator normalization)
+ *     and for 9+ consecutive digits (raw string)
  *
- * Also rejects keys whose *name* itself matches the NRIC/FIN pattern.
+ * Also rejects keys whose *name* itself matches the NRIC/FIN pattern or a
+ * long digit run.
  *
  * String values that look like JSON (trimmed `{` / `[`) are JSON.parse'd and
  * walked recursively so banned keys inside list-item JSON strings are caught.
  * Depth / size over the caps → fail closed (treat as hit). Parse failure →
  * regex-only scan. Never log parsed content.
+ *
+ * Safe for existing CPF fixtures: amounts stay numeric (not digit-scanned);
+ * money within ±10_000_000 has ≤8 digits before the decimal.
  */
 export function containsSingaporeNricOrFin(value: unknown): boolean {
   const seen = new WeakSet<object>();
@@ -100,7 +143,7 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
           // Parse failed — fall back to regex-only on the raw string.
         }
       }
-      return stringContainsSingaporeNricOrFin(node);
+      return stringContainsBlockedIdentifier(node);
     }
     if (node === null || typeof node !== "object") {
       return false;
@@ -121,7 +164,7 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
       node as Record<string, unknown>,
     )) {
       if (isForbiddenDashboardIdentifierKey(key)) return true;
-      if (stringContainsSingaporeNricOrFin(key)) return true;
+      if (stringContainsBlockedIdentifier(key)) return true;
       if (walk(child, jsonDepth)) return true;
     }
     return false;

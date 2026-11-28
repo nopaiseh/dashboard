@@ -4,36 +4,46 @@
  */
 
 import { decryptBlockPayload } from "@/lib/dashboard/crypto";
+import type { BankBlockKey } from "@/lib/bank-block-keys";
 import type { CpfBlockKey } from "@/lib/cpf-block-keys";
+
+export type DashboardBlockKey = CpfBlockKey | BankBlockKey;
 
 /**
  * Read a validated payload's optional block_key.
- * Call only after zod has accepted the payload for the block_type.
+ * Call only after zod / parseDashboardBlockPayload has accepted the payload.
  */
 export function readPayloadBlockKey(
   payload: Record<string, unknown>,
-): CpfBlockKey | undefined {
+): DashboardBlockKey | undefined {
   const key = payload.block_key;
-  return typeof key === "string" ? (key as CpfBlockKey) : undefined;
+  return typeof key === "string" ? (key as DashboardBlockKey) : undefined;
 }
 
 /**
  * True when another block in the same section already carries `blockKey`.
  *
- * Race window: two concurrent writers can both pass this check before either
- * commits. Acceptable for a single-writer agent; no DB uniqueness constraint
- * (block_key lives only inside the encrypted payload).
+ * Prefer the plaintext `block_key` column + unique index when available
+ * (upsert path). This decrypt-based check remains for POST/PATCH until all
+ * writers populate the column.
  *
  * Decrypts sibling payloads in memory; never logs them.
  */
 export function sectionHasBlockKeyConflict(
-  sectionBlocks: ReadonlyArray<{ id: string; payload: string }>,
+  sectionBlocks: ReadonlyArray<{
+    id: string;
+    payload: string;
+    block_key?: string | null;
+  }>,
   blockKey: string,
   excludeBlockId?: string,
 ): boolean {
   for (const row of sectionBlocks) {
     if (excludeBlockId !== undefined && row.id === excludeBlockId) {
       continue;
+    }
+    if (row.block_key != null && row.block_key === blockKey) {
+      return true;
     }
     const { payload, decrypt_failed } = decryptBlockPayload(row);
     if (decrypt_failed) {
@@ -44,4 +54,25 @@ export function sectionHasBlockKeyConflict(
     }
   }
   return false;
+}
+
+/**
+ * Among rows with NULL plaintext `block_key`, find ids whose decrypted
+ * payload carries `blockKey`. Decrypt failures are skipped (never logged).
+ */
+export function collectLegacyBlockKeyMatches(
+  nullKeyBlocks: ReadonlyArray<{ id: string; payload: string }>,
+  blockKey: string,
+): string[] {
+  const matches: string[] = [];
+  for (const row of nullKeyBlocks) {
+    const { payload, decrypt_failed } = decryptBlockPayload(row);
+    if (decrypt_failed) {
+      continue;
+    }
+    if (payload.block_key === blockKey) {
+      matches.push(row.id);
+    }
+  }
+  return matches;
 }

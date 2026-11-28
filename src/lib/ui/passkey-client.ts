@@ -262,3 +262,70 @@ export async function revokeAgentTokenWithPasskey(input: {
     throw new PasskeyError(await readError(res), res.status);
   }
 }
+
+/** Owner adds a writer for a dashboard category. */
+export async function addDashboardWriterWithPasskey(input: {
+  category: string;
+  agentId: string;
+}): Promise<{
+  writer: {
+    category: string;
+    agent_id: string;
+    created_at: string;
+  };
+}> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "add_dashboard_writer",
+    category: input.category,
+    agent_id: input.agentId,
+  });
+  const res = await fetch("/api/owner/dashboard/writers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+      category: input.category,
+      agent_id: input.agentId,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
+  return (await res.json()) as {
+    writer: {
+      category: string;
+      agent_id: string;
+      created_at: string;
+    };
+  };
+}
+
+/** Owner removes a writer for a dashboard category. */
+export async function removeDashboardWriterWithPasskey(input: {
+  category: string;
+  agentId: string;
+}): Promise<void> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "remove_dashboard_writer",
+    category: input.category,
+    agent_id: input.agentId,
+  });
+  const res = await fetch("/api/owner/dashboard/writers", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+      category: input.category,
+      agent_id: input.agentId,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
+}
