@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
 
 export const TITLE_MAX = 200;
 export const BODY_MAX = 10_000;
@@ -343,9 +344,13 @@ const chartEventSchema = z
   })
   .strict();
 
+/** Optional encrypted-payload slot key; whitelist only (see CPF_BLOCK_KEYS). */
+const dashboardBlockKeySchema = z.enum(CPF_BLOCK_KEYS);
+
 const headlinePayloadSchema = z
   .object({
     text: z.string().max(DASHBOARD_HEADLINE_MAX),
+    block_key: dashboardBlockKeySchema.optional(),
   })
   .strict();
 
@@ -355,6 +360,7 @@ const textPayloadSchema = z
     title: z.string().max(TITLE_MAX).optional(),
     empty_text: dashboardEmptyTextSchema.optional(),
     missing_years: dashboardMissingYearsSchema.optional(),
+    block_key: dashboardBlockKeySchema.optional(),
   })
   .strict();
 
@@ -367,6 +373,7 @@ const metricPayloadSchema = z
     delta_mom: dashboardFiniteAmount.optional(),
     ytd: dashboardFiniteAmount.optional(),
     empty_text: dashboardEmptyTextSchema.optional(),
+    block_key: dashboardBlockKeySchema.optional(),
   })
   .strict();
 
@@ -385,6 +392,7 @@ const progressPayloadSchema = z
     next_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
     next_tier_year: dashboardYearSchema.optional(),
     overshoot: dashboardFiniteAmount.optional(),
+    block_key: dashboardBlockKeySchema.optional(),
   })
   .strict();
 
@@ -396,6 +404,7 @@ const listPayloadSchema = z
       .max(DASHBOARD_LIST_ITEMS_MAX),
     empty_text: dashboardEmptyTextSchema.optional(),
     missing_years: dashboardMissingYearsSchema.optional(),
+    block_key: dashboardBlockKeySchema.optional(),
   })
   .strict();
 
@@ -408,6 +417,7 @@ const chartSeriesPayloadSchema = z
     events: z.array(chartEventSchema).max(DASHBOARD_CHART_EVENTS_MAX).optional(),
     all_from_year: dashboardYearSchema.optional(),
     range_default: z.enum(["12m", "all"]).optional(),
+    block_key: dashboardBlockKeySchema.optional(),
   })
   .strict();
 

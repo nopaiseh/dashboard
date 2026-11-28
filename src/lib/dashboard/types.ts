@@ -1,3 +1,5 @@
+import type { CpfBlockKey } from "@/lib/cpf-block-keys";
+
 export const DASHBOARD_BLOCK_TYPES = [
   "headline",
   "metric",
@@ -33,14 +35,17 @@ export interface DashboardBlockRow {
   decrypt_failed?: boolean;
 }
 
+/** Optional semantic slot; lives only inside the encrypted payload. */
+type WithOptionalBlockKey = { block_key?: CpfBlockKey };
+
 /** Decrypted payload shapes (API / compute; never log). */
-export type HeadlinePayload = { text: string };
+export type HeadlinePayload = { text: string } & WithOptionalBlockKey;
 export type TextPayload = {
   text: string;
   title?: string;
   empty_text?: string;
   missing_years?: number[];
-};
+} & WithOptionalBlockKey;
 export type MetricPayload = {
   title: string;
   value: number;
@@ -49,7 +54,7 @@ export type MetricPayload = {
   delta_mom?: number;
   ytd?: number;
   empty_text?: string;
-};
+} & WithOptionalBlockKey;
 export type ProgressTier = {
   key: string;
   label: string;
@@ -69,13 +74,13 @@ export type ProgressPayload = {
   next_tier?: string;
   next_tier_year?: number;
   overshoot?: number;
-};
+} & WithOptionalBlockKey;
 export type ListPayload = {
   title?: string;
   items: string[];
   empty_text?: string;
   missing_years?: number[];
-};
+} & WithOptionalBlockKey;
 export type ChartPointPhase = "actual" | "projected";
 export type ChartPointGrain = "month" | "year";
 export type ChartEventKind = "employer_change" | "lump_sum";
@@ -97,7 +102,7 @@ export type ChartSeriesPayload = {
   events?: ChartSeriesEvent[];
   all_from_year?: number;
   range_default?: ChartRangeDefault;
-};
+} & WithOptionalBlockKey;
 
 export type DashboardPayload =
   | HeadlinePayload

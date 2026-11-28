@@ -1,6 +1,6 @@
 /**
  * Singapore NRIC / FIN (CPF account number equals NRIC).
- * Never log a matched value.
+ * Never log a matched value or parsed embedded JSON.
  */
 
 /** Match after separator normalization (no word-boundary — separators already stripped). */
@@ -30,6 +30,15 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
   "nricnumber",
 ]);
 
+/** Max times we unwrap JSON-looking string values (DoS guard). */
+export const MAX_EMBEDDED_JSON_DEPTH = 5;
+
+/**
+ * Reject JSON-looking strings longer than this (DoS guard; fail closed).
+ * Aligned with BODY_MAX.
+ */
+export const MAX_EMBEDDED_JSON_STRING_LENGTH = 10_000;
+
 /** Normalize object keys for forbidden-name comparison. */
 export function normalizeDashboardIdentifierKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -48,18 +57,49 @@ export function stringContainsSingaporeNricOrFin(value: string): boolean {
   return SINGAPORE_NRIC_OR_FIN.test(normalizeForNricScan(value));
 }
 
+/** True when trimmed value starts with `{` or `[` (JSON object/array shape). */
+export function looksLikeJsonContainer(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return false;
+  const first = trimmed[0];
+  return first === "{" || first === "[";
+}
+
 /**
  * Two-layer NRIC / CPF-account blocking:
  * (a) reject forbidden object keys at any depth (nric, fin, cpf_account, …)
  * (b) regex-scan all string values after separator normalization
  *
  * Also rejects keys whose *name* itself matches the NRIC/FIN pattern.
+ *
+ * String values that look like JSON (trimmed `{` / `[`) are JSON.parse'd and
+ * walked recursively so banned keys inside list-item JSON strings are caught.
+ * Depth / size over the caps → fail closed (treat as hit). Parse failure →
+ * regex-only scan. Never log parsed content.
  */
 export function containsSingaporeNricOrFin(value: unknown): boolean {
   const seen = new WeakSet<object>();
 
-  function walk(node: unknown): boolean {
+  function walk(node: unknown, jsonDepth: number): boolean {
     if (typeof node === "string") {
+      if (looksLikeJsonContainer(node)) {
+        const trimmed = node.trim();
+        // Fail closed: do not silently skip deeper checks past caps.
+        if (jsonDepth >= MAX_EMBEDDED_JSON_DEPTH) {
+          return true;
+        }
+        if (trimmed.length > MAX_EMBEDDED_JSON_STRING_LENGTH) {
+          return true;
+        }
+        try {
+          const parsed: unknown = JSON.parse(trimmed);
+          if (walk(parsed, jsonDepth + 1)) {
+            return true;
+          }
+        } catch {
+          // Parse failed — fall back to regex-only on the raw string.
+        }
+      }
       return stringContainsSingaporeNricOrFin(node);
     }
     if (node === null || typeof node !== "object") {
@@ -72,7 +112,7 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
 
     if (Array.isArray(node)) {
       for (const item of node) {
-        if (walk(item)) return true;
+        if (walk(item, jsonDepth)) return true;
       }
       return false;
     }
@@ -82,10 +122,10 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
     )) {
       if (isForbiddenDashboardIdentifierKey(key)) return true;
       if (stringContainsSingaporeNricOrFin(key)) return true;
-      if (walk(child)) return true;
+      if (walk(child, jsonDepth)) return true;
     }
     return false;
   }
 
-  return walk(value);
+  return walk(value, 0);
 }

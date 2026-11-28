@@ -171,6 +171,8 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/sections' \
 `block_type`：`headline` | `metric` | `progress` | `list` | `text` | `chart_series`。  
 `payload` 按类型校验（接口收明文，入库前加密）。须落在自己拥有的 `section_id` 下。
 
+可选字段 `payload.block_key`：仅允许白名单枚举（见 `src/lib/cpf-block-keys.ts` 的 `CPF_BLOCK_KEYS`），例如 `cpf_conclusion`、`cpf_acc_oa`、`cpf_prog_ma`、`cpf_trend_oa`、`cpf_contrib`、`cpf_todos`、`cpf_ledger`、`cpf_assumptions` 等。未知值或非字符串 → `400`（`invalid payload`）。`block_key` **只存在于加密 payload 内**，无明文列、无 migration。同一 `section_id` 下每个 `block_key` 至多属于一个区块；POST 重复，或 PATCH 改到已被占用的 key → `409`（`conflict`，不回显 payload）。PATCH 保留本块自己的 key 允许。**改 payload 时要把 `block_key` 一起带上，否则原 key 会丢失**（整份 payload 替换，未写的字段不会保留）。
+
 ```bash
 curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
   -H 'Authorization: Bearer '"$SISTER_TOKEN" \
@@ -207,7 +209,8 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
 
 ### PATCH `/api/agent/dashboard/blocks/:id` — 更新区块
 
-仅可改自己名下区块。可传 `block_type` / `sort_order` / `payload`。无 DELETE。
+仅可改自己名下区块。可传 `block_type` / `sort_order` / `payload`。无 DELETE。  
+改 `payload` 时要把 `block_key` 一起带上，否则原 key 会丢失。
 
 ### 所有者读取
 
