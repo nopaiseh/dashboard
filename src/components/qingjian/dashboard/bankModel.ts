@@ -18,6 +18,9 @@ export type BankProgressStatus =
   | "behind"
   | "no_target";
 
+/** 进度 unit 白名单；其它字符串仅作展示数字兜底。 */
+export type BankProgressUnit = "S$" | "月";
+
 export type BankMilestone = {
   t: string;
   amount: number;
@@ -30,7 +33,8 @@ export type BankProgressItem = {
   kind: BankProgressKind;
   value: number;
   target: number;
-  unit: "S$" | "个月";
+  /** 白名单 "S$" | "月"；白名单外只显示数字 */
+  unit: BankProgressUnit | string;
   progress: number;
   monthlyNeeded?: number;
   due: string;

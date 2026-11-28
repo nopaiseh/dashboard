@@ -214,7 +214,11 @@ function parseProgressItem(
   });
 
   const monthlyNeeded = asBankNumber(p.monthly_needed) ?? undefined;
-  const unit = kind === "streak" ? ("个月" as const) : ("S$" as const);
+  // 优先读 payload.unit；缺省时 streak →「月」，其余 → S$
+  const rawUnit = str(p.unit)?.trim();
+  const unit =
+    rawUnit ||
+    (kind === "streak" ? ("月" as const) : ("S$" as const));
 
   return {
     key,

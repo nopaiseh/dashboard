@@ -13,6 +13,7 @@ import {
   computeTrendYDomain,
   formatTrendValueLabel,
 } from "@/components/qingjian/dashboard/BankTrend";
+import { BankGoals } from "@/components/qingjian/dashboard/BankGoals";
 import {
   BANK_EMPTY,
   BANK_NO_COMPARE,
@@ -22,9 +23,11 @@ import {
   bankProgressFill,
   bankStatusChipKind,
   formatBankCompare,
+  formatBankMilestoneLabel,
   formatBankMoney,
   formatBankOvershootLabel,
   formatBankProgressPct,
+  formatBankProgressValue,
   isBankNetNegative,
   isBankProgressOver,
   splitBankConclusionText,
@@ -114,6 +117,44 @@ describe("bank display rules (bankFormat)", () => {
     expect(urgent).toBe("优先补足总闸户");
     const parts = splitBankConclusionTitle("净额 −S$5,000：不足");
     expect(parts.some((p) => p.danger && p.text.includes("5,000"))).toBe(true);
+  });
+
+  it("formatBankProgressValue: S$ 保持金额格式", () => {
+    expect(formatBankProgressValue(1000, "S$")).toBe("S$1,000.00");
+    expect(formatBankProgressValue(0, "S$")).toBe("S$0.00");
+    expect(formatBankProgressValue(-500, "S$")).toBe("−S$500.00");
+    expect(formatBankProgressValue(null, "S$")).toBe(BANK_EMPTY);
+  });
+
+  it("formatBankProgressValue: 月 →「N 个月」；主数值组合", () => {
+    expect(formatBankProgressValue(0, "月")).toBe("0 个月");
+    expect(formatBankProgressValue(12, "月")).toBe("12 个月");
+    expect(formatBankProgressValue(1.6, "月")).toBe("2 个月");
+    expect(
+      `${formatBankProgressValue(0, "月")} / ${formatBankProgressValue(12, "月")}`,
+    ).toBe("0 个月 / 12 个月");
+  });
+
+  it("formatBankMilestoneLabel: 月不用 S$，S$ 保持金额", () => {
+    expect(formatBankMilestoneLabel("2027-12", 12, "月")).toBe(
+      "2027-12 · 12 个月",
+    );
+    expect(formatBankMilestoneLabel("2027-06", 4000, "S$")).toBe(
+      "2027-06 · S$4,000.00",
+    );
+    expect(formatBankMilestoneLabel("2027-12", 12, "S$")).not.toBe(
+      "2027-12 · 12 个月",
+    );
+  });
+
+  it("formatBankProgressValue: 未知 unit 只显示数字", () => {
+    expect(formatBankProgressValue(12, "USD")).toBe("12");
+    expect(formatBankProgressValue(12, "个月")).toBe("12");
+    expect(formatBankProgressValue(1000.5, "xyz")).toBe("1,000.50");
+    expect(formatBankProgressValue(12, undefined)).toBe("12");
+    expect(formatBankMilestoneLabel("2027-12", 12, "pts")).toBe(
+      "2027-12 · 12",
+    );
   });
 });
 
@@ -286,6 +327,54 @@ describe("parseBankModel (FAKE blocks)", () => {
     expect(covered).toHaveLength(28);
     expect(covered).toEqual([...BANK_BLOCK_KEYS].sort());
   });
+
+  it("parses progress unit from payload (月 / S$); streak 缺省为月", () => {
+    const dash = buildSampleBankDashboard();
+    const model = parseBankModel(dash.sections[0]!);
+    const hsbc = model.progress.find((p) => p.accountKey === "hsbc");
+    expect(hsbc?.unit).toBe("月");
+    expect(hsbc?.value).toBe(1);
+    expect(hsbc?.target).toBe(6);
+
+    const hub = model.progress.find((p) => p.accountKey === "ocbc_salary");
+    expect(hub?.unit).toBe("S$");
+
+    const streakNoUnit: DashboardBlockPublic = {
+      id: "prog-streak",
+      section_id: "s",
+      block_type: "progress",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      payload: {
+        block_key: "bank_prog_hsbc",
+        title: "FAKE 连续全额",
+        account_key: "hsbc",
+        kind: "streak",
+        value: 0,
+        target: 12,
+        progress: 0,
+        due: "2027-12",
+        status: "on_track",
+        status_text: "FAKE",
+        milestones: [{ t: "2027-12", amount: 12 }],
+        label: "FAKE",
+        note: "",
+        // unit intentionally omitted → streak 缺省「月」
+      },
+    };
+    const parsed = parseBankModel({
+      id: "s",
+      category: "bank",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      blocks: [streakNoUnit],
+    });
+    expect(parsed.progress[0]?.unit).toBe("月");
+  });
 });
 
 describe("bank trend Y domain", () => {
@@ -424,5 +513,18 @@ describe("bank UI render (FAKE)", () => {
       createElement(BankProgressBar, { progress: undefined }),
     );
     expect(missing).toContain(`aria-valuetext="${BANK_EMPTY}"`);
+  });
+
+  it("goals: 月 unit 主数值与里程碑；aria-valuetext 与可见文字一致", () => {
+    const model = parseBankModel(buildSampleBankDashboard().sections[0]!);
+    const html = renderToStaticMarkup(
+      createElement(BankGoals, { model, sampleMode: true }),
+    );
+    expect(html).toContain("1 个月 / 6 个月");
+    expect(html).toContain("2027-10 · 6 个月");
+    expect(html).not.toContain("2027-10 S$");
+    expect(html).toContain('aria-valuetext="1 个月 / 6 个月"');
+    // S$ 进度里程碑仍为金额
+    expect(html).toContain("2027-12 · S$10,000.00");
   });
 });

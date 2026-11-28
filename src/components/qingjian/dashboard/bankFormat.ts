@@ -99,6 +99,41 @@ export function formatBankOvershootLabel(progress: unknown): string | null {
 }
 
 /**
+ * 进度主数值 / 里程碑金额共用：按 unit 格式化。
+ * - "S$" → 现有金额格式（S$1,000.00）
+ * - "月" →「N 个月」
+ * - 白名单外 → 只显示数字（页面不崩）
+ */
+export function formatBankProgressValue(
+  value: unknown,
+  unit: string | undefined,
+  fractionDigits = 2,
+): string {
+  const n = asBankNumber(value);
+  if (n === null) return BANK_EMPTY;
+  if (unit === "S$") return formatBankMoney(n, fractionDigits);
+  if (unit === "月") return `${Math.round(n)} 个月`;
+  // 未知 unit：纯数字兜底
+  const rounded = Math.round(n * 100) / 100;
+  const digits = Number.isInteger(rounded) ? 0 : 2;
+  const abs = Math.abs(rounded).toLocaleString("en-SG", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return rounded < 0 ? `−${abs}` : abs;
+}
+
+/** 里程碑标签：`2027-12 · 12 个月` / `2027-06 · S$4,000.00`。 */
+export function formatBankMilestoneLabel(
+  t: string,
+  amount: unknown,
+  unit: string | undefined,
+  fractionDigits = 2,
+): string {
+  return `${t} · ${formatBankProgressValue(amount, unit, fractionDigits)}`;
+}
+
+/**
  * 进度条填充分段：within ≤100% 的轨道占比；over 为超出视觉带（相对 100% 轨道，封顶 40%）。
  */
 export function bankProgressFill(progress: unknown): {
