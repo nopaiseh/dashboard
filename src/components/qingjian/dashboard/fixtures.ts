@@ -60,7 +60,7 @@ export const SAMPLE_DASHBOARD: DashboardReadResult = {
   ],
 };
 
-/** 仅有 c2 布局标记、无业务字段 — 用于正式路径空状态测试。 */
+/** 公积金分区仅占位 text（无金额字段）— 正式路径空状态测试。 */
 export const C2_MARKER_ONLY_DASHBOARD: DashboardReadResult = {
   headline: "",
   sections: [
@@ -70,15 +70,11 @@ export const C2_MARKER_ONLY_DASHBOARD: DashboardReadResult = {
       sort_order: 0,
       blocks: [
         {
-          id: "blk-c2-only",
+          id: "blk-placeholder",
           section_id: "sec-cpf-empty",
           block_type: "text",
           sort_order: 0,
-          payload: {
-            role: "c2_layout",
-            title: "",
-            text: "",
-          },
+          payload: { text: "（分区已建，待写入）" },
           agent_id: AGENT,
           created_at: NOW,
           updated_at: NOW,

@@ -1,5 +1,5 @@
 /**
- * 仅夹具 / 测试：把 c2SampleData 编成可被 parseCpfModel 解析的 blocks。
+ * 仅夹具 / 测试：用 PR #24 validation 允许的字段编成 blocks。
  * 生产代码不得引用本文件。
  */
 import type { DashboardBlockPublic } from "@/lib/dashboard/types";
@@ -19,7 +19,6 @@ import {
   C2_MONTHS,
   C2_OA_SA,
   C2_PROJ,
-  C2_RATES,
   C2_TARGETS,
   C2_TODOS,
   C2_TOTAL,
@@ -49,169 +48,213 @@ function blk(
   };
 }
 
-function points12() {
-  const actual = C2_MONTHS.map((m) => ({
-    t: m.t,
-    balances: m.balances,
-    phase: "actual" as const,
-    grain: "month" as const,
-  }));
-  const projected = C2_PROJ.filter((m) => m.t <= "2027-04").map((m) => ({
-    t: m.t,
-    balances: m.balances,
-    phase: "projected" as const,
-    grain: "month" as const,
-  }));
-  return [...actual, ...projected];
-}
-
-function pointsAll() {
-  const years = Object.entries(C2_YEAR_END).map(([y, balances]) => ({
+function seriesFor(
+  key: "OA" | "SA" | "MA",
+  includeProjected: boolean,
+): Array<{
+  t: string;
+  v: number;
+  phase: "actual" | "projected";
+  grain: "month" | "year";
+}> {
+  const years = Object.entries(C2_YEAR_END).map(([y, bal]) => ({
     t: y,
-    balances,
+    v: bal[key],
     phase: "actual" as const,
     grain: "year" as const,
   }));
-  const months2026 = C2_MONTHS.filter((m) => m.t.startsWith("2026")).map(
-    (m) => ({
-      t: m.t,
-      balances: m.balances,
-      phase: "actual" as const,
-      grain: "month" as const,
-    }),
-  );
-  const projected = C2_PROJ.map((m) => ({
+  const months = C2_MONTHS.filter((m) => m.t.startsWith("2026")).map((m) => ({
     t: m.t,
-    balances: m.balances,
-    phase: "projected" as const,
+    v: m.balances[key],
+    phase: "actual" as const,
     grain: "month" as const,
   }));
-  return [...years, ...months2026, ...projected];
+  // 近 12 个月里的 2025-11/12
+  const m2025 = C2_MONTHS.filter((m) => m.t.startsWith("2025")).map((m) => ({
+    t: m.t,
+    v: m.balances[key],
+    phase: "actual" as const,
+    grain: "month" as const,
+  }));
+  const projected = includeProjected
+    ? C2_PROJ.map((m) => ({
+        t: m.t,
+        v: m.balances[key],
+        phase: "projected" as const,
+        grain: "month" as const,
+      }))
+    : [];
+  return [...years, ...m2025, ...months, ...projected];
 }
 
-/** C2 示例分区的全部 blocks（含 c2_layout 标记）。 */
+/** C2 示例分区 blocks（字段均在 #24 schema 内）。 */
 export function buildSampleCpfBlocks(): DashboardBlockPublic[] {
+  const events = [
+    ...C2_EMPLOYER_CHANGES.map((e) => ({
+      t: e.t.slice(0, 7),
+      kind: "employer_change" as const,
+      label: e.label,
+    })),
+    ...C2_TRANSFERS.map((t) => ({
+      t: String(t.year),
+      kind: "lump_sum" as const,
+      label: t.short,
+    })),
+  ];
+
   return [
-    blk("blk-c2-layout", "text", 0, {
-      role: "c2_layout",
+    blk("blk-cpf-conclusion", "text", 0, {
       title: C2_CONCLUSION.title,
       text: C2_CONCLUSION.body,
-      reached_frs: C2_CONCLUSION.reachedFrs,
     }),
-    blk("blk-cpf-accounts", "metric", 1, {
-      role: "cpf_accounts",
-      balances: C2_BAL,
-      chg_m: C2_CHG_M,
-      chg_y: C2_CHG_Y,
-      as_of: "截至结算单 2026-10-31",
-      month_contrib_total: C2_CONTRIB.total,
-      month_interest: 0,
+    blk("blk-metric-oa", "metric", 1, {
+      title: "普通户口 OA",
+      value: C2_BAL.OA,
+      unit: "S$",
+      delta_mom: C2_CHG_M.OA,
+      ytd: C2_CHG_Y.OA,
+      label: "截至结算单 2026-10-31",
     }),
-    blk("blk-cpf-progress", "progress", 2, {
-      role: "cpf_progress",
-      title: "目标进度",
-      progress: C2_OA_SA / C2_TARGETS.ERS,
-      ma: C2_BAL.MA,
-      bhs: C2_TARGETS.BHS,
-      oa_sa: C2_OA_SA,
-      brs: C2_TARGETS.BRS,
-      frs: C2_TARGETS.FRS,
-      ers: C2_TARGETS.ERS,
-      exceed_frs: C2_EXCEED_FRS,
-      hit_bhs: C2_HIT.BHS,
-      hit_brs: C2_HIT.BRS,
-      hit_frs: C2_HIT.FRS,
-      hit_ers: C2_HIT.ERS,
-      footnote: `目标值为示例：BHS S$ ${C2_TARGETS.BHS.toLocaleString("en-SG")}、BRS S$ ${C2_TARGETS.BRS.toLocaleString("en-SG")}、FRS S$ ${C2_TARGETS.FRS.toLocaleString("en-SG")}、ERS S$ ${C2_TARGETS.ERS.toLocaleString("en-SG")}。越过的档位按实际比例显示（不卡在 100%），超出部分用斜纹标出，并指向下一档。达标年月为估算，目标按当前值计，不含每年上调。`,
+    blk("blk-metric-sa", "metric", 2, {
+      title: "特别户口 SA",
+      value: C2_BAL.SA,
+      unit: "S$",
+      delta_mom: C2_CHG_M.SA,
+      ytd: C2_CHG_Y.SA,
+      label: "截至结算单 2026-10-31",
     }),
-    blk("blk-cpf-trend", "chart_series", 3, {
-      role: "cpf_trend",
-      points_12m: points12(),
-      points_all: pointsAll(),
-      events: [
-        ...C2_EMPLOYER_CHANGES.map((e) => ({
-          t: e.t,
-          kind: "employer_change",
-          label: e.label,
-        })),
-        ...C2_TRANSFERS.map((t) => ({
-          t: String(t.year),
-          kind: "lump_sum",
-          label: t.label,
-          short: t.short,
-        })),
+    blk("blk-metric-ma", "metric", 3, {
+      title: "保健储蓄 MA",
+      value: C2_BAL.MA,
+      unit: "S$",
+      delta_mom: C2_CHG_M.MA,
+      ytd: C2_CHG_Y.MA,
+      label: "截至结算单 2026-10-31",
+    }),
+    blk("blk-metric-total", "metric", 4, {
+      title: "合计 OA+SA+MA",
+      value: C2_TOTAL,
+      unit: "S$",
+      delta_mom: C2_CONTRIB.total,
+      ytd: C2_CHG_Y.OA + C2_CHG_Y.SA + C2_CHG_Y.MA,
+      label: "截至结算单 2026-10-31",
+    }),
+    blk("blk-progress-ma", "progress", 5, {
+      title: "MA 对 BHS",
+      progress: Math.min(100, (C2_BAL.MA / C2_TARGETS.BHS) * 100),
+      value: C2_BAL.MA,
+      unit: "S$",
+      tiers: [{ key: "BHS", label: "BHS", amount: C2_TARGETS.BHS }],
+      next_tier: "BHS",
+      next_tier_year: 2027,
+      status: "2027-01",
+    }),
+    blk("blk-progress-oasa", "progress", 6, {
+      title: "SA+OA 对 BRS / FRS / ERS",
+      progress: Math.min(100, (C2_OA_SA / C2_TARGETS.ERS) * 100),
+      value: C2_OA_SA,
+      unit: "S$",
+      tiers: [
+        { key: "BRS", label: "BRS", amount: C2_TARGETS.BRS },
+        { key: "FRS", label: "FRS", amount: C2_TARGETS.FRS },
+        { key: "ERS", label: "ERS", amount: C2_TARGETS.ERS },
       ],
-      guides: [
-        {
-          key: "FRS",
-          amount: C2_TARGETS.FRS,
-          label: `FRS 已达 · ${C2_HIT.FRS}`,
-        },
-        {
-          key: "BRS",
-          amount: C2_TARGETS.BRS,
-          label: `BRS 已达 · ${C2_HIT.BRS}`,
-        },
-      ],
-      jan_interest_at: "2026-01",
-      jan_interest_total: C2_INT_TOTAL,
+      reached_tier: "FRS",
+      next_tier: "ERS",
+      next_tier_year: 2030,
+      overshoot: C2_EXCEED_FRS,
+      status: "2030-07",
+    }),
+    blk("blk-chart-oa", "chart_series", 7, {
+      title: "OA",
+      series: seriesFor("OA", true),
+      events,
       range_default: "12m",
-      subtitle_12m: "2025 年 11 月 – 2026 年 10 月，均为月底数",
-      subtitle_all: "2016–2025 年底数 · 2026 起月底数 · 虚线为推算",
+      all_from_year: 2016,
     }),
-    blk("blk-cpf-contrib", "metric", 4, {
-      role: "cpf_contrib",
-      ...C2_CONTRIB,
-      as_of_month: C2_CONTRIB.asOfMonth,
-      annual_limit: C2_CONTRIB.annualLimit,
-      paid_ytd: C2_CONTRIB.paidYtd,
-      limit_left: C2_CONTRIB.limitLeft,
+    blk("blk-chart-sa", "chart_series", 8, {
+      title: "SA",
+      series: seriesFor("SA", true),
+      range_default: "12m",
+      all_from_year: 2016,
     }),
-    blk("blk-cpf-annual", "text", 5, {
-      role: "cpf_annual",
-      year_label: "2026 年 1 月入账的利息 （2025 年度）",
-      rates: {
-        OA: `${(C2_RATES.OA * 100).toFixed(1)}%`,
-        SA: "4.0% + 额外 1%",
-        MA: "4.0%",
-      },
-      interest: C2_INT_JAN,
-      interest_total: C2_INT_TOTAL,
-      note: "每年 1 月入账一次，下次 2027 年 1 月。头 S$ 60,000 的额外 1% 计入 SA。利息栏通常只显示合计；示例里 2020 年在「全部」走势图的悬停提示中拆成基本利息 + 额外利息。",
-      rstu_empty: true,
-      rstu_title: "本年未填补",
-      rstu_body: "今年还没有自愿填补。上限 S$ 8,000，税务减免尚未使用。",
-      rstu_extra: "12-31 截止。应急金和信用卡还清优先。",
-      rstu_due_chip: "12-31 截止",
+    blk("blk-chart-ma", "chart_series", 9, {
+      title: "MA",
+      series: seriesFor("MA", true),
+      range_default: "12m",
+      all_from_year: 2016,
     }),
-    blk("blk-cpf-todos", "list", 6, {
-      role: "cpf_todos",
-      items: C2_TODOS,
+    blk("blk-contrib", "list", 10, {
+      title: "本月缴存",
+      items: [
+        JSON.stringify({
+          OA: C2_CONTRIB.OA,
+          SA: C2_CONTRIB.SA,
+          MA: C2_CONTRIB.MA,
+          employer: C2_CONTRIB.employer,
+          self: C2_CONTRIB.self,
+          total: C2_CONTRIB.total,
+          annual_limit: C2_CONTRIB.annualLimit,
+          paid_ytd: C2_CONTRIB.paidYtd,
+          limit_left: C2_CONTRIB.limitLeft,
+          as_of_month: C2_CONTRIB.asOfMonth,
+          note: C2_CONTRIB.note,
+        }),
+      ],
     }),
-    blk("blk-cpf-ledger", "list", 7, {
-      role: "cpf_ledger",
-      rows: C2_LEDGER.map((r) => ({
-        date: r.date,
-        kind: r.kind,
-        type_label: r.typeLabel,
-        note: r.note,
-        OA: r.OA,
-        SA: r.SA,
-        MA: r.MA,
-        total: r.total,
-      })),
-      summary: "缴存 +17,760 · 保险扣款 −500 · 提取 0",
-      empty_withdrawals:
+    blk("blk-int-oa", "metric", 11, {
+      title: "利息 OA",
+      value: C2_INT_JAN.OA,
+      unit: "S$",
+    }),
+    blk("blk-int-sa", "metric", 12, {
+      title: "利息 SA",
+      value: C2_INT_JAN.SA,
+      unit: "S$",
+    }),
+    blk("blk-int-ma", "metric", 13, {
+      title: "利息 MA",
+      value: C2_INT_JAN.MA,
+      unit: "S$",
+    }),
+    blk("blk-int-total", "metric", 14, {
+      title: "利息合计",
+      value: C2_INT_TOTAL,
+      unit: "S$",
+    }),
+    blk("blk-rstu", "text", 15, {
+      title: "RSTU 自愿填补",
+      text: "今年还没有自愿填补。上限 S$ 8,000，税务减免尚未使用。\n12-31 截止。应急金和信用卡还清优先。",
+      empty_text: "本年未填补",
+    }),
+    blk("blk-todos", "list", 16, {
+      title: "相关待办",
+      items: C2_TODOS.map((t) => JSON.stringify(t)),
+    }),
+    blk("blk-ledger", "list", 17, {
+      title: "缴存和提取流水",
+      empty_text:
         "近 6 个月没有买房、医疗就诊等提取。MA 支出仅为 MediShield Life 与 CareShield Life 保费。",
+      items: C2_LEDGER.map((r) =>
+        JSON.stringify({
+          date: r.date,
+          kind: r.kind,
+          type_label: r.typeLabel,
+          note: r.note,
+          OA: r.OA,
+          SA: r.SA,
+          MA: r.MA,
+          total: r.total,
+        }),
+      ),
     }),
-    blk("blk-cpf-assumptions", "text", 8, {
-      role: "cpf_assumptions",
-      contrib_line: C2_ASSUMPTIONS.contribLine,
-      contrib_detail: C2_ASSUMPTIONS.contribDetail,
-      rate_line: C2_ASSUMPTIONS.rateLine,
-      rate_extra: C2_ASSUMPTIONS.rateExtra,
-      bullets: [...C2_ASSUMPTIONS.bullets],
-      byline: C2_ASSUMPTIONS.byline,
+    blk("blk-assumptions", "text", 18, {
+      title: "估算说明",
+      text: [
+        C2_ASSUMPTIONS.contribLine,
+        C2_ASSUMPTIONS.rateLine,
+        ...C2_ASSUMPTIONS.bullets,
+      ].join("\n"),
     }),
   ];
 }

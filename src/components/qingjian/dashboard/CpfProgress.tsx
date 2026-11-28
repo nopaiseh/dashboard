@@ -36,6 +36,7 @@ export function CpfProgress({
     exceedFrs,
     hitBhs,
     hitBrs,
+    hitFrs,
     hitErs,
     footnote,
   } = data;
@@ -142,8 +143,10 @@ export function CpfProgress({
                   BRS {formatMoney(BRS)}（{Math.round((oaSa / BRS) * 100)}%）
                 </span>
                 <b>
-                  {hitBrs ? (
-                    <span className={"chip chipOver"}>已达 · {hitBrs}</span>
+                  {oaSa >= BRS ? (
+                    <span className={"chip chipOver"}>
+                      已达{hitBrs ? ` · ${hitBrs}` : ""}
+                    </span>
                   ) : null}
                 </b>
               </div>
@@ -155,6 +158,7 @@ export function CpfProgress({
                   {oaSa >= FRS ? (
                     <span className={"chip chipOver"}>
                       已达，超出 {formatMoney(exceedFrs)}
+                      {hitFrs ? ` · ${hitFrs}` : ""}
                     </span>
                   ) : null}
                 </b>

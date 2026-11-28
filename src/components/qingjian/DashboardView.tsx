@@ -1,7 +1,6 @@
 import type { DashboardReadResult } from "@/lib/dashboard/types";
 import { BlockRenderer } from "./dashboard/BlockRenderer";
 import { CpfSection } from "./dashboard/CpfSection";
-import { sectionUsesC2Layout } from "./dashboard/cpfLayout";
 import { parseCpfModel } from "./dashboard/parseCpfModel";
 import {
   PAGE_EMPTY_TEXT,
@@ -40,11 +39,8 @@ export function DashboardView({
         </div>
       ) : (
         sections.map((section) => {
-          if (
-            isPinnedCategory(section.category) &&
-            sectionUsesC2Layout(section)
-          ) {
-            // 正式与夹具同一路径：只解析分区 blocks，绝不回落 c2 示例数字。
+          // 公积金分区一律走 C2 九段（#24 schema 无 role/c2_layout 字段）。
+          if (isPinnedCategory(section.category)) {
             const model = parseCpfModel(section, data.headline);
             return (
               <CpfSection

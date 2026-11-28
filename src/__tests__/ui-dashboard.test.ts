@@ -5,11 +5,13 @@ import { DashboardView } from "@/components/qingjian/DashboardView";
 import { CpfProgress } from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
 import { StackedTrendChart } from "@/components/qingjian/dashboard/StackedTrendChart";
-import { parseCpfModel } from "@/components/qingjian/dashboard/parseCpfModel";
+import {
+  parseCpfModel,
+  reachedFrsFromTier,
+} from "@/components/qingjian/dashboard/parseCpfModel";
 import {
   C2_BAL,
   C2_EXCEED_FRS,
-  C2_HIT,
   C2_TOTAL,
 } from "@/components/qingjian/dashboard/fixtures/c2SampleData";
 import {
@@ -23,6 +25,7 @@ import {
 } from "@/components/qingjian/dashboard/sortSections";
 import { PROJECTION_NOTE } from "@/components/qingjian/dashboard/labels";
 import { CPF_COLORS } from "@/components/qingjian/dashboard/cpfTheme";
+import type { DashboardSectionPublic } from "@/lib/dashboard/types";
 
 const SAMPLE_AMOUNTS = [
   C2_BAL.OA.toLocaleString("en-SG"),
@@ -45,6 +48,96 @@ describe("dashboard section ordering", () => {
     expect(isDashboardEmpty("", [])).toBe(true);
     expect(isDashboardEmpty("有头条", [])).toBe(false);
     expect(isDashboardEmpty("", SAMPLE_DASHBOARD.sections)).toBe(false);
+  });
+});
+
+describe("reached_tier → 已达 FRS", () => {
+  it("treats FRS and ERS as reached FRS; BRS and empty as not", () => {
+    expect(reachedFrsFromTier("FRS")).toBe(true);
+    expect(reachedFrsFromTier("ERS")).toBe(true);
+    expect(reachedFrsFromTier("frs")).toBe(true);
+    expect(reachedFrsFromTier("BRS")).toBe(false);
+    expect(reachedFrsFromTier(undefined)).toBe(false);
+    expect(reachedFrsFromTier("")).toBe(false);
+  });
+
+  it("parseCpfModel sets reachedFrs from progress.reached_tier only", () => {
+    const base = {
+      id: "sec",
+      category: "cpf",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    const withFrs: DashboardSectionPublic = {
+      ...base,
+      blocks: [
+        {
+          id: "p1",
+          section_id: "sec",
+          block_type: "progress",
+          sort_order: 0,
+          agent_id: null,
+          created_at: base.created_at,
+          updated_at: base.updated_at,
+          payload: {
+            title: "SA+OA 对 BRS / FRS / ERS",
+            progress: 60,
+            value: 262_962,
+            tiers: [
+              { key: "BRS", label: "BRS", amount: 110_000 },
+              { key: "FRS", label: "FRS", amount: 220_000 },
+              { key: "ERS", label: "ERS", amount: 440_000 },
+            ],
+            reached_tier: "FRS",
+            next_tier: "ERS",
+            next_tier_year: 2030,
+            overshoot: 42_962,
+          },
+        },
+        {
+          id: "p2",
+          section_id: "sec",
+          block_type: "progress",
+          sort_order: 1,
+          agent_id: null,
+          created_at: base.created_at,
+          updated_at: base.updated_at,
+          payload: {
+            title: "MA 对 BHS",
+            progress: 97,
+            value: 72_613,
+            tiers: [{ key: "BHS", label: "BHS", amount: 75_000 }],
+          },
+        },
+        {
+          id: "t1",
+          section_id: "sec",
+          block_type: "text",
+          sort_order: 2,
+          agent_id: null,
+          created_at: base.created_at,
+          updated_at: base.updated_at,
+          payload: { title: "结论", text: "说明" },
+        },
+      ],
+    };
+    const model = parseCpfModel(withFrs, "");
+    expect(model.conclusion?.reachedFrs).toBe(true);
+
+    const withBrsOnly = {
+      ...withFrs,
+      blocks: withFrs.blocks.map((b) =>
+        b.id === "p1"
+          ? {
+              ...b,
+              payload: { ...b.payload, reached_tier: "BRS", overshoot: 0 },
+            }
+          : b,
+      ),
+    };
+    expect(parseCpfModel(withBrsOnly, "").conclusion?.reachedFrs).toBe(false);
   });
 });
 
@@ -72,8 +165,9 @@ describe("C2 CPF section", () => {
     expect(html).toContain("估算说明");
     expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
     expect(html).toContain(String(C2_EXCEED_FRS.toLocaleString("en-SG")));
-    expect(html).toContain(C2_HIT.ERS);
+    expect(html).toContain("2030 年");
     expect(html).toContain("已达 FRS");
+    expect(model.conclusion?.reachedFrs).toBe(true);
   });
 
   it("progress uses thin SVG bar with aligned tier labels and overshoot hatch", () => {
@@ -128,12 +222,11 @@ describe("dashboard UI rendering", () => {
       }),
     );
     expect(html).not.toContain("此页所有数字、日期均为设计稿占位");
-    // 同一夹具 blocks 会解析出数字；横幅不出现。正式空数据见下例。
     expect(html).toContain("普通户口 OA");
     expect(html).not.toContain('class="banner"');
   });
 
-  it("production c2 marker with empty/missing fields shows empties and no sample amounts", () => {
+  it("production cpf section with empty/missing fields shows empties and no sample amounts", () => {
     const html = renderToStaticMarkup(
       createElement(DashboardView, {
         data: C2_MARKER_ONLY_DASHBOARD,

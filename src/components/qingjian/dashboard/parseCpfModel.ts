@@ -1,6 +1,7 @@
 /**
  * 从真实 dashboard section blocks 解析 C2 视图模型。
- * 不引用任何示例数字模块；缺字段 → 对应段为 null（空状态）。
+ * 字段名对齐 PR #24 `src/lib/validation.ts`（.strict() payload）。
+ * 不引用示例数字；缺字段 → 对应段为 null。
  */
 import type {
   DashboardBlockPublic,
@@ -10,6 +11,7 @@ import { isSensitivePayloadKey } from "./format";
 import {
   emptyCpfViewModel,
   type AccBalances,
+  type AccKey,
   type CpfAnnualData,
   type CpfAssumptionsData,
   type CpfAccountsData,
@@ -23,6 +25,13 @@ import {
   type CpfTrendPoint,
   type CpfViewModel,
 } from "./cpfModel";
+
+/** 退休档相对 FRS 的高低（用于「已达 FRS」）。 */
+const TIER_RANK: Record<string, number> = {
+  BRS: 1,
+  FRS: 2,
+  ERS: 3,
+};
 
 function clean(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -45,145 +54,311 @@ function bool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
 
-function roleOf(block: DashboardBlockPublic): string {
-  const p = clean(block.payload);
-  return (str(p.role) ?? str(p.layout) ?? "").trim();
+/** `reached_tier` 为 FRS 或更高（ERS）→ 已达 FRS。 */
+export function reachedFrsFromTier(reachedTier: string | undefined): boolean {
+  if (!reachedTier) return false;
+  const rank = TIER_RANK[reachedTier.trim().toUpperCase()];
+  return rank !== undefined && rank >= TIER_RANK.FRS;
 }
 
-function findByRole(
+function blocksOfType(
   blocks: DashboardBlockPublic[],
-  roles: string[],
-): DashboardBlockPublic | undefined {
-  const set = new Set(roles);
-  return blocks.find((b) => set.has(roleOf(b)));
+  type: DashboardBlockPublic["block_type"],
+): DashboardBlockPublic[] {
+  return blocks.filter((b) => b.block_type === type);
 }
 
-function parseBalances(raw: unknown): AccBalances | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const OA = num(r.OA) ?? num(r.oa);
-  const SA = num(r.SA) ?? num(r.sa);
-  const MA = num(r.MA) ?? num(r.ma);
-  if (OA === undefined || SA === undefined || MA === undefined) return null;
-  return { OA, SA, MA };
+function titleOf(b: DashboardBlockPublic): string {
+  return str(clean(b.payload).title)?.trim() ?? "";
+}
+
+function matchTitle(title: string, ...needles: string[]): boolean {
+  const t = title.toLowerCase();
+  return needles.some((n) => t.includes(n.toLowerCase()));
 }
 
 function parseConclusion(
   blocks: DashboardBlockPublic[],
   pageHeadline: string,
+  reachedFrs: boolean,
 ): CpfConclusionData | null {
-  const b =
-    findByRole(blocks, ["c2_layout", "c2", "cpf_conclusion"]) ??
-    blocks.find((x) => x.block_type === "headline");
-  if (!b) {
-    const title = pageHeadline.trim();
-    return title ? { title, body: "", reachedFrs: false } : null;
+  const headlines = blocksOfType(blocks, "headline");
+  const texts = blocksOfType(blocks, "text").filter(
+    (b) =>
+      !matchTitle(titleOf(b), "估算说明", "RSTU", "本月缴存", "利息"),
+  );
+
+  let title = "";
+  let body = "";
+
+  if (headlines[0]) {
+    title = str(clean(headlines[0].payload).text)?.trim() ?? "";
   }
-  const p = clean(b.payload);
-  const title =
-    str(p.title)?.trim() ||
-    (b.block_type === "headline" ? str(p.text)?.trim() : undefined) ||
-    pageHeadline.trim();
+  if (!title && texts[0]) {
+    const p = clean(texts[0].payload);
+    title = str(p.title)?.trim() || pageHeadline.trim();
+    body = str(p.text)?.trim() ?? "";
+  }
+  if (!title) title = pageHeadline.trim();
+  if (!title && !body) return null;
   if (!title) return null;
-  const body =
-    b.block_type === "headline"
-      ? ""
-      : (str(p.text)?.trim() ?? str(p.body)?.trim() ?? "");
-  const reachedFrs =
-    bool(p.reached_frs) ??
-    bool(p.reachedFrs) ??
-    (str(p.status) === "reached_frs" || str(p.status) === "frs");
-  return { title, body, reachedFrs: reachedFrs === true };
+  return { title, body, reachedFrs };
 }
 
 function parseAccounts(blocks: DashboardBlockPublic[]): CpfAccountsData | null {
-  const b = findByRole(blocks, ["cpf_accounts", "accounts"]);
-  if (!b) return null;
-  const p = clean(b.payload);
-  const balances = parseBalances(p.balances ?? p);
-  if (!balances) return null;
-  const zero = { OA: 0, SA: 0, MA: 0 };
+  const metrics = blocksOfType(blocks, "metric");
+  if (metrics.length === 0) return null;
+
+  const pick = (...needles: string[]) =>
+    metrics.find((b) => matchTitle(titleOf(b), ...needles));
+
+  const oa = pick("普通户口", " OA", "OA");
+  const sa = pick("特别户口", " SA", "SA");
+  const ma = pick("保健储蓄", " MA", "MA");
+  const totalBlk = pick("合计", "总额", "total");
+
+  const readAcc = (
+    b: DashboardBlockPublic | undefined,
+  ): { value: number; mom: number; ytd: number } | null => {
+    if (!b) return null;
+    const p = clean(b.payload);
+    const value = num(p.value);
+    if (value === undefined) return null;
+    return {
+      value,
+      mom: num(p.delta_mom) ?? 0,
+      ytd: num(p.ytd) ?? 0,
+    };
+  };
+
+  const oaA = readAcc(oa);
+  const saA = readAcc(sa);
+  const maA = readAcc(ma);
+  if (!oaA || !saA || !maA) return null;
+
+  const balances: AccBalances = {
+    OA: oaA.value,
+    SA: saA.value,
+    MA: maA.value,
+  };
+  const chgM: AccBalances = { OA: oaA.mom, SA: saA.mom, MA: maA.mom };
+  const chgY: AccBalances = { OA: oaA.ytd, SA: saA.ytd, MA: maA.ytd };
+
+  const asOf =
+    str(clean(oa?.payload ?? {}).label)?.trim() ||
+    str(clean(totalBlk?.payload ?? {}).label)?.trim() ||
+    "";
+
+  const totalMetric = readAcc(totalBlk);
+
   return {
     balances,
-    chgM: parseBalances(p.chg_m ?? p.chgM) ?? zero,
-    chgY: parseBalances(p.chg_y ?? p.chgY) ?? zero,
-    asOf: str(p.as_of)?.trim() || str(p.asOf)?.trim() || "",
-    monthContribTotal: num(p.month_contrib_total) ?? num(p.monthContribTotal),
-    monthInterest: num(p.month_interest) ?? num(p.monthInterest),
+    chgM,
+    chgY,
+    asOf,
+    monthContribTotal: totalMetric?.mom,
+    monthInterest: undefined,
   };
 }
 
-function parseProgress(blocks: DashboardBlockPublic[]): CpfProgressData | null {
-  const b = findByRole(blocks, ["cpf_progress", "progress_targets"]);
-  if (!b) return null;
-  const p = clean(b.payload);
-  const ma = num(p.ma) ?? num(p.MA);
-  const bhs = num(p.bhs) ?? num(p.BHS);
-  const oaSa = num(p.oa_sa) ?? num(p.oaSa) ?? num(p.value);
-  const brs = num(p.brs) ?? num(p.BRS);
-  const frs = num(p.frs) ?? num(p.FRS);
-  const ers = num(p.ers) ?? num(p.ERS);
+function tierAmount(
+  tiers: Array<{ key: string; amount: number }>,
+  key: string,
+): number | undefined {
+  return tiers.find((t) => t.key.toUpperCase() === key.toUpperCase())?.amount;
+}
+
+function parseTiers(
+  raw: unknown,
+): Array<{ key: string; label: string; amount: number }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ key: string; label: string; amount: number }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const key = str(r.key)?.trim();
+    const label = str(r.label)?.trim() ?? key;
+    const amount = num(r.amount);
+    if (!key || !label || amount === undefined) continue;
+    out.push({ key, label, amount });
+  }
+  return out;
+}
+
+function parseProgress(blocks: DashboardBlockPublic[]): {
+  data: CpfProgressData | null;
+  reachedFrs: boolean;
+} {
+  const progresses = blocksOfType(blocks, "progress");
+  if (progresses.length === 0) return { data: null, reachedFrs: false };
+
+  const maBlk = progresses.find((b) =>
+    matchTitle(titleOf(b), "MA", "BHS", "保健"),
+  );
+  const oaSaBlk =
+    progresses.find((b) =>
+      matchTitle(titleOf(b), "SA+OA", "BRS", "FRS", "ERS", "退休"),
+    ) ?? progresses.find((b) => b !== maBlk);
+
+  let reachedFrs = false;
+  for (const b of progresses) {
+    const rt = str(clean(b.payload).reached_tier);
+    if (reachedFrsFromTier(rt)) reachedFrs = true;
+  }
+
+  if (!oaSaBlk && !maBlk) return { data: null, reachedFrs };
+
+  const oaSaP = oaSaBlk ? clean(oaSaBlk.payload) : null;
+  const maP = maBlk ? clean(maBlk.payload) : null;
+  const oaSaTiers = parseTiers(oaSaP?.tiers);
+  const maTiers = parseTiers(maP?.tiers);
+
+  const brs = tierAmount(oaSaTiers, "BRS");
+  const frs = tierAmount(oaSaTiers, "FRS");
+  const ers = tierAmount(oaSaTiers, "ERS");
+  const bhs = tierAmount(maTiers, "BHS") ?? tierAmount(oaSaTiers, "BHS");
+  const oaSa = num(oaSaP?.value);
+  const ma = num(maP?.value);
+
   if (
+    oaSa === undefined ||
     ma === undefined ||
     bhs === undefined ||
-    oaSa === undefined ||
     brs === undefined ||
     frs === undefined ||
     ers === undefined
   ) {
-    return null;
+    return { data: null, reachedFrs };
   }
-  const exceedFrs =
-    num(p.exceed_frs) ?? num(p.exceedFrs) ?? Math.max(0, oaSa - frs);
+
+  const exceedFrs = num(oaSaP?.overshoot) ?? Math.max(0, oaSa - frs);
+  const nextYear = num(oaSaP?.next_tier_year);
+  const maNextYear = num(maP?.next_tier_year);
+  // status 可用于补充「YYYY-MM」文案（仍为 schema 字段）
+  const ersStatus = str(oaSaP?.status)?.trim();
+  const bhsStatus = str(maP?.status)?.trim();
+
   return {
-    ma,
-    bhs,
-    oaSa,
-    brs,
-    frs,
-    ers,
-    exceedFrs,
-    hitBhs: str(p.hit_bhs) ?? str(p.hitBhs),
-    hitBrs: str(p.hit_brs) ?? str(p.hitBrs),
-    hitFrs: str(p.hit_frs) ?? str(p.hitFrs),
-    hitErs: str(p.hit_ers) ?? str(p.hitErs),
-    footnote: str(p.footnote) ?? str(p.note),
+    reachedFrs,
+    data: {
+      ma,
+      bhs,
+      oaSa,
+      brs,
+      frs,
+      ers,
+      exceedFrs,
+      hitBhs: formatHitLabel(bhsStatus, maNextYear),
+      hitErs: formatHitLabel(ersStatus, nextYear),
+    },
   };
 }
 
-function parseTrendPoint(raw: unknown): CpfTrendPoint | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const t = str(r.t)?.trim();
-  const balances = parseBalances(r.balances ?? r);
-  if (!t || !balances) return null;
-  const phaseRaw = str(r.phase);
-  const phase = phaseRaw === "projected" ? "projected" : "actual";
-  const grainRaw = str(r.grain);
-  const grain =
-    grainRaw === "year" || grainRaw === "month"
-      ? grainRaw
-      : /^\d{4}$/.test(t)
-        ? "year"
-        : "month";
-  return { t, balances, phase, grain };
+function formatHitLabel(
+  status: string | undefined,
+  year: number | undefined,
+): string | undefined {
+  if (status && /^\d{4}-\d{2}$/.test(status)) {
+    const [y, m] = status.split("-");
+    return `${y} 年 ${Number(m)} 月`;
+  }
+  if (status && /^\d{4}$/.test(status)) return `${status} 年`;
+  if (year !== undefined) return `${year} 年`;
+  return undefined;
 }
 
 function parseTrend(blocks: DashboardBlockPublic[]): CpfTrendData | null {
-  const b = findByRole(blocks, ["cpf_trend", "chart_series", "trend"]);
-  if (!b) return null;
-  const p = clean(b.payload);
-  const points12 = Array.isArray(p.points_12m)
-    ? (p.points_12m.map(parseTrendPoint).filter(Boolean) as CpfTrendPoint[])
-    : Array.isArray(p.points12)
-      ? (p.points12.map(parseTrendPoint).filter(Boolean) as CpfTrendPoint[])
-      : [];
-  const pointsAll = Array.isArray(p.points_all)
-    ? (p.points_all.map(parseTrendPoint).filter(Boolean) as CpfTrendPoint[])
-    : Array.isArray(p.pointsAll)
-      ? (p.pointsAll.map(parseTrendPoint).filter(Boolean) as CpfTrendPoint[])
-      : [];
-  if (points12.length === 0 && pointsAll.length === 0) return null;
+  const charts = blocksOfType(blocks, "chart_series");
+  if (charts.length === 0) return null;
+
+  const byAcc = new Map<AccKey, DashboardBlockPublic>();
+  const unnamed: DashboardBlockPublic[] = [];
+  for (const b of charts) {
+    const t = titleOf(b);
+    if (matchTitle(t, "OA", "普通")) byAcc.set("OA", b);
+    else if (matchTitle(t, "SA", "特别")) byAcc.set("SA", b);
+    else if (matchTitle(t, "MA", "保健")) byAcc.set("MA", b);
+    else unnamed.push(b);
+  }
+
+  type RawPt = {
+    t: string;
+    phase: "actual" | "projected";
+    grain: "month" | "year";
+    OA: number;
+    SA: number;
+    MA: number;
+  };
+  const map = new Map<string, RawPt>();
+
+  const ingest = (
+    b: DashboardBlockPublic,
+    key: AccKey | "total",
+  ) => {
+    const p = clean(b.payload);
+    if (!Array.isArray(p.series)) return;
+    for (const item of p.series) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as Record<string, unknown>;
+      const t = str(r.t)?.trim();
+      const v = num(r.v);
+      if (!t || v === undefined) continue;
+      const phaseRaw = str(r.phase);
+      const phase = phaseRaw === "projected" ? "projected" : "actual";
+      const grainRaw = str(r.grain);
+      const grain =
+        grainRaw === "year" || grainRaw === "month"
+          ? grainRaw
+          : /^\d{4}$/.test(t)
+            ? "year"
+            : "month";
+      const cur = map.get(t) ?? {
+        t,
+        phase,
+        grain,
+        OA: 0,
+        SA: 0,
+        MA: 0,
+      };
+      if (key === "total") {
+        cur.OA = v;
+      } else {
+        cur[key] = v;
+      }
+      cur.phase = phase;
+      cur.grain = grain;
+      map.set(t, cur);
+    }
+  };
+
+  if (byAcc.size > 0) {
+    for (const [k, b] of byAcc) ingest(b, k);
+  } else if (unnamed[0]) {
+    ingest(unnamed[0], "total");
+  } else {
+    return null;
+  }
+
+  const allPoints: CpfTrendPoint[] = [...map.values()]
+    .sort((a, b) => a.t.localeCompare(b.t))
+    .map((p) => ({
+      t: p.t,
+      balances: { OA: p.OA, SA: p.SA, MA: p.MA },
+      phase: p.phase,
+      grain: p.grain,
+    }));
+  if (allPoints.length === 0) return null;
+
+  const monthPoints = allPoints.filter((p) => p.grain === "month");
+  const points12 =
+    monthPoints.length >= 12
+      ? monthPoints.slice(-18)
+      : monthPoints.length
+        ? monthPoints
+        : allPoints.slice(-18);
+
+  const primary = byAcc.get("OA") ?? unnamed[0] ?? charts[0];
+  const p = clean(primary.payload);
 
   const events: CpfTrendEvent[] = [];
   if (Array.isArray(p.events)) {
@@ -191,61 +366,66 @@ function parseTrend(blocks: DashboardBlockPublic[]): CpfTrendData | null {
       if (!item || typeof item !== "object") continue;
       const e = item as Record<string, unknown>;
       const t = str(e.t)?.trim();
-      const kindRaw = str(e.kind) ?? str(e.type) ?? "";
-      if (!t || !kindRaw) continue;
-      const kind =
-        kindRaw === "lump_sum" || kindRaw === "lump-sum" || kindRaw === "flag"
-          ? "lump_sum"
-          : "employer_change";
+      const kindRaw = str(e.kind);
+      if (!t || (kindRaw !== "employer_change" && kindRaw !== "lump_sum")) {
+        continue;
+      }
       events.push({
         t,
-        kind,
-        label: str(e.label) ?? (kind === "lump_sum" ? "一次性转入" : "换雇主"),
-        short: str(e.short),
+        kind: kindRaw,
+        label:
+          str(e.label) ??
+          (kindRaw === "lump_sum" ? "一次性转入" : "换雇主"),
+        short: str(e.label),
       });
     }
   }
 
-  const guides: CpfTrendData["guides"] = [];
-  if (Array.isArray(p.guides)) {
-    for (const item of p.guides) {
-      if (!item || typeof item !== "object") continue;
-      const g = item as Record<string, unknown>;
-      const key = str(g.key) ?? str(g.label);
-      const amount = num(g.amount) ?? num(g.value);
-      const label = str(g.label) ?? key;
-      if (!key || amount === undefined || !label) continue;
-      guides.push({ key, amount, label });
-    }
-  }
-
-  const rangeRaw = str(p.range_default) ?? str(p.defaultRange);
+  const rangeRaw = str(p.range_default);
   return {
     points12,
-    pointsAll: pointsAll.length ? pointsAll : points12,
+    pointsAll: allPoints,
     events,
-    guides,
-    janInterestAt: str(p.jan_interest_at) ?? str(p.janInterestAt),
-    janInterestTotal: num(p.jan_interest_total) ?? num(p.janInterestTotal),
+    guides: [],
     defaultRange: rangeRaw === "all" ? "all" : "12m",
-    subtitle12: str(p.subtitle_12m) ?? str(p.subtitle12),
-    subtitleAll: str(p.subtitle_all) ?? str(p.subtitleAll),
   };
 }
 
+function tryParseJsonObject(raw: string): Record<string, unknown> | null {
+  const s = raw.trim();
+  if (!s.startsWith("{")) return null;
+  try {
+    const v = JSON.parse(s) as unknown;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 function parseContrib(blocks: DashboardBlockPublic[]): CpfContribData | null {
-  const b = findByRole(blocks, ["cpf_contrib", "monthly_contrib"]);
-  if (!b) return null;
-  const p = clean(b.payload);
-  const OA = num(p.OA) ?? num(p.oa);
-  const SA = num(p.SA) ?? num(p.sa);
-  const MA = num(p.MA) ?? num(p.ma);
-  const employer = num(p.employer);
-  const self = num(p.self);
-  const total = num(p.total) ?? (OA !== undefined && SA !== undefined && MA !== undefined ? OA + SA + MA : undefined);
-  const annualLimit = num(p.annual_limit) ?? num(p.annualLimit);
-  const paidYtd = num(p.paid_ytd) ?? num(p.paidYtd);
-  const limitLeft = num(p.limit_left) ?? num(p.limitLeft);
+  const lists = blocksOfType(blocks, "list").filter((b) =>
+    matchTitle(titleOf(b), "本月缴存", "缴存"),
+  );
+  const list = lists[0];
+  if (!list) return null;
+  const p = clean(list.payload);
+  if (!Array.isArray(p.items) || p.items.length === 0) return null;
+  const first = typeof p.items[0] === "string" ? p.items[0] : null;
+  if (!first) return null;
+  const obj = tryParseJsonObject(first);
+  if (!obj) return null;
+  const OA = num(obj.OA);
+  const SA = num(obj.SA);
+  const MA = num(obj.MA);
+  const employer = num(obj.employer);
+  const self = num(obj.self);
+  const total = num(obj.total);
+  const annualLimit = num(obj.annual_limit);
+  const paidYtd = num(obj.paid_ytd);
+  const limitLeft = num(obj.limit_left);
   if (
     OA === undefined ||
     SA === undefined ||
@@ -269,58 +449,99 @@ function parseContrib(blocks: DashboardBlockPublic[]): CpfContribData | null {
     annualLimit,
     paidYtd,
     limitLeft,
-    asOfMonth: str(p.as_of_month)?.trim() || str(p.asOfMonth)?.trim() || "",
-    note: str(p.note),
+    asOfMonth: str(obj.as_of_month)?.trim() ?? "",
+    note: str(obj.note),
   };
 }
 
 function parseAnnual(blocks: DashboardBlockPublic[]): CpfAnnualData | null {
-  const b = findByRole(blocks, ["cpf_annual", "annual"]);
-  if (!b) return null;
-  const p = clean(b.payload);
-  const interest = parseBalances(p.interest ?? p.interest_by);
-  const interestTotal = num(p.interest_total) ?? num(p.interestTotal);
-  if (!interest || interestTotal === undefined) return null;
-  const rates = (p.rates && typeof p.rates === "object"
-    ? (p.rates as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
+  const interestMetrics = blocksOfType(blocks, "metric").filter((b) =>
+    matchTitle(titleOf(b), "利息"),
+  );
+  const rstuText = blocksOfType(blocks, "text").find(
+    (b) =>
+      matchTitle(titleOf(b), "RSTU") ||
+      str(clean(b.payload).empty_text)?.includes("未填补"),
+  );
+
+  const readInt = (needles: string[]) => {
+    const b = interestMetrics.find((x) => matchTitle(titleOf(x), ...needles));
+    if (!b) return undefined;
+    return num(clean(b.payload).value);
+  };
+
+  const OA = readInt(["OA", "普通"]);
+  const SA = readInt(["SA", "特别"]);
+  const MA = readInt(["MA", "保健"]);
+  const totBlk = interestMetrics.find((b) =>
+    matchTitle(titleOf(b), "合计", "总利息"),
+  );
+  const interestTotal =
+    num(totBlk ? clean(totBlk.payload).value : undefined) ??
+    (OA !== undefined && SA !== undefined && MA !== undefined
+      ? OA + SA + MA
+      : undefined);
+
+  if (
+    OA === undefined ||
+    SA === undefined ||
+    MA === undefined ||
+    interestTotal === undefined
+  ) {
+    if (rstuText) {
+      const p = clean(rstuText.payload);
+      return {
+        yearLabel: titleOf(rstuText) || "年度",
+        rates: { OA: "—", SA: "—", MA: "—" },
+        interest: { OA: 0, SA: 0, MA: 0 },
+        interestTotal: 0,
+        rstuEmpty: true,
+        rstuTitle: str(p.empty_text) ?? "本年未填补",
+        rstuBody: str(p.text),
+      };
+    }
+    return null;
+  }
+
+  const rstuP = rstuText ? clean(rstuText.payload) : null;
   return {
-    yearLabel: str(p.year_label)?.trim() || str(p.yearLabel)?.trim() || "年度利息",
-    rates: {
-      OA: str(rates.OA) ?? str(rates.oa) ?? "—",
-      SA: str(rates.SA) ?? str(rates.sa) ?? "—",
-      MA: str(rates.MA) ?? str(rates.ma) ?? "—",
-    },
-    interest,
+    yearLabel: "年度利息",
+    rates: { OA: "—", SA: "—", MA: "—" },
+    interest: { OA, SA, MA },
     interestTotal,
-    note: str(p.note),
-    rstuEmpty: bool(p.rstu_empty) ?? bool(p.rstuEmpty) ?? true,
-    rstuTitle: str(p.rstu_title) ?? str(p.rstuTitle),
-    rstuBody: str(p.rstu_body) ?? str(p.rstuBody),
-    rstuExtra: str(p.rstu_extra) ?? str(p.rstuExtra),
-    rstuDueChip: str(p.rstu_due_chip) ?? str(p.rstuDueChip),
+    rstuEmpty: Boolean(rstuP?.empty_text) || !rstuText,
+    rstuTitle: str(rstuP?.empty_text) ?? "本年未填补",
+    rstuBody: str(rstuP?.text),
   };
 }
 
 function parseTodos(blocks: DashboardBlockPublic[]): CpfTodoItem[] | null {
-  const b = findByRole(blocks, ["cpf_todos", "todos"]);
-  if (!b) return null;
-  const p = clean(b.payload);
+  const list = blocksOfType(blocks, "list").find((b) =>
+    matchTitle(titleOf(b), "待办", "相关待办"),
+  );
+  if (!list) return null;
+  const p = clean(list.payload);
   if (!Array.isArray(p.items)) return null;
   const items: CpfTodoItem[] = [];
-  for (const item of p.items) {
-    if (!item || typeof item !== "object") continue;
-    const r = item as Record<string, unknown>;
-    const title = str(r.title)?.trim();
-    if (!title) continue;
-    items.push({
-      title,
-      sub: str(r.sub)?.trim() ?? "",
-      due: str(r.due)?.trim() ?? "",
-      overdue: bool(r.overdue),
-      info: bool(r.info),
-      irreversible: bool(r.irreversible),
-    });
+  for (const raw of p.items) {
+    if (typeof raw !== "string") continue;
+    const obj = tryParseJsonObject(raw);
+    if (obj) {
+      const title = str(obj.title)?.trim();
+      if (!title) continue;
+      items.push({
+        title,
+        sub: str(obj.sub)?.trim() ?? "",
+        due: str(obj.due)?.trim() ?? "",
+        overdue: bool(obj.overdue),
+        info: bool(obj.info),
+        irreversible: bool(obj.irreversible),
+      });
+      continue;
+    }
+    if (raw.trim()) {
+      items.push({ title: raw.trim(), sub: "", due: "" });
+    }
   }
   return items;
 }
@@ -330,81 +551,80 @@ function parseLedger(blocks: DashboardBlockPublic[]): {
   summary?: string;
   emptyWithdrawals?: string;
 } {
-  const b = findByRole(blocks, ["cpf_ledger", "ledger"]);
-  if (!b) return { rows: null };
-  const p = clean(b.payload);
-  if (!Array.isArray(p.rows) && !Array.isArray(p.items)) {
-    return {
-      rows: [],
-      summary: str(p.summary),
-      emptyWithdrawals: str(p.empty_withdrawals) ?? str(p.emptyWithdrawals),
-    };
+  const list = blocksOfType(blocks, "list").find((b) =>
+    matchTitle(titleOf(b), "流水", "缴存和提取"),
+  );
+  if (!list) return { rows: null };
+  const p = clean(list.payload);
+  const emptyText = str(p.empty_text);
+  if (!Array.isArray(p.items)) {
+    return { rows: [], emptyWithdrawals: emptyText };
   }
-  const raw = (Array.isArray(p.rows) ? p.rows : p.items) as unknown[];
   const rows: CpfLedgerRow[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const r = item as Record<string, unknown>;
-    const date = str(r.date)?.trim();
-    const kindRaw = str(r.kind) ?? "in";
-    const kind =
-      kindRaw === "fee" || kindRaw === "out" ? kindRaw : "in";
+  for (const raw of p.items) {
+    if (typeof raw !== "string") continue;
+    const obj = tryParseJsonObject(raw);
+    if (!obj) continue;
+    const date = str(obj.date)?.trim();
     if (!date) continue;
+    const kindRaw = str(obj.kind) ?? "in";
+    const kind = kindRaw === "fee" || kindRaw === "out" ? kindRaw : "in";
     const cell = (k: string) => {
-      const v = r[k];
+      const v = obj[k];
       if (v === null) return null;
       return num(v) ?? null;
     };
     rows.push({
       date,
       kind,
-      typeLabel: str(r.type_label) ?? str(r.typeLabel) ?? (kind === "in" ? "＋ 缴存" : "－ 扣款"),
-      note: str(r.note)?.trim() ?? "",
-      OA: cell("OA") ?? cell("oa"),
-      SA: cell("SA") ?? cell("sa"),
-      MA: cell("MA") ?? cell("ma"),
-      total: num(r.total) ?? 0,
+      typeLabel:
+        str(obj.type_label) ?? (kind === "in" ? "＋ 缴存" : "－ 扣款"),
+      note: str(obj.note)?.trim() ?? "",
+      OA: cell("OA"),
+      SA: cell("SA"),
+      MA: cell("MA"),
+      total: num(obj.total) ?? 0,
     });
   }
   return {
     rows,
-    summary: str(p.summary),
-    emptyWithdrawals: str(p.empty_withdrawals) ?? str(p.emptyWithdrawals),
+    summary: str(p.title),
+    emptyWithdrawals: emptyText,
   };
 }
 
 function parseAssumptions(
   blocks: DashboardBlockPublic[],
 ): CpfAssumptionsData | null {
-  const b = findByRole(blocks, ["cpf_assumptions", "assumptions"]);
+  const b = blocksOfType(blocks, "text").find((x) =>
+    matchTitle(titleOf(x), "估算说明", "假设"),
+  );
   if (!b) return null;
   const p = clean(b.payload);
-  const bullets = Array.isArray(p.bullets)
-    ? p.bullets.filter((x): x is string => typeof x === "string")
-    : [];
-  const contribLine = str(p.contrib_line) ?? str(p.contribLine);
-  const rateLine = str(p.rate_line) ?? str(p.rateLine);
-  if (!contribLine || !rateLine) return null;
+  const text = str(p.text)?.trim() ?? "";
+  if (!text) return null;
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   return {
-    contribLine,
-    contribDetail: str(p.contrib_detail) ?? str(p.contribDetail) ?? "",
-    rateLine,
-    rateExtra: str(p.rate_extra) ?? str(p.rateExtra) ?? "",
-    bullets,
-    byline: str(p.byline) ?? "",
+    contribLine: lines[0] ?? "—",
+    contribDetail: "",
+    rateLine: lines[1] ?? "—",
+    rateExtra: "",
+    bullets: lines.slice(2),
+    byline: "",
   };
 }
 
-/** 仅根据 API 分区数据组装；缺段保持 null。 */
+/** 仅根据 API 分区数据组装；字段名对齐 PR #24 validation schema。 */
 export function parseCpfModel(
   section: DashboardSectionPublic,
   pageHeadline = "",
 ): CpfViewModel {
   const model = emptyCpfViewModel();
   const blocks = section.blocks;
-  model.conclusion = parseConclusion(blocks, pageHeadline);
+  const { data: progress, reachedFrs } = parseProgress(blocks);
+  model.progress = progress;
+  model.conclusion = parseConclusion(blocks, pageHeadline, reachedFrs);
   model.accounts = parseAccounts(blocks);
-  model.progress = parseProgress(blocks);
   model.trend = parseTrend(blocks);
   model.contrib = parseContrib(blocks);
   model.annual = parseAnnual(blocks);
