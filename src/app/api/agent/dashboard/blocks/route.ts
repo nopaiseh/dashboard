@@ -10,7 +10,11 @@ import type {
   DashboardBlockRow,
   DashboardSectionRow,
 } from "@/lib/dashboard/types";
-import { clientIp, jsonError, jsonOk } from "@/lib/http";
+import { clientIp, jsonError, jsonOkNoStore } from "@/lib/http";
+import {
+  isPgForbidden,
+  isPgNotFound,
+} from "@/lib/pg-errors";
 import { getServiceClient } from "@/lib/supabase/server";
 import {
   createDashboardBlockSchema,
@@ -95,34 +99,36 @@ export async function POST(request: Request) {
 
   const id = randomUUID();
   const encryptedPayload = encryptBlockPayload(id, planned.plan.payload);
-  const insertRow = {
-    id,
-    section_id: planned.plan.section_id,
-    block_type: planned.plan.block_type,
-    sort_order: planned.plan.sort_order,
-    agent_id: planned.plan.agent_id,
-    payload: encryptedPayload,
-  };
 
-  const { data: block, error } = await supabase
-    .from("dashboard_blocks")
-    .insert(insertRow)
-    .select("*")
-    .single();
+  const { data, error } = await supabase.rpc("create_dashboard_block", {
+    p_id: id,
+    p_section_id: planned.plan.section_id,
+    p_block_type: planned.plan.block_type,
+    p_sort_order: planned.plan.sort_order,
+    p_agent_id: planned.plan.agent_id,
+    p_payload: encryptedPayload,
+  });
 
-  if (error || !block) {
+  if (error) {
+    console.error("create_dashboard_block failed", {
+      blockId: id,
+      code: (error as { code?: string }).code ?? "unknown",
+    });
+    if (isPgForbidden(error)) {
+      return jsonError(403, "forbidden");
+    }
+    if (isPgNotFound(error)) {
+      return jsonError(404, "section not found");
+    }
     return jsonError(500, "failed to create block");
   }
 
-  await supabase.from("dashboard_block_events").insert({
-    block_id: block.id,
-    actor_type: "agent",
-    agent_id: auth.agent.agentId,
-    action: "create",
-  });
+  if (!data || !(data as { block?: DashboardBlockRow }).block) {
+    return jsonError(500, "failed to create block");
+  }
 
-  return jsonOk(
-    { block: toPublicBlock(block as DashboardBlockRow) },
+  return jsonOkNoStore(
+    { block: toPublicBlock((data as { block: DashboardBlockRow }).block) },
     { status: 201 },
   );
 }

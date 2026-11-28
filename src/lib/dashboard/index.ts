@@ -1,4 +1,5 @@
 export {
+  assertDashboardStoredPayload,
   decryptBlockPayload,
   decryptBlockPayloadStrict,
   encryptBlockPayload,

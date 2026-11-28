@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseMigrateGoalsArgs } from "@/lib/dashboard/migrate-goals-cli";
 import {
+  normalizeDueAt,
   planGoalMigration,
   planGoalMigrationIdempotent,
   type LegacyGoalRow,
@@ -14,7 +15,7 @@ const GOAL: LegacyGoalRow = {
   target: "100k",
   metric: "SGD",
   progress: 0.55,
-  due_at: "2027-01-01T00:00:00.000Z",
+  due_at: "2027-01-01T00:00:00+00:00",
   agent_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   status: "active",
   updated_at: "2026-01-01T00:00:00.000Z",
@@ -50,6 +51,9 @@ describe("migrate goals plan idempotency", () => {
         due_at: "2027-01-01T00:00:00.000Z",
         status: "active",
       });
+      expect(normalizeDueAt("2027-01-01T00:00:00+00:00")).toBe(
+        "2027-01-01T00:00:00.000Z",
+      );
       expect(plan.section.category).toBe("cpf");
       expect(plan.section.agent_id).toBe(GOAL.agent_id);
     }

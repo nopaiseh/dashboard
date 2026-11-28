@@ -395,8 +395,13 @@ export const patchDashboardBlockSchema = z
   })
   .strict()
   .superRefine((val, ctx) => {
-    if (val.payload !== undefined && val.block_type === undefined) {
-      // payload without type: accept any of the known shapes loosely via object
+    // Changing type without a matching payload would leave type/content disagreeing.
+    if (val.block_type !== undefined && val.payload === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "payload is required when changing block_type",
+        path: ["payload"],
+      });
       return;
     }
     if (val.payload !== undefined && val.block_type !== undefined) {

@@ -97,4 +97,12 @@ describe("dashboard block payload encryption", () => {
     );
     expect(result).toBe(2000);
   });
+
+  it("rejects non-v1 stored values (no plaintext legacy)", () => {
+    const result = decryptBlockPayload({
+      id: BLOCK_ID,
+      payload: '{"title":"leak"}',
+    });
+    expect(result.decrypt_failed).toBe(true);
+  });
 });

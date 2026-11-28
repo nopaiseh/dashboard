@@ -282,8 +282,12 @@ BEGIN
 END;
 $$;
 
--- 6) dashboard 表存在；block events 只增
+-- 6) dashboard 表 / RPC / payload CHECK / 审计同事务
 DO $$
+DECLARE
+  v_sqlstate text;
+  v_result jsonb;
+  v_count int;
 BEGIN
   IF to_regclass('public.dashboard_sections') IS NULL THEN
     RAISE EXCEPTION 'dashboard_sections missing';
@@ -303,9 +307,29 @@ BEGIN
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   );
 
-  INSERT INTO public.dashboard_blocks (
-    id, section_id, block_type, sort_order, agent_id, payload
-  ) VALUES (
+  -- 明文 payload 被 CHECK 拒绝
+  BEGIN
+    INSERT INTO public.dashboard_blocks (
+      id, section_id, block_type, sort_order, agent_id, payload
+    ) VALUES (
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'progress',
+      0,
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      'plaintext-secret'
+    );
+    RAISE EXCEPTION 'expected plaintext payload CHECK to fail';
+  EXCEPTION
+    WHEN check_violation THEN
+      NULL;
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      RAISE EXCEPTION 'expected check_violation for plaintext payload, got %', v_sqlstate;
+  END;
+
+  -- 创建 RPC：区块 + 事件同事务
+  v_result := public.create_dashboard_block(
     'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
     'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
     'progress',
@@ -313,15 +337,102 @@ BEGIN
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'v1:smoke:tag:cipher'
   );
+  IF v_result->'block'->>'id' IS DISTINCT FROM 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' THEN
+    RAISE EXCEPTION 'create_dashboard_block missing block';
+  END IF;
 
-  INSERT INTO public.dashboard_block_events (
-    block_id, actor_type, agent_id, action
-  ) VALUES (
-    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-    'agent',
-    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-    'create'
+  SELECT count(*) INTO v_count
+  FROM public.dashboard_block_events
+  WHERE block_id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'expected 1 create event, got %', v_count;
+  END IF;
+
+  -- 越权：其它姐妹的分区
+  INSERT INTO public.agents (id, slug, name, area)
+  VALUES (
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    'other-sister',
+    'Other',
+    'ops'
   );
+
+  BEGIN
+    PERFORM public.create_dashboard_block(
+      '99999999-9999-4999-8999-999999999999',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'headline',
+      0,
+      'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      'v1:other:tag:cipher'
+    );
+    RAISE EXCEPTION 'expected XJ403 for other agent create';
+  EXCEPTION
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      IF v_sqlstate IS DISTINCT FROM 'XJ403' THEN
+        RAISE EXCEPTION 'expected XJ403 for other agent, got %', v_sqlstate;
+      END IF;
+  END;
+
+  -- 无效信封经 RPC：整事务回滚（无区块、无事件）
+  BEGIN
+    PERFORM public.create_dashboard_block(
+      'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'text',
+      1,
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      'not-a-v1-envelope'
+    );
+    RAISE EXCEPTION 'expected CHECK failure for bad envelope via RPC';
+  EXCEPTION
+    WHEN check_violation THEN
+      NULL;
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      -- some drivers surface as 23514
+      IF v_sqlstate IS DISTINCT FROM '23514' THEN
+        NULL; -- still expect no row below
+      END IF;
+  END;
+
+  SELECT count(*) INTO v_count
+  FROM public.dashboard_blocks
+  WHERE id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'bad envelope RPC should roll back block insert';
+  END IF;
+
+  SELECT count(*) INTO v_count
+  FROM public.dashboard_block_events
+  WHERE block_id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'bad envelope RPC should roll back event insert';
+  END IF;
+
+  -- PATCH RPC
+  v_result := public.apply_agent_dashboard_block_patch(
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    false,
+    'progress',
+    true,
+    3,
+    false,
+    NULL
+  );
+  IF (v_result->'block'->>'sort_order')::int <> 3 THEN
+    RAISE EXCEPTION 'patch sort_order failed';
+  END IF;
+
+  SELECT count(*) INTO v_count
+  FROM public.dashboard_block_events
+  WHERE block_id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    AND action = 'update';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'expected 1 update event, got %', v_count;
+  END IF;
 END;
 $$;
 

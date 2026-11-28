@@ -25,7 +25,7 @@ npm run build
 
 ### 字段加密（本地）
 
-`items` 的 `title` / `body` / `source_url`，以及 `dashboard_blocks.payload`，经应用层 AES-256-GCM（AAD 绑定行/列）加密后入库；`content_hash` 为 HMAC-SHA256。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY` 与 `CONTENT_HASH_KEY`（均为 `openssl rand -base64 32`）。回填分 `--encrypt-only` / `--rehash-only`（默认 dry-run）。`goals` → progress 块：`npm run migrate-goals`（默认 dry-run）。部署顺序见 [docs/architecture.md](docs/architecture.md#字段加密)。
+`items` 的 `title` / `body` / `source_url`，以及 `dashboard_blocks.payload`，经应用层 AES-256-GCM（AAD 绑定行/列）加密后入库；`content_hash` 为 HMAC-SHA256。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY` 与 `CONTENT_HASH_KEY`（均为 `openssl rand -base64 32`）。回填分 `--encrypt-only` / `--rehash-only`（默认 dry-run）。`goals` → progress 块：先把 `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `FIELD_ENCRYPTION_KEY` 载入进程环境（如 `set -a && source .env.local && set +a`；脚本不读文件、不打印密钥），再 `npm run migrate-goals`（默认 dry-run；`--execute` 后校验行数并试解密）。部署顺序见 [docs/architecture.md](docs/architecture.md#字段加密)。
 
 ## 首次通行密钥登记（概要）
 

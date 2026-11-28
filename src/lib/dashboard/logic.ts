@@ -139,6 +139,13 @@ export function planPatchBlock(
   ) {
     return { ok: false, status: 400, error: "invalid body" };
   }
+  if (
+    input.block_type !== undefined &&
+    input.block_type !== block.block_type &&
+    input.payload === undefined
+  ) {
+    return { ok: false, status: 400, error: "invalid body" };
+  }
   return {
     ok: true,
     plan: {

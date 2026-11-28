@@ -58,6 +58,14 @@ function toProgressNumber(value: number | string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Normalize timestamptz strings to `.000Z` so zod datetime() accepts PATCH round-trips. */
+export function normalizeDueAt(dueAt: string | null): string | null {
+  if (dueAt === null || dueAt === undefined) return null;
+  const ms = Date.parse(dueAt);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
 export function planGoalMigration(
   goal: LegacyGoalRow,
   existingBlockIds: ReadonlySet<string>,
@@ -90,7 +98,7 @@ export function planGoalMigration(
         target: goal.target,
         metric: goal.metric,
         progress: toProgressNumber(goal.progress),
-        due_at: goal.due_at,
+        due_at: normalizeDueAt(goal.due_at),
         status: goal.status,
       },
     },

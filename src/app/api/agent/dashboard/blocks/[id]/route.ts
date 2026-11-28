@@ -8,7 +8,12 @@ import type {
   DashboardBlockPublic,
   DashboardBlockRow,
 } from "@/lib/dashboard/types";
-import { jsonError, jsonOk } from "@/lib/http";
+import { jsonError, jsonOkNoStore } from "@/lib/http";
+import {
+  isPgConflict,
+  isPgForbidden,
+  isPgNotFound,
+} from "@/lib/pg-errors";
 import { getServiceClient } from "@/lib/supabase/server";
 import {
   dashboardPayloadSchemaFor,
@@ -75,6 +80,14 @@ export async function PATCH(request: Request, context: RouteContext) {
   const block = existing as DashboardBlockRow;
   const nextType = parsed.data.block_type ?? block.block_type;
 
+  if (
+    parsed.data.block_type !== undefined &&
+    parsed.data.block_type !== block.block_type &&
+    parsed.data.payload === undefined
+  ) {
+    return jsonError(400, "invalid body");
+  }
+
   let nextPayload: Record<string, unknown> | undefined;
   if (parsed.data.payload !== undefined) {
     const payloadParsed = dashboardPayloadSchemaFor(nextType).safeParse(
@@ -95,38 +108,47 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(planned.status, planned.error);
   }
 
-  const patch: Record<string, unknown> = {};
-  if (planned.plan.block_type !== undefined) {
-    patch.block_type = planned.plan.block_type;
-  }
-  if (planned.plan.sort_order !== undefined) {
-    patch.sort_order = planned.plan.sort_order;
-  }
-  if (planned.plan.payload !== undefined) {
-    patch.payload = encryptBlockPayload(id, planned.plan.payload);
-  }
+  const touchPayload = planned.plan.payload !== undefined;
+  const encryptedPayload = touchPayload
+    ? encryptBlockPayload(id, planned.plan.payload!)
+    : null;
 
-  const { data: updated, error } = await supabase
-    .from("dashboard_blocks")
-    .update(patch)
-    .eq("id", id)
-    .eq("agent_id", auth.agent.agentId)
-    .select("*")
-    .maybeSingle();
+  const { data, error } = await supabase.rpc(
+    "apply_agent_dashboard_block_patch",
+    {
+      p_block_id: id,
+      p_agent_id: auth.agent.agentId,
+      p_touch_block_type: planned.plan.block_type !== undefined,
+      p_block_type: planned.plan.block_type ?? block.block_type,
+      p_touch_sort_order: planned.plan.sort_order !== undefined,
+      p_sort_order: planned.plan.sort_order ?? block.sort_order,
+      p_touch_payload: touchPayload,
+      p_payload: encryptedPayload,
+    },
+  );
 
   if (error) {
+    console.error("apply_agent_dashboard_block_patch failed", {
+      blockId: id,
+      code: (error as { code?: string }).code ?? "unknown",
+    });
+    if (isPgConflict(error)) {
+      return jsonError(409, "conflict");
+    }
+    if (isPgForbidden(error)) {
+      return jsonError(403, "forbidden");
+    }
+    if (isPgNotFound(error)) {
+      return jsonError(404, "block not found");
+    }
     return jsonError(500, "failed to update block");
   }
-  if (!updated) {
-    return jsonError(403, "forbidden");
+
+  if (!data || !(data as { block?: DashboardBlockRow }).block) {
+    return jsonError(500, "failed to update block");
   }
 
-  await supabase.from("dashboard_block_events").insert({
-    block_id: id,
-    actor_type: "agent",
-    agent_id: auth.agent.agentId,
-    action: "update",
+  return jsonOkNoStore({
+    block: toPublicBlock((data as { block: DashboardBlockRow }).block),
   });
-
-  return jsonOk({ block: toPublicBlock(updated as DashboardBlockRow) });
 }

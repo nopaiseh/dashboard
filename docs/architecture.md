@@ -84,12 +84,22 @@ AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环）。服�
 
 SQL 迁移无法加密（密钥只在 app）。合并并部署 app 后：
 
+环境变量从 **进程环境** 读取（脚本不自动加载 `.env`，也**从不打印**密钥）：
+
+| 变量 | 用途 |
+|------|------|
+| `SUPABASE_URL` | Supabase API |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role（仅服务器） |
+| `FIELD_ENCRYPTION_KEY` 或密钥环 | 与线上 items 相同的字段加密密钥 |
+
+本地示例：`set -a && source .env.local && set +a`，再：
+
 ```bash
 npm run migrate-goals                 # dry-run
-npm run migrate-goals -- --execute    # 幂等写入 progress 块
+npm run migrate-goals -- --execute    # 幂等写入 progress 块；结束后校验行数并试解密
 ```
 
-块 id 由 `goals.id` 确定性派生；重跑跳过已存在块。`goals` 表本迁移已改为只读，**本 PR 不删除**；验证后另 PR 删除。
+写入走 RPC `migrate_dashboard_progress_block`（分区 + 区块 + 审计同事务）。块 id 由 `goals.id` 确定性派生；重跑跳过已存在块。`due_at` 规范化为 `toISOString()`。`goals` 表本迁移已改为只读，**本 PR 不删除**；验证后另 PR 删除。
 
 ## 防护
 

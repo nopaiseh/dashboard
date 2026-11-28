@@ -1,6 +1,7 @@
 /**
  * Dashboard block payload encryption helpers.
  * Reuses items v1 AES-256-GCM envelopes with AAD entity `dashboard_blocks`.
+ * New tables: no legacy plaintext — only '' or a valid v1 envelope.
  * Never log plaintext payloads.
  */
 
@@ -9,6 +10,7 @@ import {
   encryptField,
   FieldEncryptionConfigError,
   FieldEncryptionError,
+  isEncryptedEnvelope,
   reportFieldDecryptFailure,
 } from "@/lib/crypto/fields-core";
 
@@ -23,6 +25,20 @@ export function blockPayloadFieldContext(blockId: string) {
   } as const;
 }
 
+/**
+ * Dashboard payloads have no plaintext legacy path.
+ * Allowed: empty string, or a structurally valid envelope starting with `v1:`.
+ */
+export function assertDashboardStoredPayload(stored: string): void {
+  if (stored === "") return;
+  if (!stored.startsWith("v1:") || !isEncryptedEnvelope(stored)) {
+    throw new FieldEncryptionError(
+      "dashboard payload is not a v1 envelope",
+      "legacy_plaintext_rejected",
+    );
+  }
+}
+
 /** Encrypt a JSON-serializable payload for storage. */
 export function encryptBlockPayload(
   blockId: string,
@@ -34,13 +50,17 @@ export function encryptBlockPayload(
 
 /**
  * Decrypt payload to a plain object.
- * Config errors rethrow; ciphertext failure → empty object + decrypt_failed.
+ * Config errors rethrow; ciphertext / non-v1 failure → empty object + decrypt_failed.
  */
 export function decryptBlockPayload(block: {
   id: string;
   payload: string;
 }): { payload: Record<string, unknown>; decrypt_failed?: boolean } {
   try {
+    if (block.payload === "") {
+      return { payload: {} };
+    }
+    assertDashboardStoredPayload(block.payload);
     const plain = decryptField(
       block.payload,
       blockPayloadFieldContext(block.id),
@@ -74,6 +94,10 @@ export function decryptBlockPayloadStrict(block: {
   id: string;
   payload: string;
 }): Record<string, unknown> {
+  if (block.payload === "") {
+    return {};
+  }
+  assertDashboardStoredPayload(block.payload);
   const plain = decryptField(
     block.payload,
     blockPayloadFieldContext(block.id),

@@ -147,8 +147,9 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 ## Dashboard 区块（目标页并入后的通用数据层）
 
 明文只允许：`category`、`block_type`、`sort_order`、拥有姐妹 `agent_id`、时间戳。  
-标题 / 数值 / 正文 / 一行标题 / 列表等内容一律进加密 `payload`（与 items 相同的 v1 AES-256-GCM 信封；AAD=`dashboard_blocks:{id}:payload:v{N}`）。  
-**无 DELETE**：只提供 POST/PATCH；变更写 `dashboard_block_events`（只增）。姐妹只能写 `agent_id` 为自己的分区/区块。
+标题 / 数值 / 正文 / 一行标题 / 列表等内容一律进加密 `payload`（与 items 相同的 v1 AES-256-GCM 信封；AAD=`dashboard_blocks:{id}:payload:v{N}`；无遗留明文）。  
+**无 DELETE**：只提供 POST/PATCH；写入经 RPC 与 `dashboard_block_events` 同事务。姐妹只能写 `agent_id` 为自己的分区/区块。  
+返回解密 body 的响应带 `Cache-Control: no-store`。更改 `block_type` 时必须同时提交符合新类型的 `payload`，否则 `400`。
 
 ### POST `/api/agent/dashboard/sections` — 新建分区
 

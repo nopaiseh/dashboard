@@ -4,23 +4,33 @@
  * Cannot run encryption in SQL — FIELD_ENCRYPTION_KEY lives only in the app.
  * Default is --dry-run. Idempotent: block ids are deterministic from goals.id.
  *
- * Usage:
+ * Env (process.env; never printed):
+ *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — required
+ *   FIELD_ENCRYPTION_KEY (or KEY_Vn / KEYS + CURRENT) — required
+ * Load via shell, e.g. `set -a && source .env.local && set +a` then:
  *   npx tsx scripts/migrate-goals-to-blocks.ts
  *   npx tsx scripts/migrate-goals-to-blocks.ts --execute
  *   npx tsx scripts/migrate-goals-to-blocks.ts --execute --batch-size=50
  *
  * Does NOT delete goals. goals is already read-only after the schema migration.
+ * Writes go through migrate_dashboard_progress_block (section+block+event txn).
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { encryptBlockPayload } from "../src/lib/dashboard/crypto";
+import {
+  decryptBlockPayloadStrict,
+  encryptBlockPayload,
+} from "../src/lib/dashboard/crypto";
 import { parseMigrateGoalsArgs } from "../src/lib/dashboard/migrate-goals-cli";
 import {
   planGoalMigration,
   type LegacyGoalRow,
 } from "../src/lib/dashboard/migrate-goals-plan";
-import { resetFieldKeyringCache } from "../src/lib/crypto/fields-core";
-import { encryptField } from "../src/lib/crypto/fields-core";
+import { blockIdForGoal } from "../src/lib/dashboard/ids";
+import {
+  encryptField,
+  resetFieldKeyringCache,
+} from "../src/lib/crypto/fields-core";
 
 async function loadExistingBlockIds(
   supabase: SupabaseClient,
@@ -28,7 +38,6 @@ async function loadExistingBlockIds(
 ): Promise<Set<string>> {
   const found = new Set<string>();
   if (ids.length === 0) return found;
-  // PostgREST `.in` — chunk to stay under URL limits
   const chunkSize = 100;
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize);
@@ -46,97 +55,103 @@ async function loadExistingBlockIds(
   return found;
 }
 
-async function findSectionId(
+async function migrateOne(
   supabase: SupabaseClient,
-  category: string,
-  agentId: string | null,
-): Promise<string | null> {
-  let query = supabase
-    .from("dashboard_sections")
-    .select("id")
-    .eq("category", category)
-    .limit(1);
-  query =
-    agentId === null
-      ? query.is("agent_id", null)
-      : query.eq("agent_id", agentId);
-  const { data, error } = await query.maybeSingle();
-  if (error) {
-    throw new Error(`failed to look up section category=${category}`);
-  }
-  return data?.id ? (data.id as string) : null;
-}
-
-/**
- * Prefer an existing section for (category, agent_id); otherwise insert
- * with the deterministic id from the plan.
- */
-async function ensureSection(
-  supabase: SupabaseClient,
-  section: {
-    id: string;
-    category: string;
-    sort_order: number;
-    agent_id: string | null;
-  },
-): Promise<string> {
-  const existingId = await findSectionId(
-    supabase,
-    section.category,
-    section.agent_id,
+  plan: Extract<ReturnType<typeof planGoalMigration>, { action: "upsert" }>,
+): Promise<"inserted" | "already_migrated"> {
+  const encrypted = encryptBlockPayload(plan.block.id, plan.block.payload);
+  const { data, error } = await supabase.rpc(
+    "migrate_dashboard_progress_block",
+    {
+      p_preferred_section_id: plan.section.id,
+      p_category: plan.section.category,
+      p_section_sort_order: plan.section.sort_order,
+      p_section_agent_id: plan.section.agent_id,
+      p_block_id: plan.block.id,
+      p_block_sort_order: plan.block.sort_order,
+      p_block_agent_id: plan.block.agent_id,
+      p_payload: encrypted,
+    },
   );
-  if (existingId) return existingId;
 
-  const { error } = await supabase.from("dashboard_sections").insert({
-    id: section.id,
-    category: section.category,
-    sort_order: section.sort_order,
-    agent_id: section.agent_id,
-  });
   if (error) {
-    if ((error as { code?: string }).code === "23505") {
-      const again = await findSectionId(
-        supabase,
-        section.category,
-        section.agent_id,
-      );
-      if (!again) {
-        throw new Error("failed to resolve section after conflict");
-      }
-      return again;
-    }
-    throw new Error(`failed to insert section id=${section.id}`);
+    console.error("migrate_dashboard_progress_block failed", {
+      blockId: plan.block.id,
+      code: (error as { code?: string }).code ?? "unknown",
+    });
+    throw new Error(`failed to migrate goal id=${plan.goalId}`);
   }
-  return section.id;
+
+  const status = (data as { status?: string } | null)?.status;
+  if (status === "already_migrated") return "already_migrated";
+  if (status === "inserted") return "inserted";
+  throw new Error(`unexpected migrate status for block id=${plan.block.id}`);
 }
 
-async function insertBlock(
-  supabase: SupabaseClient,
-  block: {
-    id: string;
-    section_id: string;
-    block_type: "progress";
-    sort_order: number;
-    agent_id: string | null;
-    payload: string;
-  },
-): Promise<"inserted" | "conflict_skip"> {
-  const { error } = await supabase.from("dashboard_blocks").insert(block);
-  if (error) {
-    if ((error as { code?: string }).code === "23505") {
-      return "conflict_skip";
-    }
-    throw new Error(`failed to insert block id=${block.id}`);
+async function verifyMigration(supabase: SupabaseClient): Promise<void> {
+  const { count: goalsCount, error: goalsError } = await supabase
+    .from("goals")
+    .select("id", { count: "exact", head: true });
+  if (goalsError) {
+    throw new Error("verify: failed to count goals");
   }
 
-  await supabase.from("dashboard_block_events").insert({
-    block_id: block.id,
-    actor_type: "agent",
-    agent_id: block.agent_id,
-    action: "create",
-  });
+  const { data: goals, error: goalsLoadError } = await supabase
+    .from("goals")
+    .select("id")
+    .order("id", { ascending: true });
+  if (goalsLoadError) {
+    throw new Error("verify: failed to load goal ids");
+  }
 
-  return "inserted";
+  const expectedIds = ((goals ?? []) as Array<{ id: string }>).map((g) =>
+    blockIdForGoal(g.id),
+  );
+  const existing = await loadExistingBlockIds(supabase, expectedIds);
+  const missing = expectedIds.filter((id) => !existing.has(id));
+
+  if (missing.length > 0) {
+    console.error(
+      `[migrate-goals-to-blocks] verify mismatch: goals=${goalsCount ?? 0} missingBlocks=${missing.length}`,
+    );
+    for (const id of missing.slice(0, 20)) {
+      console.error(`[migrate-goals-to-blocks] missing block id=${id}`);
+    }
+    throw new Error("verify failed: not every goal has a progress block");
+  }
+
+  let decryptFailed = 0;
+  const chunkSize = 100;
+  for (let i = 0; i < expectedIds.length; i += chunkSize) {
+    const chunk = expectedIds.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from("dashboard_blocks")
+      .select("id, payload")
+      .in("id", chunk);
+    if (error) {
+      throw new Error("verify: failed to load blocks for decrypt check");
+    }
+    for (const row of (data ?? []) as Array<{ id: string; payload: string }>) {
+      try {
+        decryptBlockPayloadStrict(row);
+      } catch {
+        decryptFailed += 1;
+        console.error(
+          `[migrate-goals-to-blocks] verify decrypt failed block id=${row.id}`,
+        );
+      }
+    }
+  }
+
+  if (decryptFailed > 0) {
+    throw new Error(
+      `verify failed: ${decryptFailed} block(s) could not be decrypted`,
+    );
+  }
+
+  console.log(
+    `[migrate-goals-to-blocks] verify ok goals=${goalsCount ?? 0} blocks=${expectedIds.length} decrypted=${expectedIds.length}`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -149,7 +164,6 @@ async function main(): Promise<void> {
     throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
   }
 
-  // Probe encryption key before touching data
   encryptField("__probe__", {
     itemId: "00000000-0000-4000-8000-000000000000",
     column: "payload",
@@ -209,19 +223,11 @@ async function main(): Promise<void> {
         continue;
       }
 
-      const sectionId = await ensureSection(supabase, plan.section);
-      const encrypted = encryptBlockPayload(plan.block.id, plan.block.payload);
-      const result = await insertBlock(supabase, {
-        id: plan.block.id,
-        section_id: sectionId,
-        block_type: plan.block.block_type,
-        sort_order: plan.block.sort_order,
-        agent_id: plan.block.agent_id,
-        payload: encrypted,
-      });
-      if (result === "conflict_skip") {
+      const result = await migrateOne(supabase, plan);
+      if (result === "already_migrated") {
         conflictSkip += 1;
-        console.log(`[execute] conflict skip block id=${plan.block.id}`);
+        existing.add(plan.block.id);
+        console.log(`[execute] already migrated block id=${plan.block.id}`);
         continue;
       }
       inserted += 1;
@@ -238,6 +244,10 @@ async function main(): Promise<void> {
   console.log(
     `[migrate-goals-to-blocks] done scanned=${scanned} skippedMigrated=${skippedMigrated} conflictSkip=${conflictSkip} wouldUpsert=${wouldUpsert} inserted=${inserted}`,
   );
+
+  if (!dryRun) {
+    await verifyMigration(supabase);
+  }
 }
 
 main().catch((err: unknown) => {
