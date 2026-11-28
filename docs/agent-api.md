@@ -2,13 +2,13 @@
 
 域名：`https://desk.nopaiseh.com`  
 鉴权：所有者签发的 Bearer 令牌（`Authorization: Bearer <token>`）。  
-令牌由阁主在 `/settings/agents` 签发；**明文只出现一次**，请立刻写入自己的保密环境变量。
+令牌由阁主在专员详情页「令牌」标签（`/agents/[id]?tab=tokens`）签发；**明文只出现一次**，请立刻写入自己的保密环境变量。
 
 ## 安全规矩
 
 1. 令牌只存在于你自己的保密环境变量（或密钥库），**绝不**写入聊天、日志、截图、工单、公开仓库。
 2. 请求一律走 HTTPS；不要把令牌放进 URL 查询串。
-3. 疑似泄露：立刻请所有者在 `/settings/agents` 吊销，再发新令牌。
+3. 疑似泄露：立刻请所有者在专员详情页「令牌」标签（`/agents/[id]?tab=tokens`）吊销，再发新令牌。
 4. 服务端密钥（如 `SUPABASE_SERVICE_ROLE_KEY`）从不离开 Vercel；姐妹侧拿不到、也不需要。
 
 ## 鉴权头
@@ -230,6 +230,6 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
 
 ## 令牌生命周期（所有者）
 
-- 签发 / 吊销：`/settings/agents`（每次操作重新验通行密钥）。
+- 签发 / 吊销：专员详情页「令牌」标签（`/agents/[id]?tab=tokens`）（每次操作重新验通行密钥）。
 - 库中只存 SHA-256 哈希；吊销写 `revoked_at`，不删行；吊销后立即 `401`。
 - 默认发新令牌时勾选「同时吊销旧令牌」。
