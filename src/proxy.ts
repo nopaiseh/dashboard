@@ -20,7 +20,7 @@ const PUBLIC_PATHS = new Set([
   "/favicon.ico",
 ]);
 
-/** 已移除的首次登记路径：一律 404（勿重定向到 /login）。 */
+/** 已移除路径：一律 404（勿重定向到 /login）。 */
 const REMOVED_PATHS = new Set(["/setup", "/setup/confirm"]);
 
 const PUBLIC_API_PREFIXES = [
@@ -31,12 +31,22 @@ const PUBLIC_API_PREFIXES = [
   "/api/agent/",
 ];
 
-function isRemovedRegistrationPath(pathname: string): boolean {
+function isRemovedPath(pathname: string): boolean {
   if (REMOVED_PATHS.has(pathname)) {
     return true;
   }
+  if (
+    pathname === "/api/auth/setup" ||
+    pathname.startsWith("/api/auth/setup/")
+  ) {
+    return true;
+  }
+  // One-time admin migrate-goals UI removed; keep unauthenticated → 404.
   return (
-    pathname === "/api/auth/setup" || pathname.startsWith("/api/auth/setup/")
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    pathname === "/api/admin" ||
+    pathname.startsWith("/api/admin/")
   );
 }
 
@@ -49,16 +59,6 @@ function isPublic(pathname: string): boolean {
   }
   return PUBLIC_API_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(prefix),
-  );
-}
-
-/** One-time admin paths: unauthenticated → 404 (do not redirect to /login). */
-function isAdminPath(pathname: string): boolean {
-  return (
-    pathname === "/admin" ||
-    pathname.startsWith("/admin/") ||
-    pathname === "/api/admin" ||
-    pathname.startsWith("/api/admin/")
   );
 }
 
@@ -97,10 +97,13 @@ export async function proxy(request: NextRequest) {
     return withSecurity(request, nextWithNonce(request, nonce), nonce);
   }
 
-  if (isRemovedRegistrationPath(pathname)) {
+  if (isRemovedPath(pathname)) {
     return withSecurity(
       request,
-      new NextResponse(null, { status: 404 }),
+      new NextResponse(null, {
+        status: 404,
+        headers: { "Cache-Control": "no-store" },
+      }),
       nonce,
     );
   }
@@ -136,29 +139,6 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!authed) {
-    if (isAdminPath(pathname)) {
-      if (pathname.startsWith("/api/")) {
-        return withSecurity(
-          request,
-          NextResponse.json(
-            { error: "not found" },
-            {
-              status: 404,
-              headers: { "Cache-Control": "no-store" },
-            },
-          ),
-          nonce,
-        );
-      }
-      return withSecurity(
-        request,
-        new NextResponse(null, {
-          status: 404,
-          headers: { "Cache-Control": "no-store" },
-        }),
-        nonce,
-      );
-    }
     if (pathname.startsWith("/api/")) {
       return withSecurity(
         request,
@@ -174,9 +154,6 @@ export async function proxy(request: NextRequest) {
   }
 
   const response = withSecurity(request, nextWithNonce(request, nonce), nonce);
-  if (isAdminPath(pathname)) {
-    response.headers.set("Cache-Control", "no-store");
-  }
 
   // 滑动续期在 proxy 写 cookie（页面内 jar.set 会被 Next 拒绝）
   if (token) {

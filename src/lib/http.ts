@@ -8,18 +8,6 @@ export function jsonError(
   return NextResponse.json({ error, ...extra }, { status });
 }
 
-/** Error JSON with Cache-Control: no-store (sensitive admin routes). */
-export function jsonErrorNoStore(
-  status: number,
-  error: string,
-  extra?: Record<string, unknown>,
-): NextResponse {
-  return NextResponse.json(
-    { error, ...extra },
-    { status, headers: { "Cache-Control": "no-store" } },
-  );
-}
-
 export function jsonOk<T>(data: T, init?: ResponseInit): NextResponse {
   return NextResponse.json(data, init);
 }

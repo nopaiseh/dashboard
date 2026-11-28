@@ -26,7 +26,6 @@ describe("ui labels", () => {
       "waiting",
       "held",
       "sisters",
-      "goals",
       "settings",
     ]);
     expect(KIND_LABELS.approval).toBe("待批");

@@ -40,19 +40,6 @@ export interface AgentRow {
   created_at: string;
 }
 
-export interface GoalRow {
-  id: string;
-  area: string;
-  title: string;
-  target: string;
-  metric: string;
-  progress: number;
-  due_at: string | null;
-  agent_id: string | null;
-  status: string;
-  updated_at: string;
-}
-
 export interface DailySummaryRow {
   date: string;
   content: string;
@@ -88,8 +75,6 @@ const ITEM_COLUMNS =
 
 const AGENT_COLUMNS = "id, slug, name, area, bot_id, created_at";
 
-const GOAL_COLUMNS =
-  "id, area, title, target, metric, progress, due_at, agent_id, status, updated_at";
 
 const SUMMARY_COLUMNS = "date, content, generated_by, created_at";
 
@@ -311,25 +296,6 @@ export async function loadLatestSummary(): Promise<DailySummaryRow | null> {
     .maybeSingle();
   assertNoError("failed to load daily summary", error, "daily_summaries");
   return (data as DailySummaryRow | null) ?? null;
-}
-
-export async function loadGoals(): Promise<
-  Array<GoalRow & { agent_name: string | null }>
-> {
-  await ensureSession();
-  const supabase = getServiceClient();
-  const [{ data: goals, error }, agents] = await Promise.all([
-    supabase
-      .from("goals")
-      .select(GOAL_COLUMNS)
-      .order("updated_at", { ascending: false }),
-    loadAgentsMap(),
-  ]);
-  assertNoError("failed to load goals", error, "goals");
-  return ((goals ?? []) as GoalRow[]).map((g) => ({
-    ...g,
-    agent_name: g.agent_id ? agents.get(g.agent_id)?.name ?? null : null,
-  }));
 }
 
 const SECTION_COLUMNS =

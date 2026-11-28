@@ -211,8 +211,7 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
 
 ### 所有者读取
 
-登录后 `GET /api/dashboard`：返回 `headline`（无一行标题块时为 `""`，前端可回退默认文案）与 `sections[].blocks`（已解密）。  
-旧 `GET /api/goals` 仍可读一版只读 `goals` 表；写入已关闭，表将在验证后删除。
+登录后 `GET /api/dashboard`：返回 `headline`（无一行标题块时为 `""`，前端可回退默认文案）与 `sections[].blocks`（已解密）。
 
 ---
 

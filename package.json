@@ -10,8 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "encrypt-fields": "tsx scripts/encrypt-existing-fields.ts",
-    "migrate-goals": "tsx scripts/migrate-goals-to-blocks.ts"
+    "encrypt-fields": "tsx scripts/encrypt-existing-fields.ts"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",

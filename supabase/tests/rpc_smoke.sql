@@ -233,51 +233,26 @@ BEGIN
 END;
 $$;
 
--- 5) goals 只读：INSERT/UPDATE/DELETE 被触发器拒绝
+-- 5) goals / migrate lock 已删除
 DO $$
-DECLARE
-  v_sqlstate text;
 BEGIN
-  BEGIN
-    INSERT INTO public.goals (area, title)
-    VALUES ('smoke', 'should-fail');
-    RAISE EXCEPTION 'expected goals INSERT to fail';
-  EXCEPTION
-    WHEN OTHERS THEN
-      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
-      IF v_sqlstate IS NULL THEN
-        RAISE EXCEPTION 'goals INSERT should raise';
-      END IF;
-  END;
-
-  BEGIN
-    UPDATE public.goals SET title = 'nope' WHERE false;
-  EXCEPTION
-    WHEN OTHERS THEN
-      NULL; -- statement-level path unused; row trigger covers real updates
-  END;
-
-  -- 有行时 UPDATE 必须失败：先临时关掉触发器不可行；用已知空表路径验证函数存在
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgname = 'goals_no_insert'
-      AND tgrelid = 'public.goals'::regclass
-  ) THEN
-    RAISE EXCEPTION 'goals_no_insert trigger missing';
+  IF to_regclass('public.goals') IS NOT NULL THEN
+    RAISE EXCEPTION 'goals table should be dropped';
   END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgname = 'goals_no_update'
-      AND tgrelid = 'public.goals'::regclass
-  ) THEN
-    RAISE EXCEPTION 'goals_no_update trigger missing';
+  IF to_regtype('public.goal_status') IS NOT NULL THEN
+    RAISE EXCEPTION 'goal_status type should be dropped';
   END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgname = 'goals_no_delete'
-      AND tgrelid = 'public.goals'::regclass
-  ) THEN
-    RAISE EXCEPTION 'goals_no_delete trigger missing';
+  IF to_regclass('public.app_run_locks') IS NOT NULL THEN
+    RAISE EXCEPTION 'app_run_locks table should be dropped';
+  END IF;
+  IF to_regprocedure('public.try_acquire_migrate_goals_lock(text,integer)') IS NOT NULL THEN
+    RAISE EXCEPTION 'try_acquire_migrate_goals_lock should be dropped';
+  END IF;
+  IF to_regprocedure('public.release_migrate_goals_lock(text)') IS NOT NULL THEN
+    RAISE EXCEPTION 'release_migrate_goals_lock should be dropped';
+  END IF;
+  IF to_regprocedure('public.forbid_goals_mutation()') IS NOT NULL THEN
+    RAISE EXCEPTION 'forbid_goals_mutation should be dropped';
   END IF;
 END;
 $$;
@@ -461,37 +436,6 @@ BEGIN
         RAISE EXCEPTION 'dashboard_block_events DELETE should raise';
       END IF;
   END;
-END;
-$$;
-
--- migrate_goals lock: acquire / double-acquire / release
-DO $$
-DECLARE
-  v_ok boolean;
-BEGIN
-  IF to_regprocedure('public.try_acquire_migrate_goals_lock(text,integer)') IS NULL THEN
-    RAISE EXCEPTION 'try_acquire_migrate_goals_lock missing';
-  END IF;
-
-  v_ok := public.try_acquire_migrate_goals_lock('smoke-holder', 60);
-  IF v_ok IS NOT TRUE THEN
-    RAISE EXCEPTION 'expected first acquire to succeed';
-  END IF;
-
-  v_ok := public.try_acquire_migrate_goals_lock('other-holder', 60);
-  IF v_ok IS DISTINCT FROM false THEN
-    RAISE EXCEPTION 'expected second acquire to fail while held';
-  END IF;
-
-  IF public.release_migrate_goals_lock('smoke-holder') IS NOT TRUE THEN
-    RAISE EXCEPTION 'expected release to succeed';
-  END IF;
-
-  v_ok := public.try_acquire_migrate_goals_lock('smoke-holder-2', 60);
-  IF v_ok IS NOT TRUE THEN
-    RAISE EXCEPTION 'expected re-acquire after release';
-  END IF;
-  PERFORM public.release_migrate_goals_lock('smoke-holder-2');
 END;
 $$;
 

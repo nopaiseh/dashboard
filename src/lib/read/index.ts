@@ -12,7 +12,6 @@ export {
   loadAllItems,
   loadCounts,
   loadDashboard,
-  loadGoals,
   loadHeldItems,
   loadItemDetail,
   loadItemsByKind,
@@ -23,7 +22,6 @@ export {
   type AgentRow,
   type Counts,
   type DailySummaryRow,
-  type GoalRow,
   type ItemWithMeta,
   type SisterCard,
 } from "@/lib/read/data";

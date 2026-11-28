@@ -43,7 +43,7 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.headers.get("location")).toBe("http://localhost/login");
   });
 
-  it("returns 404 (not redirect) for /admin/migrate-goals without session", async () => {
+  it("returns 404 (not redirect) for removed /admin paths without session", async () => {
     const { proxy } = await import("@/proxy");
     const pageReq = {
       nextUrl: new URL("http://localhost/admin/migrate-goals"),
@@ -71,12 +71,12 @@ describe("unauthenticated access / proxy hardening", () => {
     delete process.env.SESSION_SECRET;
     const { proxy } = await import("@/proxy");
     const nextRequest = {
-      nextUrl: new URL("http://localhost/api/goals"),
+      nextUrl: new URL("http://localhost/api/dashboard"),
       cookies: {
         get: (name: string) =>
           name === SESSION_COOKIE_NAME ? { value: token } : undefined,
       },
-      url: "http://localhost/api/goals",
+      url: "http://localhost/api/dashboard",
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
 
@@ -237,12 +237,12 @@ describe("unauthenticated access / proxy hardening", () => {
     const token = await createSessionToken();
     const { proxy } = await import("@/proxy");
     const nextRequest = {
-      nextUrl: new URL("http://localhost/api/goals"),
+      nextUrl: new URL("http://localhost/api/dashboard"),
       cookies: {
         get: (name: string) =>
           name === SESSION_COOKIE_NAME ? { value: token } : undefined,
       },
-      url: "http://localhost/api/goals",
+      url: "http://localhost/api/dashboard",
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
 
@@ -274,12 +274,12 @@ describe("unauthenticated access / proxy hardening", () => {
 
     const { proxy } = await import("@/proxy");
     const nextRequest = {
-      nextUrl: new URL("http://localhost/api/goals"),
+      nextUrl: new URL("http://localhost/api/dashboard"),
       cookies: {
         get: (name: string) =>
           name === SESSION_COOKIE_NAME ? { value: token } : undefined,
       },
-      url: "http://localhost/api/goals",
+      url: "http://localhost/api/dashboard",
       headers: new Headers(),
     } as unknown as import("next/server").NextRequest;
 
