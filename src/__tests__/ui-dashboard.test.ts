@@ -13,6 +13,7 @@ import {
   accrueFromActualMonths,
   applyMaOverflow,
   averageMonthlyBalanceGrowth,
+  extraInterestBase,
   monthlyInterestAccrual,
   projectNextMonths,
   stepProjectedMonth,
@@ -1113,6 +1114,37 @@ describe("cpf near-term projection", () => {
     expect(capped.OA).toBeCloseTo(ordinaryCapOA, 6);
   });
 
+  it("fills the S$60k extra base OA→SA→MA (no proportional scale above 60k)", () => {
+    // Made-up balances: combined well above 60k.
+    const bal = { OA: 30_000, SA: 40_000, MA: 20_000 };
+    const base = extraInterestBase(bal);
+    // OA first (capped 20k), then SA takes the remaining 40k; MA gets 0.
+    expect(base).toEqual({ oa: 20_000, sa: 40_000, ma: 0 });
+    const accrual = monthlyInterestAccrual(bal, rates);
+    const ordinarySA = (bal.SA * rates.SA) / 12;
+    const ordinaryMA = (bal.MA * rates.MA) / 12;
+    const ordinaryOA = (bal.OA * rates.OA) / 12;
+    // Extra: (20k+40k)*1%/12 → SA; MA share 0.
+    expect(accrual.OA).toBeCloseTo(ordinaryOA, 6);
+    expect(accrual.SA).toBeCloseTo(ordinarySA + (60_000 * 0.01) / 12, 6);
+    expect(accrual.MA).toBeCloseTo(ordinaryMA, 6);
+  });
+
+  it("gives MA a share of extra interest only after OA+SA fill the 60k", () => {
+    const bal = { OA: 10_000, SA: 20_000, MA: 50_000 };
+    const base = extraInterestBase(bal);
+    expect(base).toEqual({ oa: 10_000, sa: 20_000, ma: 30_000 });
+    const accrual = monthlyInterestAccrual(bal, rates);
+    expect(accrual.SA - (bal.SA * rates.SA) / 12).toBeCloseTo(
+      (30_000 * 0.01) / 12,
+      6,
+    );
+    expect(accrual.MA - (bal.MA * rates.MA) / 12).toBeCloseTo(
+      (30_000 * 0.01) / 12,
+      6,
+    );
+  });
+
   it("routes MA overflow to OA when SA has already reached FRS (under 55)", () => {
     const bal = { OA: 10_000, SA: 220_000, MA: 80_000 };
     const out = applyMaOverflow(bal, 75_000, 220_000);
@@ -1127,6 +1159,48 @@ describe("cpf near-term projection", () => {
     expect(out.MA).toBe(75_000);
     expect(out.SA).toBe(105_000);
     expect(out.OA).toBe(10_000);
+  });
+
+  it("only tops SA up to FRS; remainder of MA overflow goes to OA", () => {
+    // Hypothetical: FRS 220,000, SA 218,000, overflow 5,000.
+    const bal = { OA: 10_000, SA: 218_000, MA: 80_000 };
+    const out = applyMaOverflow(bal, 75_000, 220_000);
+    expect(out.MA).toBe(75_000);
+    expect(out.SA).toBe(220_000); // +2,000 to FRS
+    expect(out.OA).toBe(13_000); // +3,000 remainder
+  });
+
+  it("uses the new calendar year's FRS/BHS after crossing Dec→Jan", () => {
+    // Zero rates so the year-switch is isolated from interest credit.
+    const ratesZero = { OA: 0, SA: 0, MA: 0 };
+    const opts = {
+      rates: ratesZero,
+      inflow: { OA: 0, SA: 0, MA: 0 },
+      bhs: 75_000,
+      frs: 220_000,
+      targetsByYear: {
+        2026: { bhs: 75_000, frs: 220_000 },
+        2027: { bhs: 76_000, frs: 225_000 },
+      },
+    };
+    const dec = stepProjectedMonth(
+      { OA: 10_000, SA: 218_000, MA: 80_000 },
+      { OA: 0, SA: 0, MA: 0 },
+      "2026-12",
+      opts,
+    );
+    // 2026 FRS 220k: +2k to SA, +3k remainder to OA.
+    expect(dec.balances).toEqual({ OA: 13_000, SA: 220_000, MA: 75_000 });
+
+    // Jan 2027 with higher FRS: MA still above new BHS → SA can absorb more.
+    const jan = stepProjectedMonth(
+      { OA: 13_000, SA: 220_000, MA: 80_000 },
+      { OA: 0, SA: 0, MA: 0 },
+      "2027-01",
+      opts,
+    );
+    // Overflow 4k above BHS 76k; room to FRS 225k is 5k → all 4k to SA.
+    expect(jan.balances).toEqual({ OA: 13_000, SA: 224_000, MA: 76_000 });
   });
 
   it("projects a window that crosses Dec→Jan with a January interest step", () => {

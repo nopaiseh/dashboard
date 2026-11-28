@@ -114,23 +114,36 @@ export function averageMonthlyBalanceGrowth(
 export const averageMonthlyContrib = averageMonthlyBalanceGrowth;
 
 /**
+ * Official extra-interest base for the first S$60k (under 55):
+ * fill OA first (capped at S$20k), then SA, then MA — never scale
+ * proportionally when the combined balance exceeds S$60k.
+ */
+export function extraInterestBase(bal: AccBalances): {
+  oa: number;
+  sa: number;
+  ma: number;
+} {
+  let remaining = 60_000;
+  const oa = Math.min(Math.max(0, bal.OA), 20_000, remaining);
+  remaining -= oa;
+  const sa = Math.min(Math.max(0, bal.SA), remaining);
+  remaining -= sa;
+  const ma = Math.min(Math.max(0, bal.MA), remaining);
+  return { oa, sa, ma };
+}
+
+/**
  * Monthly interest accrual (not credited to balances yet).
  * Ordinary interest stays in each account; extra 1% on the first S$60k base
- * (OA capped at S$20k) — MA-derived extra stays in MA, OA/SA-derived extra
- * goes to SA (CPF rules for members under 55).
+ * (OA→SA→MA fill order, OA capped at S$20k) — MA-derived extra stays in MA,
+ * OA/SA-derived extra goes to SA (CPF rules for members under 55).
  */
 export function monthlyInterestAccrual(
   bal: AccBalances,
   rates: AccBalances,
 ): AccBalances {
-  const oaCap = Math.min(bal.OA, 20_000);
-  const saPart = Math.max(0, bal.SA);
-  const maPart = Math.max(0, bal.MA);
-  const rawBase = oaCap + saPart + maPart;
-  const scale = rawBase > 60_000 ? 60_000 / rawBase : 1;
-  const oaExtraBase = oaCap * scale;
-  const saExtraBase = saPart * scale;
-  const maExtraBase = maPart * scale;
+  const { oa: oaExtraBase, sa: saExtraBase, ma: maExtraBase } =
+    extraInterestBase(bal);
 
   const ordinary: AccBalances = {
     OA: (bal.OA * rates.OA) / 12,
@@ -149,8 +162,9 @@ export function monthlyInterestAccrual(
 }
 
 /**
- * MA above BHS overflows to SA while SA &lt; FRS; once SA has reached FRS,
- * overflow goes to OA. This branch models members under 55 (55+ uses OA).
+ * MA above BHS may only top SA up to FRS; any remainder goes to OA.
+ * Example: FRS 220k, SA 218k, overflow 5k → SA 220k and OA +3k.
+ * This branch models members under 55 (55+ uses OA).
  */
 export function applyMaOverflow(
   bal: AccBalances,
@@ -162,28 +176,50 @@ export function applyMaOverflow(
   }
   const overflow = bal.MA - bhs;
   const next = { ...bal, MA: bhs };
-  const saBelowFrs =
-    frs == null || !Number.isFinite(frs) || frs <= 0 || next.SA < frs;
-  if (saBelowFrs) {
-    // Under 55 and SA still below FRS → excess MA goes to SA.
+  if (frs == null || !Number.isFinite(frs) || frs <= 0) {
+    // No FRS given → send all overflow to SA (under-55 default).
     next.SA += overflow;
-  } else {
-    // Under 55 but SA already at/above FRS → excess MA goes to OA.
-    next.OA += overflow;
+    return next;
   }
+  const roomInSa = Math.max(0, frs - next.SA);
+  const toSa = Math.min(overflow, roomInSa);
+  next.SA += toSa;
+  next.OA += overflow - toSa;
   return next;
 }
 
 export type ProjectionInflowKind = "contrib" | "balance_growth";
+
+/** Calendar-year BHS / FRS; used when a projection crosses 1 Jan. */
+export type YearTargets = { bhs?: number; frs?: number };
 
 export type StepProjectionOpts = {
   rates: AccBalances;
   /** Monthly inflow: true 缴存 amounts, or 「余额增幅」 fallback. */
   inflow: AccBalances;
   inflowKind?: ProjectionInflowKind;
+  /** Default / starting-year BHS. */
   bhs?: number;
+  /** Default / starting-year FRS. */
   frs?: number;
+  /**
+   * Per-calendar-year BHS/FRS. When projecting month YYYY-MM, targets for
+   * YYYY win over the defaults above (CPF annual sums update each January).
+   */
+  targetsByYear?: Record<number, YearTargets>;
 };
+
+/** Resolve BHS/FRS for a calendar year (year map first, then defaults). */
+export function resolveYearTargets(
+  opts: Pick<StepProjectionOpts, "bhs" | "frs" | "targetsByYear">,
+  year: number,
+): YearTargets {
+  const y = opts.targetsByYear?.[year];
+  return {
+    bhs: y?.bhs ?? opts.bhs,
+    frs: y?.frs ?? opts.frs,
+  };
+}
 
 /**
  * One projected month:
@@ -210,7 +246,11 @@ export function stepProjectedMonth(
   }
 
   nextBal = addBal(nextBal, opts.inflow);
-  nextBal = applyMaOverflow(nextBal, opts.bhs, opts.frs);
+  // Use this calendar year's BHS/FRS when the projection crosses 1 Jan.
+  const yearTargets = ym
+    ? resolveYearTargets(opts, ym.year)
+    : { bhs: opts.bhs, frs: opts.frs };
+  nextBal = applyMaOverflow(nextBal, yearTargets.bhs, yearTargets.frs);
 
   const monthInterest = monthlyInterestAccrual(nextBal, opts.rates);
   nextAccrued = addBal(nextAccrued, monthInterest);
@@ -308,6 +348,7 @@ export function withNearTermProjection(
     contrib?: AccBalances;
     bhs?: number;
     frs?: number;
+    targetsByYear?: Record<number, YearTargets>;
   },
 ): CpfTrendPoint[] {
   const actuals = points.filter((p) => p.phase === "actual");
@@ -355,6 +396,7 @@ export function withNearTermProjection(
     inflowKind,
     bhs: opts?.bhs,
     frs: opts?.frs,
+    targetsByYear: opts?.targetsByYear,
     actualsForAccrual: monthlyActuals,
   });
 
