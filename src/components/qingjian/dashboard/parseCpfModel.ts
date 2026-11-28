@@ -1,8 +1,13 @@
 /**
  * 从真实 dashboard section blocks 解析 C2 视图模型。
- * 字段名对齐 PR #24 `src/lib/validation.ts`（.strict() payload）。
- * 不引用示例数字；缺字段 → 对应段为 null。
+ * 优先按 payload.block_key 取块（白名单见 `@/lib/cpf-block-keys`）；
+ * 无对应 key 时再按标题回退（跳过已带 block_key 的块）。
+ * 字段名对齐 PR #24 validation schema；不引用示例数字；缺字段 → 对应段为 null。
  */
+import {
+  CPF_BLOCK_KEYS,
+  type CpfBlockKey,
+} from "@/lib/cpf-block-keys";
 import type {
   DashboardBlockPublic,
   DashboardSectionPublic,
@@ -29,6 +34,8 @@ import {
 /** 默认退休档顺序（无 tiers 时回退）：BRS < FRS < ERS。 */
 const DEFAULT_RETIREMENT_TIER_ORDER = ["BRS", "FRS", "ERS"] as const;
 
+const KEY_SET = new Set<string>(CPF_BLOCK_KEYS);
+
 function clean(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(payload)) {
@@ -48,6 +55,42 @@ function num(v: unknown): number | undefined {
 
 function bool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
+}
+
+function payloadBlockKey(
+  payload: Record<string, unknown>,
+): CpfBlockKey | undefined {
+  const k = payload.block_key;
+  if (typeof k !== "string") return undefined;
+  return KEY_SET.has(k) ? (k as CpfBlockKey) : undefined;
+}
+
+function findByKey(
+  blocks: DashboardBlockPublic[],
+  key: CpfBlockKey,
+): DashboardBlockPublic | undefined {
+  return blocks.find((b) => payloadBlockKey(clean(b.payload)) === key);
+}
+
+/** 标题回退候选：跳过已带 block_key 的块，避免误匹配其他槽位。 */
+function unkeyed(blocks: DashboardBlockPublic[]): DashboardBlockPublic[] {
+  return blocks.filter((b) => payloadBlockKey(clean(b.payload)) === undefined);
+}
+
+function blocksOfType(
+  blocks: DashboardBlockPublic[],
+  type: DashboardBlockPublic["block_type"],
+): DashboardBlockPublic[] {
+  return blocks.filter((b) => b.block_type === type);
+}
+
+function titleOf(b: DashboardBlockPublic): string {
+  return str(clean(b.payload).title)?.trim() ?? "";
+}
+
+function matchTitle(title: string, ...needles: string[]): boolean {
+  const t = title.toLowerCase();
+  return needles.some((n) => t.includes(n.toLowerCase()));
 }
 
 /**
@@ -95,29 +138,33 @@ function orderedTierKeys(
   return normalized.map((t) => t.key);
 }
 
-function blocksOfType(
-  blocks: DashboardBlockPublic[],
-  type: DashboardBlockPublic["block_type"],
-): DashboardBlockPublic[] {
-  return blocks.filter((b) => b.block_type === type);
-}
-
-function titleOf(b: DashboardBlockPublic): string {
-  return str(clean(b.payload).title)?.trim() ?? "";
-}
-
-function matchTitle(title: string, ...needles: string[]): boolean {
-  const t = title.toLowerCase();
-  return needles.some((n) => t.includes(n.toLowerCase()));
-}
-
 function parseConclusion(
   blocks: DashboardBlockPublic[],
   pageHeadline: string,
   reachedFrs: boolean,
 ): CpfConclusionData | null {
-  const headlines = blocksOfType(blocks, "headline");
-  const texts = blocksOfType(blocks, "text").filter(
+  const keyed = findByKey(blocks, "cpf_conclusion");
+  if (keyed) {
+    const p = clean(keyed.payload);
+    let title = "";
+    let body = "";
+    if (keyed.block_type === "headline") {
+      title = str(p.text)?.trim() ?? "";
+    } else {
+      title = str(p.title)?.trim() || str(p.text)?.trim() || "";
+      body = str(p.title)?.trim() ? (str(p.text)?.trim() ?? "") : "";
+      if (!str(p.title)?.trim() && str(p.text)?.trim()) {
+        title = str(p.text)!.trim();
+        body = "";
+      }
+    }
+    if (!title) title = pageHeadline.trim();
+    if (!title) return null;
+    return { title, body, reachedFrs };
+  }
+
+  const headlines = unkeyed(blocksOfType(blocks, "headline"));
+  const texts = unkeyed(blocksOfType(blocks, "text")).filter(
     (b) =>
       !matchTitle(titleOf(b), "估算说明", "RSTU", "本月缴存", "利息"),
   );
@@ -141,15 +188,25 @@ function parseConclusion(
 
 function parseAccounts(blocks: DashboardBlockPublic[]): CpfAccountsData | null {
   const metrics = blocksOfType(blocks, "metric");
-  if (metrics.length === 0) return null;
+  if (metrics.length === 0 && !findByKey(blocks, "cpf_acc_oa")) return null;
 
-  const pick = (...needles: string[]) =>
-    metrics.find((b) => matchTitle(titleOf(b), ...needles));
+  const pickUnkeyed = (...needles: string[]) =>
+    unkeyed(metrics).find((b) => {
+      const t = titleOf(b);
+      // 利息块标题常含 OA/SA/MA，不得当作户口余额。
+      if (t.includes("利息")) return false;
+      return matchTitle(t, ...needles);
+    });
 
-  const oa = pick("普通户口", " OA", "OA");
-  const sa = pick("特别户口", " SA", "SA");
-  const ma = pick("保健储蓄", " MA", "MA");
-  const totalBlk = pick("合计", "总额", "total");
+  const oa =
+    findByKey(blocks, "cpf_acc_oa") ??
+    pickUnkeyed("普通户口", " OA", "OA");
+  const sa =
+    findByKey(blocks, "cpf_acc_sa") ??
+    pickUnkeyed("特别户口", " SA", "SA");
+  const ma =
+    findByKey(blocks, "cpf_acc_ma") ??
+    pickUnkeyed("保健储蓄", " MA", "MA");
 
   const readAcc = (
     b: DashboardBlockPublic | undefined,
@@ -180,17 +237,17 @@ function parseAccounts(blocks: DashboardBlockPublic[]): CpfAccountsData | null {
 
   const asOf =
     str(clean(oa?.payload ?? {}).label)?.trim() ||
-    str(clean(totalBlk?.payload ?? {}).label)?.trim() ||
+    str(clean(sa?.payload ?? {}).label)?.trim() ||
+    str(clean(ma?.payload ?? {}).label)?.trim() ||
     "";
 
-  const totalMetric = readAcc(totalBlk);
-
+  // 本月缴存合计来自 cpf_contrib，不在此读 acc_total / 合计 metric。
   return {
     balances,
     chgM,
     chgY,
     asOf,
-    monthContribTotal: totalMetric?.mom,
+    monthContribTotal: undefined,
     monthInterest: undefined,
   };
 }
@@ -224,18 +281,32 @@ function parseProgress(blocks: DashboardBlockPublic[]): {
   reachedFrs: boolean;
 } {
   const progresses = blocksOfType(blocks, "progress");
-  if (progresses.length === 0) return { data: null, reachedFrs: false };
-
-  const maBlk = progresses.find((b) =>
-    matchTitle(titleOf(b), "MA", "BHS", "保健"),
-  );
+  const maBlk =
+    findByKey(blocks, "cpf_prog_ma") ??
+    unkeyed(progresses).find((b) =>
+      matchTitle(titleOf(b), "MA", "BHS", "保健"),
+    );
   const oaSaBlk =
-    progresses.find((b) =>
+    findByKey(blocks, "cpf_prog_oasa") ??
+    unkeyed(progresses).find((b) =>
       matchTitle(titleOf(b), "SA+OA", "BRS", "FRS", "ERS", "退休"),
-    ) ?? progresses.find((b) => b !== maBlk);
+    ) ??
+    unkeyed(progresses).find((b) => b !== maBlk);
+
+  if (progresses.length === 0 && !maBlk && !oaSaBlk) {
+    return { data: null, reachedFrs: false };
+  }
 
   let reachedFrs = false;
+  for (const b of [oaSaBlk, maBlk].filter(Boolean) as DashboardBlockPublic[]) {
+    const p = clean(b.payload);
+    const rt = str(p.reached_tier);
+    const blockTiers = parseTiers(p.tiers);
+    if (reachedFrsFromTier(rt, blockTiers)) reachedFrs = true;
+  }
+  // Also scan other progress blocks for reached_tier (keyed or not).
   for (const b of progresses) {
+    if (b === oaSaBlk || b === maBlk) continue;
     const p = clean(b.payload);
     const rt = str(p.reached_tier);
     const blockTiers = parseTiers(p.tiers);
@@ -270,9 +341,9 @@ function parseProgress(blocks: DashboardBlockPublic[]): {
   const exceedFrs = num(oaSaP?.overshoot) ?? Math.max(0, oaSa - frs);
   const nextYear = num(oaSaP?.next_tier_year);
   const maNextYear = num(maP?.next_tier_year);
-  // status 可用于补充「YYYY-MM」文案（仍为 schema 字段）
   const ersStatus = str(oaSaP?.status)?.trim();
   const bhsStatus = str(maP?.status)?.trim();
+  const reachedTier = str(oaSaP?.reached_tier)?.trim().toUpperCase() || undefined;
 
   return {
     reachedFrs,
@@ -284,8 +355,9 @@ function parseProgress(blocks: DashboardBlockPublic[]): {
       frs,
       ers,
       exceedFrs,
+      reachedTier,
+      nextEstimate: formatHitLabel(ersStatus, nextYear),
       hitBhs: formatHitLabel(bhsStatus, maNextYear),
-      hitErs: formatHitLabel(ersStatus, nextYear),
     },
   };
 }
@@ -305,16 +377,32 @@ function formatHitLabel(
 
 function parseTrend(blocks: DashboardBlockPublic[]): CpfTrendData | null {
   const charts = blocksOfType(blocks, "chart_series");
-  if (charts.length === 0) return null;
+  if (
+    charts.length === 0 &&
+    !findByKey(blocks, "cpf_trend_oa") &&
+    !findByKey(blocks, "cpf_trend_sa") &&
+    !findByKey(blocks, "cpf_trend_ma")
+  ) {
+    return null;
+  }
 
   const byAcc = new Map<AccKey, DashboardBlockPublic>();
+  const oaK = findByKey(blocks, "cpf_trend_oa");
+  const saK = findByKey(blocks, "cpf_trend_sa");
+  const maK = findByKey(blocks, "cpf_trend_ma");
+  if (oaK) byAcc.set("OA", oaK);
+  if (saK) byAcc.set("SA", saK);
+  if (maK) byAcc.set("MA", maK);
+
   const unnamed: DashboardBlockPublic[] = [];
-  for (const b of charts) {
-    const t = titleOf(b);
-    if (matchTitle(t, "OA", "普通")) byAcc.set("OA", b);
-    else if (matchTitle(t, "SA", "特别")) byAcc.set("SA", b);
-    else if (matchTitle(t, "MA", "保健")) byAcc.set("MA", b);
-    else unnamed.push(b);
+  if (byAcc.size === 0) {
+    for (const b of unkeyed(charts)) {
+      const t = titleOf(b);
+      if (matchTitle(t, "OA", "普通")) byAcc.set("OA", b);
+      else if (matchTitle(t, "SA", "特别")) byAcc.set("SA", b);
+      else if (matchTitle(t, "MA", "保健")) byAcc.set("MA", b);
+      else unnamed.push(b);
+    }
   }
 
   type RawPt = {
@@ -442,10 +530,11 @@ function tryParseJsonObject(raw: string): Record<string, unknown> | null {
 }
 
 function parseContrib(blocks: DashboardBlockPublic[]): CpfContribData | null {
-  const lists = blocksOfType(blocks, "list").filter((b) =>
-    matchTitle(titleOf(b), "本月缴存", "缴存"),
-  );
-  const list = lists[0];
+  const list =
+    findByKey(blocks, "cpf_contrib") ??
+    unkeyed(blocksOfType(blocks, "list")).find((b) =>
+      matchTitle(titleOf(b), "本月缴存", "缴存"),
+    );
   if (!list) return null;
   const p = clean(list.payload);
   if (!Array.isArray(p.items) || p.items.length === 0) return null;
@@ -491,32 +580,63 @@ function parseContrib(blocks: DashboardBlockPublic[]): CpfContribData | null {
 }
 
 function parseAnnual(blocks: DashboardBlockPublic[]): CpfAnnualData | null {
-  const interestMetrics = blocksOfType(blocks, "metric").filter((b) =>
+  const metrics = blocksOfType(blocks, "metric");
+  const interestUnkeyed = unkeyed(metrics).filter((b) =>
     matchTitle(titleOf(b), "利息"),
   );
-  const rstuText = blocksOfType(blocks, "text").find(
-    (b) =>
-      matchTitle(titleOf(b), "RSTU") ||
-      str(clean(b.payload).empty_text)?.includes("未填补"),
-  );
 
-  const readInt = (needles: string[]) => {
-    const b = interestMetrics.find((x) => matchTitle(titleOf(x), ...needles));
-    if (!b) return undefined;
-    return num(clean(b.payload).value);
-  };
+  const pickInt = (key: CpfBlockKey, ...needles: string[]) =>
+    findByKey(blocks, key) ??
+    interestUnkeyed.find((x) => matchTitle(titleOf(x), ...needles));
 
-  const OA = readInt(["OA", "普通"]);
-  const SA = readInt(["SA", "特别"]);
-  const MA = readInt(["MA", "保健"]);
-  const totBlk = interestMetrics.find((b) =>
-    matchTitle(titleOf(b), "合计", "总利息"),
-  );
+  const oaBlk = pickInt("cpf_int_oa", "OA", "普通");
+  const saBlk = pickInt("cpf_int_sa", "SA", "特别");
+  const maBlk = pickInt("cpf_int_ma", "MA", "保健");
+  const totBlk =
+    findByKey(blocks, "cpf_int_total") ??
+    interestUnkeyed.find((b) => matchTitle(titleOf(b), "合计", "总利息"));
+
+  const OA = oaBlk ? num(clean(oaBlk.payload).value) : undefined;
+  const SA = saBlk ? num(clean(saBlk.payload).value) : undefined;
+  const MA = maBlk ? num(clean(maBlk.payload).value) : undefined;
+
+  const rateOA = oaBlk ? str(clean(oaBlk.payload).label)?.trim() : undefined;
+  const rateSA = saBlk ? str(clean(saBlk.payload).label)?.trim() : undefined;
+  const rateMA = maBlk ? str(clean(maBlk.payload).label)?.trim() : undefined;
+  const showRates = Boolean(rateOA || rateSA || rateMA);
+
   const interestTotal =
     num(totBlk ? clean(totBlk.payload).value : undefined) ??
     (OA !== undefined && SA !== undefined && MA !== undefined
       ? OA + SA + MA
       : undefined);
+
+  const rstuText =
+    findByKey(blocks, "cpf_rstu") ??
+    unkeyed(blocksOfType(blocks, "text")).find(
+      (b) =>
+        matchTitle(titleOf(b), "RSTU") ||
+        str(clean(b.payload).empty_text)?.includes("未填补"),
+    );
+
+  const paidBlk = findByKey(blocks, "cpf_rstu_paid");
+  let rstuPaidLabel: string | undefined;
+  let rstuPaidPositive: boolean | undefined;
+  if (paidBlk) {
+    const pp = clean(paidBlk.payload);
+    const paidVal = num(pp.value);
+    const paidLabel = str(pp.label)?.trim();
+    if (paidLabel) {
+      rstuPaidLabel = paidLabel;
+    } else if (paidVal !== undefined) {
+      rstuPaidLabel = `已填补 S$ ${paidVal.toLocaleString("en-SG")}`;
+    }
+    if (paidVal !== undefined) {
+      rstuPaidPositive = paidVal > 0;
+    } else if (paidLabel) {
+      rstuPaidPositive = true;
+    }
+  }
 
   if (
     OA === undefined ||
@@ -526,35 +646,61 @@ function parseAnnual(blocks: DashboardBlockPublic[]): CpfAnnualData | null {
   ) {
     if (rstuText) {
       const p = clean(rstuText.payload);
+      const emptyText = str(p.empty_text)?.trim();
+      const body = str(p.text)?.trim();
       return {
         yearLabel: titleOf(rstuText) || "年度",
-        rates: { OA: "—", SA: "—", MA: "—" },
+        rates: {
+          OA: rateOA || "—",
+          SA: rateSA || "—",
+          MA: rateMA || "—",
+        },
+        showRates,
         interest: { OA: 0, SA: 0, MA: 0 },
         interestTotal: 0,
-        rstuEmpty: true,
-        rstuTitle: str(p.empty_text) ?? "本年未填补",
-        rstuBody: str(p.text),
+        rstuEmpty: Boolean(emptyText),
+        rstuTitle: emptyText ?? "本年未填补",
+        rstuBody: body,
+        rstuPaidLabel,
+        rstuPaidPositive,
       };
     }
     return null;
   }
 
   const rstuP = rstuText ? clean(rstuText.payload) : null;
+  const emptyText = str(rstuP?.empty_text)?.trim();
+  const body = str(rstuP?.text)?.trim();
+  // empty_text →「本年未填补」空态；有正文 → 展示内容；无块/无正文 → 组件侧「暂无 RSTU 记录」。
+  const rstuEmpty = Boolean(emptyText);
+
   return {
     yearLabel: "年度利息",
-    rates: { OA: "—", SA: "—", MA: "—" },
+    rates: {
+      OA: rateOA || "—",
+      SA: rateSA || "—",
+      MA: rateMA || "—",
+    },
+    showRates,
     interest: { OA, SA, MA },
     interestTotal,
-    rstuEmpty: Boolean(rstuP?.empty_text) || !rstuText,
-    rstuTitle: str(rstuP?.empty_text) ?? "本年未填补",
-    rstuBody: str(rstuP?.text),
+    rstuEmpty,
+    rstuTitle:
+      emptyText ??
+      (rstuText ? titleOf(rstuText) || undefined : undefined) ??
+      "本年未填补",
+    rstuBody: body,
+    rstuPaidLabel,
+    rstuPaidPositive,
   };
 }
 
 function parseTodos(blocks: DashboardBlockPublic[]): CpfTodoItem[] | null {
-  const list = blocksOfType(blocks, "list").find((b) =>
-    matchTitle(titleOf(b), "待办", "相关待办"),
-  );
+  const list =
+    findByKey(blocks, "cpf_todos") ??
+    unkeyed(blocksOfType(blocks, "list")).find((b) =>
+      matchTitle(titleOf(b), "待办", "相关待办"),
+    );
   if (!list) return null;
   const p = clean(list.payload);
   if (!Array.isArray(p.items)) return null;
@@ -587,9 +733,11 @@ function parseLedger(blocks: DashboardBlockPublic[]): {
   summary?: string;
   emptyWithdrawals?: string;
 } {
-  const list = blocksOfType(blocks, "list").find((b) =>
-    matchTitle(titleOf(b), "流水", "缴存和提取"),
-  );
+  const list =
+    findByKey(blocks, "cpf_ledger") ??
+    unkeyed(blocksOfType(blocks, "list")).find((b) =>
+      matchTitle(titleOf(b), "流水", "缴存和提取"),
+    );
   if (!list) return { rows: null };
   const p = clean(list.payload);
   const emptyText = str(p.empty_text);
@@ -632,9 +780,11 @@ function parseLedger(blocks: DashboardBlockPublic[]): {
 function parseAssumptions(
   blocks: DashboardBlockPublic[],
 ): CpfAssumptionsData | null {
-  const b = blocksOfType(blocks, "text").find((x) =>
-    matchTitle(titleOf(x), "估算说明", "假设"),
-  );
+  const b =
+    findByKey(blocks, "cpf_assumptions") ??
+    unkeyed(blocksOfType(blocks, "text")).find((x) =>
+      matchTitle(titleOf(x), "估算说明", "假设"),
+    );
   if (!b) return null;
   const p = clean(b.payload);
   const text = str(p.text)?.trim() ?? "";
@@ -663,6 +813,10 @@ export function parseCpfModel(
   model.accounts = parseAccounts(blocks);
   model.trend = parseTrend(blocks);
   model.contrib = parseContrib(blocks);
+  // 户口「本月缴存」合计来自 cpf_contrib.total，不用合计 metric。
+  if (model.accounts && model.contrib) {
+    model.accounts.monthContribTotal = model.contrib.total;
+  }
   model.annual = parseAnnual(blocks);
   model.todos = parseTodos(blocks);
   const ledger = parseLedger(blocks);
