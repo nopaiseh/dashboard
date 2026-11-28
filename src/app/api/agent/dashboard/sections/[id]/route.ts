@@ -38,7 +38,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const parsed = patchDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(parsed.error);
   }
 
   const { data: existing, error: loadError } = await supabase

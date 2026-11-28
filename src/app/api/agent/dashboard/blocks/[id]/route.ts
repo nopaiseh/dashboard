@@ -77,7 +77,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const parsed = patchDashboardBlockSchema.safeParse(body);
   if (!parsed.success) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(parsed.error);
   }
 
   const { data: existing, error: loadError } = await supabase
@@ -133,8 +133,12 @@ export async function PATCH(request: Request, context: RouteContext) {
   let touchBlockKey = false;
 
   if (parsed.data.payload !== undefined) {
-    if (!earlyValidateDashboardPayload(nextType, parsed.data.payload)) {
-      return dashboardInvalidPayloadResponse();
+    const early = earlyValidateDashboardPayload(
+      nextType,
+      parsed.data.payload,
+    );
+    if (!early.ok) {
+      return dashboardInvalidPayloadResponse(early.error);
     }
     const payloadParsed = parseDashboardBlockPayload(
       nextType,
@@ -142,7 +146,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       sectionRow.category,
     );
     if (!payloadParsed.ok) {
-      return dashboardInvalidPayloadResponse();
+      return dashboardInvalidPayloadResponse(payloadParsed.error);
     }
     nextPayload = payloadParsed.data;
     nextBlockKey = readPayloadBlockKey(nextPayload) ?? null;

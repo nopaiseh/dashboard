@@ -16,6 +16,14 @@ import type { z } from "zod";
 
 type BlockType = z.infer<typeof dashboardBlockTypeSchema>;
 
+export type DashboardPayloadParseResult =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; error?: z.ZodError };
+
+export type EarlyPayloadValidateResult =
+  | { ok: true }
+  | { ok: false; error?: z.ZodError };
+
 /**
  * Fast-fail payload shape before the section row is loaded.
  * - bank block_key → strict bank schema
@@ -25,21 +33,27 @@ type BlockType = z.infer<typeof dashboardBlockTypeSchema>;
 export function earlyValidateDashboardPayload(
   blockType: BlockType,
   payload: unknown,
-): boolean {
+): EarlyPayloadValidateResult {
   if (
     typeof payload !== "object" ||
     payload === null ||
     Array.isArray(payload)
   ) {
-    return false;
+    return { ok: false };
   }
   const record = payload as Record<string, unknown>;
   const key = record.block_key;
   if (typeof key === "string" && isBankBlockKey(key)) {
-    return parseBankBlockPayload(blockType, record, key).ok;
+    const parsed = parseBankBlockPayload(blockType, record, key);
+    if (parsed.ok) return { ok: true };
+    return { ok: false, error: parsed.error };
   }
   // Non-string / unknown keys fail the CPF-oriented enum here.
-  return dashboardPayloadSchemaFor(blockType).safeParse(payload).success;
+  const parsed = dashboardPayloadSchemaFor(blockType).safeParse(payload);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error };
+  }
+  return { ok: true };
 }
 
 /**
@@ -51,7 +65,7 @@ export function parseDashboardBlockPayload(
   payload: unknown,
   category: string,
   options?: { requireBlockKey?: string },
-): { ok: true; data: Record<string, unknown> } | { ok: false } {
+): DashboardPayloadParseResult {
   const policy = blockKeyPolicyCategory(category);
 
   if (policy === "bank") {
@@ -90,7 +104,7 @@ export function parseDashboardBlockPayload(
 
   const parsed = dashboardPayloadSchemaFor(blockType).safeParse(payload);
   if (!parsed.success) {
-    return { ok: false };
+    return { ok: false, error: parsed.error };
   }
   const data = parsed.data as Record<string, unknown>;
   const blockKey =

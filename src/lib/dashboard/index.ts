@@ -45,12 +45,19 @@ export {
   allowedBlockKeysForCategory,
 } from "@/lib/dashboard/block-key-policy";
 export { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
-export { parseBankBlockPayload } from "@/lib/dashboard/bank-validation";
+export {
+  BANK_UNITS,
+  parseBankBlockPayload,
+  type BankUnit,
+} from "@/lib/dashboard/bank-validation";
 export {
   DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
   DASHBOARD_INVALID_PAYLOAD_ERROR,
+  DASHBOARD_INVALID_PAYLOAD_ISSUES_MAX,
   dashboardBlockKeyConflictResponse,
   dashboardInvalidPayloadResponse,
+  formatDashboardZodIssues,
+  type DashboardPayloadIssue,
 } from "@/lib/dashboard/write-errors";
 export {
   DASHBOARD_BLOCK_TYPES,

@@ -74,16 +74,15 @@ export async function POST(request: Request) {
 
   const parsed = createDashboardBlockSchema.safeParse(body);
   if (!parsed.success) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(parsed.error);
   }
 
-  if (
-    !earlyValidateDashboardPayload(
-      parsed.data.block_type,
-      parsed.data.payload,
-    )
-  ) {
-    return dashboardInvalidPayloadResponse();
+  const early = earlyValidateDashboardPayload(
+    parsed.data.block_type,
+    parsed.data.payload,
+  );
+  if (!early.ok) {
+    return dashboardInvalidPayloadResponse(early.error);
   }
 
   const { data: section, error: sectionError } = await supabase
@@ -116,7 +115,7 @@ export async function POST(request: Request) {
     sectionRow.category,
   );
   if (!payloadParsed.ok) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(payloadParsed.error);
   }
 
   const validatedPayload = payloadParsed.data;

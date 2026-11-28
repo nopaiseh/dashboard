@@ -85,7 +85,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
   const parsed = upsertDashboardBlockSchema.safeParse(body);
   if (!parsed.success) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(parsed.error);
   }
 
   const { data: section, error: sectionError } = await supabase
@@ -123,7 +123,7 @@ export async function PUT(request: Request, context: RouteContext) {
     { requireBlockKey: blockKey },
   );
   if (!payloadParsed.ok) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(payloadParsed.error);
   }
 
   // Column hit first.

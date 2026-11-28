@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BANK_LEDGER_MONTH_JSON_MAX } from "@/lib/dashboard/bank-validation";
 import {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH,
   MAX_EMBEDDED_JSON_DEPTH,
   MAX_EMBEDDED_JSON_STRING_LENGTH,
   normalizeForNricScan,
@@ -237,6 +239,69 @@ describe("embedded JSON string unwrapping", () => {
     expect(containsSingaporeNricOrFin({ text: oversized })).toBe(true);
     expect(containsSingaporeNricOrFin({ items: [oversized] })).toBe(true);
   });
+
+  it("raises unwrap cap for bank_ledger months to 32k and still scans content", () => {
+    expect(MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH).toBe(
+      BANK_LEDGER_MONTH_JSON_MAX,
+    );
+    const lines = Array.from({ length: 200 }, (_, i) => ({
+      kind: i % 2 === 0 ? ("in" as const) : ("out" as const),
+      category: "subscription" as const,
+      amount: 1000 + i,
+    }));
+    const in_total = lines
+      .filter((l) => l.kind === "in")
+      .reduce((s, l) => s + l.amount, 0);
+    const out_total = lines
+      .filter((l) => l.kind === "out")
+      .reduce((s, l) => s + l.amount, 0);
+    const month = JSON.stringify({
+      month: "2026-11",
+      in_total,
+      out_total,
+      lines,
+    });
+    expect(month.length).toBeGreaterThan(MAX_EMBEDDED_JSON_STRING_LENGTH);
+    expect(month.length).toBeLessThanOrEqual(
+      MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH,
+    );
+    expect(
+      containsSingaporeNricOrFin({
+        block_key: "bank_ledger",
+        items: [month],
+      }),
+    ).toBe(false);
+    // Non-ledger context still uses the 10k cap.
+    expect(containsSingaporeNricOrFin({ items: [month] })).toBe(true);
+
+    const overLedger = `{${"a".repeat(MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH)}}`;
+    expect(
+      containsSingaporeNricOrFin({
+        block_key: "bank_ledger",
+        items: [overLedger],
+      }),
+    ).toBe(true);
+
+    // Still scans full content under the raised cap (NRIC hit).
+    const withNric = JSON.stringify({
+      month: "2026-11",
+      in_total: 1,
+      out_total: 0,
+      lines: [{ kind: "in", category: "other", amount: 1 }],
+      note: `FAKE ${SAMPLE_NRIC}`,
+      pad: "x".repeat(MAX_EMBEDDED_JSON_STRING_LENGTH),
+    });
+    expect(withNric.length).toBeGreaterThan(MAX_EMBEDDED_JSON_STRING_LENGTH);
+    expect(withNric.length).toBeLessThanOrEqual(
+      MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH,
+    );
+    expect(
+      containsSingaporeNricOrFin({
+        block_key: "bank_ledger",
+        items: [withNric],
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("dashboard write routes: identical invalid payload bodies", () => {
@@ -276,7 +341,7 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
     }));
   }
 
-  it("NRIC value, banned key, schema failure, and section NRIC share one body", async () => {
+  it("NRIC value, banned key, and section NRIC share one body without echo", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockAgentAuth();
 
@@ -315,23 +380,6 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
 
     vi.resetModules();
     mockAgentAuth();
-    const { POST: postBlock3 } = await import(
-      "@/app/api/agent/dashboard/blocks/route"
-    );
-    const schemaRes = await postBlock3(
-      new Request("http://localhost/api/agent/dashboard/blocks", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          section_id: SECTION_ID,
-          block_type: "metric",
-          payload: { title: "OA", value: 1, unexpected_field: "secret-leak" },
-        }),
-      }),
-    );
-
-    vi.resetModules();
-    mockAgentAuth();
     const { POST: postSection } = await import(
       "@/app/api/agent/dashboard/sections/route"
     );
@@ -346,23 +394,55 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
     const bodies = await Promise.all([
       nricRes.json(),
       bannedKeyRes.json(),
-      schemaRes.json(),
       sectionRes.json(),
     ]);
 
-    for (const res of [nricRes, bannedKeyRes, schemaRes, sectionRes]) {
+    for (const res of [nricRes, bannedKeyRes, sectionRes]) {
       expect(res.status).toBe(400);
     }
     for (const body of bodies) {
       expect(body).toEqual(IDENTICAL_ERROR_BODY);
       expect(body).not.toHaveProperty("details");
+      expect(body).not.toHaveProperty("issues");
       expect(JSON.stringify(body)).not.toContain(SAMPLE_NRIC);
-      expect(JSON.stringify(body)).not.toContain("secret-leak");
+      expect(JSON.stringify(body)).not.toContain(SAMPLE_FIN);
       expect(JSON.stringify(body)).not.toContain("cpfAccount");
     }
 
     // No rejection logging (reason distinction removed).
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("zod schema failure returns issues but never echoes submitted values", async () => {
+    mockAgentAuth();
+    const { POST: postBlock } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+    const schemaRes = await postBlock(
+      new Request("http://localhost/api/agent/dashboard/blocks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          section_id: SECTION_ID,
+          block_type: "metric",
+          payload: { title: "OA", value: 1, unexpected_field: "secret-leak" },
+        }),
+      }),
+    );
+
+    expect(schemaRes.status).toBe(400);
+    const body = await schemaRes.json();
+    expect(body.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(Array.isArray(body.issues)).toBe(true);
+    expect(
+      body.issues.some(
+        (i: { path: string; code: string; message: string }) =>
+          i.path === "unexpected_field" &&
+          i.code === "unrecognized_keys" &&
+          i.message === "多余字段",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(body)).not.toContain("secret-leak");
   });
 
   it("PATCH rejects separator-obfuscated NRIC with the same body", async () => {

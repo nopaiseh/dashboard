@@ -35,7 +35,7 @@ export async function POST(request: Request) {
 
   const parsed = createDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
-    return dashboardInvalidPayloadResponse();
+    return dashboardInvalidPayloadResponse(parsed.error);
   }
 
   const writer = await assertAgentIsCategoryWriter(
