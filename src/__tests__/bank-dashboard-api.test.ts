@@ -21,12 +21,31 @@ import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
 import { DASHBOARD_INVALID_PAYLOAD_ERROR } from "@/lib/dashboard/write-errors";
 import { encryptBlockPayload } from "@/lib/dashboard/crypto";
 import { resetFieldKeyringCache } from "@/lib/crypto/fields-core";
+import {
+  SENSITIVE_DASHBOARD_CATEGORIES,
+  isSensitiveDashboardCategory,
+} from "@/lib/dashboard/sensitive-categories";
 import { issueAgentTokenSchema } from "@/lib/validation";
 
 const KEY_V1 = Buffer.alloc(32, 1).toString("base64");
 const SECTION_ID = "11111111-1111-4111-8111-111111111111";
 const BLOCK_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const AGENT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+/**
+ * Mirror migration backfill (no agent ids): section cats ∪ {'bank'} when the
+ * agent owns a cpf section; otherwise only section cats.
+ */
+function backfillAllowedCategories(
+  agentSectionCategories: string[],
+): string[] {
+  const base = normalizeDashboardCategories(agentSectionCategories);
+  if (base.includes("cpf") && !base.includes("bank")) {
+    return normalizeDashboardCategories([...base, "bank"]);
+  }
+  return base;
+}
 
 /** FAKE bank balance card — not a real account. */
 const FAKE_BANK_ACC_PAYLOAD = {
@@ -100,7 +119,25 @@ describe("bank block_key whitelist (28 keys + cross category)", () => {
   });
 });
 
-describe("token allowed_categories", () => {
+describe("token allowed_categories + sensitive exclusivity", () => {
+  it("marks cpf and bank as the only sensitive categories", () => {
+    expect(SENSITIVE_DASHBOARD_CATEGORIES).toEqual(["cpf", "bank"]);
+    expect(isSensitiveDashboardCategory("CPF")).toBe(true);
+    expect(isSensitiveDashboardCategory("bank")).toBe(true);
+    expect(isSensitiveDashboardCategory("travel")).toBe(false);
+  });
+
+  it("backfill: cpf-section owner gets ∪ bank; others only their sections", () => {
+    expect(backfillAllowedCategories(["cpf"])).toEqual(["cpf", "bank"]);
+    expect(backfillAllowedCategories(["CPF", "travel"])).toEqual([
+      "cpf",
+      "travel",
+      "bank",
+    ]);
+    expect(backfillAllowedCategories(["travel"])).toEqual(["travel"]);
+    expect(backfillAllowedCategories([])).toEqual([]);
+  });
+
   it("empty allow-list denies all; listed category allows", () => {
     expect(isCategoryAllowedForToken([], "bank")).toBe(false);
     expect(isCategoryAllowedForToken(["cpf"], "bank")).toBe(false);
@@ -161,6 +198,142 @@ describe("token allowed_categories", () => {
       }),
     );
     expect(res.status).toBe(403);
+  });
+
+  it("backfilled CPF agent token may write cpf and bank", () => {
+    const cats = backfillAllowedCategories(["cpf"]);
+    expect(cats).toEqual(["cpf", "bank"]);
+    expect(isCategoryAllowedForToken(cats, "cpf")).toBe(true);
+    expect(isCategoryAllowedForToken(cats, "bank")).toBe(true);
+  });
+
+  it("other agent token writing cpf/bank returns 403", async () => {
+    for (const category of ["cpf", "bank"] as const) {
+      vi.resetModules();
+      setEnv();
+      vi.doMock("@/lib/require-request", () => ({
+        requireRequest: async () => undefined,
+      }));
+      vi.doMock("@/lib/agent-service", () => ({
+        resolveAgentFromRequest: async () => ({
+          ok: true,
+          agent: {
+            agentId: AGENT_B,
+            tokenHash: "hash",
+            allowedCategories: ["travel"],
+          },
+        }),
+      }));
+      vi.doMock("@/lib/supabase/server", () => ({
+        getServiceClient: () => ({
+          from: () => {
+            throw new Error("should not reach db");
+          },
+        }),
+      }));
+
+      const { POST } = await import(
+        "@/app/api/agent/dashboard/sections/route"
+      );
+      const res = await POST(
+        new Request("http://localhost/api/agent/dashboard/sections", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ category }),
+        }),
+      );
+      expect(res.status, category).toBe(403);
+    }
+  });
+
+  it("granting cpf/bank to another agent token returns 409", async () => {
+    vi.resetModules();
+    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
+    const { assertSensitiveCategoriesGrantable } = await import(
+      "@/lib/dashboard/sensitive-exclusivity"
+    );
+
+    const supabase = {
+      from: (table: string) => {
+        if (table === "agent_tokens") {
+          return {
+            select: () => ({
+              is: () =>
+                Promise.resolve({
+                  data: [
+                    {
+                      id: "tok-cpf",
+                      agent_id: AGENT_A,
+                      allowed_categories: ["cpf", "bank"],
+                      revoked_at: null,
+                    },
+                  ],
+                  error: null,
+                }),
+            }),
+          };
+        }
+        if (table === "dashboard_sections") {
+          return {
+            select: () =>
+              Promise.resolve({
+                data: [
+                  {
+                    id: SECTION_ID,
+                    agent_id: AGENT_A,
+                    category: "cpf",
+                  },
+                ],
+                error: null,
+              }),
+          };
+        }
+        throw new Error(table);
+      },
+    };
+
+    const denied = await assertSensitiveCategoriesGrantable(
+      supabase as never,
+      AGENT_B,
+      ["bank"],
+    );
+    expect(denied).toEqual({ ok: false, status: 409, error: "conflict" });
+
+    const allowedSameAgent = await assertSensitiveCategoriesGrantable(
+      supabase as never,
+      AGENT_A,
+      ["cpf", "bank"],
+    );
+    expect(allowedSameAgent).toEqual({ ok: true });
+  });
+
+  it("creating sensitive section owned by another agent returns 403", async () => {
+    vi.resetModules();
+    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
+    const { assertSensitiveSectionCreatable } = await import(
+      "@/lib/dashboard/sensitive-exclusivity"
+    );
+    const supabase = {
+      from: () => ({
+        select: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: SECTION_ID,
+                agent_id: AGENT_A,
+                category: "cpf",
+              },
+            ],
+            error: null,
+          }),
+      }),
+    };
+    const denied = await assertSensitiveSectionCreatable(
+      supabase as never,
+      AGENT_B,
+      "cpf",
+    );
+    expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
   });
 });
 

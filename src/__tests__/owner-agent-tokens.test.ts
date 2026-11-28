@@ -324,6 +324,12 @@ describe("owner agent token APIs", () => {
               select: (cols: string) => {
                 void cols;
                 return {
+                  is: () =>
+                    Promise.resolve({
+                      // After revoke_previous, no active tokens remain.
+                      data: [],
+                      error: null,
+                    }),
                   order: () =>
                     Promise.resolve({
                       data: [
@@ -339,6 +345,21 @@ describe("owner agent token APIs", () => {
                     }),
                 };
               },
+            };
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () =>
+                Promise.resolve({
+                  data: [
+                    {
+                      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                      agent_id: AGENT_ID,
+                      category: "cpf",
+                    },
+                  ],
+                  error: null,
+                }),
             };
           }
           if (table === "agents") {

@@ -551,6 +551,10 @@ BEGIN
   IF NOT ('cpf' = ANY (v_cats)) THEN
     RAISE EXCEPTION 'backfill should include cpf from existing section, got %', v_cats;
   END IF;
+  -- CPF-section owner also receives bank (sensitive pair); no agent id hardcoded.
+  IF NOT ('bank' = ANY (v_cats)) THEN
+    RAISE EXCEPTION 'backfill should ∪ bank for cpf-section owner, got %', v_cats;
+  END IF;
 
   -- Upsert by block_key: insert then replace
   v_result := public.upsert_dashboard_block_by_key(

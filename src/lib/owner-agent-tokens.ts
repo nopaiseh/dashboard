@@ -6,6 +6,7 @@ import {
   generateAgentBearerToken,
 } from "@/lib/crypto/agent-token";
 import { hashAgentToken } from "@/lib/crypto";
+import { assertSensitiveCategoriesGrantable } from "@/lib/dashboard/sensitive-exclusivity";
 import type {
   AgentTokenListItem,
   AgentWithTokens,
@@ -160,6 +161,8 @@ export async function issueAgentToken(
     return { ok: false, status: 404, error: "agent not found" };
   }
 
+  // Revoke this agent's previous tokens first so exclusivity checks see the
+  // post-revoke world (same agent may re-issue with the same sensitive cats).
   if (input.revokePrevious) {
     const now = new Date().toISOString();
     const { error: revokeError } = await supabase
@@ -170,6 +173,15 @@ export async function issueAgentToken(
     if (revokeError) {
       return { ok: false, status: 500, error: "failed to revoke previous tokens" };
     }
+  }
+
+  const exclusive = await assertSensitiveCategoriesGrantable(
+    supabase,
+    input.agentId,
+    input.allowedCategories,
+  );
+  if (!exclusive.ok) {
+    return exclusive;
   }
 
   const raw = generateAgentBearerToken();
@@ -185,6 +197,18 @@ export async function issueAgentToken(
     .single();
 
   if (insertError || !row) {
+    // Unique / trigger rejection for sensitive exclusivity → 409
+    if ((insertError as { code?: string } | null)?.code === "23505") {
+      return { ok: false, status: 409, error: "conflict" };
+    }
+    if (
+      (insertError as { code?: string } | null)?.code === "P0001" ||
+      (insertError as { message?: string } | null)?.message?.includes(
+        "sensitive category",
+      )
+    ) {
+      return { ok: false, status: 409, error: "conflict" };
+    }
     return { ok: false, status: 500, error: "failed to issue token" };
   }
 
@@ -244,6 +268,16 @@ export async function updateAgentTokenCategories(
     return { ok: false, status: 409, error: "token already revoked" };
   }
 
+  const exclusive = await assertSensitiveCategoriesGrantable(
+    supabase,
+    input.agentId,
+    input.allowedCategories,
+    { excludeTokenId: input.tokenId },
+  );
+  if (!exclusive.ok) {
+    return exclusive;
+  }
+
   const { data: updated, error: updateError } = await supabase
     .from("agent_tokens")
     .update({ allowed_categories: input.allowedCategories })
@@ -254,6 +288,15 @@ export async function updateAgentTokenCategories(
     .maybeSingle();
 
   if (updateError) {
+    if ((updateError as { code?: string }).code === "23505") {
+      return { ok: false, status: 409, error: "conflict" };
+    }
+    if (
+      (updateError as { code?: string }).code === "P0001" ||
+      updateError.message?.includes("sensitive category")
+    ) {
+      return { ok: false, status: 409, error: "conflict" };
+    }
     return { ok: false, status: 500, error: "failed to update token categories" };
   }
   if (!updated) {

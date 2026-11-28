@@ -11,17 +11,35 @@ ALTER TABLE public.agent_tokens
 COMMENT ON COLUMN public.agent_tokens.allowed_categories IS
   'Normalized lowercase dashboard section categories this token may write. Empty = no category writes. Never default to all.';
 
--- Backfill: each existing token may only write categories of sections its agent
--- already owns. Tokens whose agent has no sections get '{}' (cannot write).
+-- Backfill:
+-- - Tokens for agents that own a `cpf` section get
+--   (their existing section categories) ∪ {'bank'}
+--   so the CPF sister can write both sensitive categories.
+-- - All other tokens get only their agent's existing section categories.
+-- - Agents with no sections → '{}' (cannot write). Never default to all.
+-- No agent ids are hardcoded — CPF ownership is derived from sections.
 UPDATE public.agent_tokens t
-SET allowed_categories = COALESCE(
-  (
-    SELECT array_agg(DISTINCT lower(trim(s.category)) ORDER BY lower(trim(s.category)))
-    FROM public.dashboard_sections s
-    WHERE s.agent_id = t.agent_id
-      AND char_length(trim(s.category)) > 0
-  ),
-  '{}'::text[]
+SET allowed_categories = (
+  SELECT COALESCE(
+    (
+      SELECT array_agg(DISTINCT c ORDER BY c)
+      FROM (
+        SELECT lower(trim(s.category)) AS c
+        FROM public.dashboard_sections s
+        WHERE s.agent_id = t.agent_id
+          AND char_length(trim(s.category)) > 0
+        UNION
+        SELECT 'bank'::text AS c
+        WHERE EXISTS (
+          SELECT 1
+          FROM public.dashboard_sections s2
+          WHERE s2.agent_id = t.agent_id
+            AND lower(trim(s2.category)) = 'cpf'
+        )
+      ) cats
+    ),
+    '{}'::text[]
+  )
 );
 
 ALTER TABLE public.agent_tokens
@@ -45,6 +63,109 @@ ALTER TABLE public.agent_tokens
 
 -- RLS / grants unchanged: table already RLS-on; anon/authenticated revoked;
 -- service_role retains existing access.
+
+-- Sensitive categories (cpf / bank): at most one section globally (any agent).
+-- Category names only — never agent ids.
+CREATE UNIQUE INDEX IF NOT EXISTS dashboard_sections_sensitive_category_uidx
+  ON public.dashboard_sections (lower(trim(category)))
+  WHERE lower(trim(category)) IN ('cpf', 'bank');
+
+-- Token allow-list: sensitive categories may not appear on another agent's
+-- active token, and may not be granted when another agent owns that section.
+CREATE OR REPLACE FUNCTION public.enforce_sensitive_category_token_exclusivity()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_cat text;
+BEGIN
+  IF NEW.revoked_at IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.allowed_categories IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  FOREACH v_cat IN ARRAY NEW.allowed_categories
+  LOOP
+    IF lower(trim(v_cat)) NOT IN ('cpf', 'bank') THEN
+      CONTINUE;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM public.agent_tokens t
+      WHERE t.revoked_at IS NULL
+        AND t.agent_id IS DISTINCT FROM NEW.agent_id
+        AND t.id IS DISTINCT FROM NEW.id
+        AND lower(trim(v_cat)) = ANY (
+          SELECT lower(trim(c)) FROM unnest(t.allowed_categories) AS c
+        )
+    ) THEN
+      RAISE EXCEPTION 'sensitive category already granted to another agent'
+        USING ERRCODE = '23505';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM public.dashboard_sections s
+      WHERE s.agent_id IS DISTINCT FROM NEW.agent_id
+        AND s.agent_id IS NOT NULL
+        AND lower(trim(s.category)) = lower(trim(v_cat))
+    ) THEN
+      RAISE EXCEPTION 'sensitive category section owned by another agent'
+        USING ERRCODE = '23505';
+    END IF;
+  END LOOP;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS agent_tokens_sensitive_category_exclusivity
+  ON public.agent_tokens;
+CREATE TRIGGER agent_tokens_sensitive_category_exclusivity
+  BEFORE INSERT OR UPDATE OF allowed_categories, revoked_at, agent_id
+  ON public.agent_tokens
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_sensitive_category_token_exclusivity();
+
+-- Section writes: sensitive category already held by another agent → reject.
+CREATE OR REPLACE FUNCTION public.enforce_sensitive_category_section_exclusivity()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.category IS NULL OR lower(trim(NEW.category)) NOT IN ('cpf', 'bank') THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.dashboard_sections s
+    WHERE s.id IS DISTINCT FROM NEW.id
+      AND s.agent_id IS DISTINCT FROM NEW.agent_id
+      AND s.agent_id IS NOT NULL
+      AND lower(trim(s.category)) = lower(trim(NEW.category))
+  ) THEN
+    RAISE EXCEPTION 'sensitive category section owned by another agent'
+      USING ERRCODE = '23505';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS dashboard_sections_sensitive_category_exclusivity
+  ON public.dashboard_sections;
+CREATE TRIGGER dashboard_sections_sensitive_category_exclusivity
+  BEFORE INSERT OR UPDATE OF category, agent_id
+  ON public.dashboard_sections
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_sensitive_category_section_exclusivity();
 
 -- ---------------------------------------------------------------------------
 -- 2) dashboard_blocks.block_key (plaintext) + unique (section_id, block_key)

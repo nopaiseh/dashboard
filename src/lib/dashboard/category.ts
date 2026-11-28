@@ -3,6 +3,12 @@
  * Categories are plaintext on dashboard_sections; always compare normalized.
  */
 
+export {
+  SENSITIVE_DASHBOARD_CATEGORIES,
+  isSensitiveDashboardCategory,
+  sensitiveCategoriesIn,
+} from "@/lib/dashboard/sensitive-categories";
+
 /** Trim + lowercase; empty input stays empty. */
 export function normalizeDashboardCategory(category: string): string {
   return category.trim().toLowerCase();

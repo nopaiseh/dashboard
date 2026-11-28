@@ -4,6 +4,7 @@ import {
   planPatchSection,
 } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import { assertSensitiveSectionCreatable } from "@/lib/dashboard/sensitive-exclusivity";
 import type { DashboardSectionRow } from "@/lib/dashboard/types";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -69,6 +70,18 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(catAllowed.status, catAllowed.error);
   }
 
+  if (parsed.data.category !== undefined) {
+    const exclusive = await assertSensitiveSectionCreatable(
+      supabase,
+      auth.agent.agentId,
+      parsed.data.category,
+      { excludeSectionId: id },
+    );
+    if (!exclusive.ok) {
+      return jsonError(exclusive.status, exclusive.error);
+    }
+  }
+
   const planned = planPatchSection(
     auth.agent.agentId,
     sectionRow,
@@ -97,6 +110,11 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (error) {
     if ((error as { code?: string }).code === "23505") {
       return jsonError(409, "conflict");
+    }
+    if (
+      (error as { message?: string }).message?.includes("sensitive category")
+    ) {
+      return jsonError(403, "forbidden");
     }
     return jsonError(500, "failed to update section");
   }

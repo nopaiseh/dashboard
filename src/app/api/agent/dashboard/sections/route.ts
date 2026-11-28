@@ -5,6 +5,7 @@ import {
   planCreateSection,
 } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import { assertSensitiveSectionCreatable } from "@/lib/dashboard/sensitive-exclusivity";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -48,6 +49,15 @@ export async function POST(request: Request) {
     return jsonError(catAllowed.status, catAllowed.error);
   }
 
+  const exclusive = await assertSensitiveSectionCreatable(
+    supabase,
+    auth.agent.agentId,
+    parsed.data.category,
+  );
+  if (!exclusive.ok) {
+    return jsonError(exclusive.status, exclusive.error);
+  }
+
   const planned = planCreateSection(auth.agent.agentId, parsed.data);
   if (!planned.ok) {
     return jsonError(planned.status, planned.error);
@@ -68,7 +78,15 @@ export async function POST(request: Request) {
 
   if (error || !section) {
     if ((error as { code?: string } | null)?.code === "23505") {
+      // Same agent duplicate category, or sensitive-category unique index.
       return jsonError(409, "conflict");
+    }
+    if (
+      (error as { message?: string } | null)?.message?.includes(
+        "sensitive category",
+      )
+    ) {
+      return jsonError(403, "forbidden");
     }
     return jsonError(500, "failed to create section");
   }

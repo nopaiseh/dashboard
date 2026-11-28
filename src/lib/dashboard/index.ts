@@ -33,6 +33,9 @@ export {
   isCategoryAllowedForToken,
   normalizeDashboardCategory,
   normalizeDashboardCategories,
+  SENSITIVE_DASHBOARD_CATEGORIES,
+  isSensitiveDashboardCategory,
+  sensitiveCategoriesIn,
 } from "@/lib/dashboard/category";
 export {
   isBlockKeyAllowedForCategory,

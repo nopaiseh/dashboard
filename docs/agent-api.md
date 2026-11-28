@@ -153,6 +153,7 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 标题 / 数值 / 正文 / 一行标题 / 列表等内容一律进加密 `payload`（与 items 相同的 AES-256-GCM 信封 `v{N}:…`；AAD=`dashboard_blocks:{id}:payload:v{N}`；无遗留明文）。  
 **无 DELETE**：只提供 POST/PATCH/PUT（按 key upsert）；写入经 RPC 与 `dashboard_block_events` 同事务。姐妹只能写 `agent_id` 为自己的分区/区块。  
 令牌须带 `allowed_categories`（规范化小写）；目标分区 `category` 不在列表内 → `403`。空数组＝不能写任何分类（迁移回填默认；**不会**默认放开全部）。  
+**敏感分类** `cpf` / `bank`（常量，不硬编码 agent id）：只能由**同一** agent 持有。签发/改令牌时若其他 agent 的未吊销令牌已持有该分类，或该分类分区属于其他 agent → `409`。建敏感分类分区时若其他 agent 已有该分类分区 → `403`。迁移回填：拥有 `cpf` 分区的 agent 的令牌 = 其已有分区分类 ∪ `{'bank'}`；其余令牌只回填各自已有分区。  
 返回解密 body 的响应带 `Cache-Control: no-store`。更改 `block_type` 时必须同时提交符合新类型的 `payload`，否则 `400`。
 
 ### `block_key` 按分区白名单
