@@ -3,7 +3,10 @@
  * 禁止在此写入示例数字。
  */
 import type { BankAccountKey, BankGroup } from "@/lib/bank-block-keys";
+import type { BankUnit } from "./bankFormat";
 import type { ChartRangeMode } from "./types";
+
+export type { BankUnit };
 
 export type BankProgressKind =
   | "savings"
@@ -30,7 +33,8 @@ export type BankProgressItem = {
   kind: BankProgressKind;
   value: number;
   target: number;
-  unit: "S$" | "个月";
+  /** 白名单见 BANK_UNITS（"S$" | "月"）；白名单外只显示数字 */
+  unit: BankUnit | string;
   progress: number;
   monthlyNeeded?: number;
   due: string;

@@ -90,7 +90,6 @@ export function buildSampleBankBlocks(): DashboardBlockPublic[] {
     blocks.push(
       blk(`bank-prog-${prog.block_key}`, "progress", order++, {
         ...prog,
-        unit: "S$",
       }),
     );
   }

@@ -4,9 +4,11 @@ import {
   BANK_EMPTY,
   BANK_NOT_STARTED,
   bankAllocFill,
+  formatBankMilestoneLabel,
   formatBankMoney,
   formatBankOvershootLabel,
   formatBankProgressPct,
+  formatBankProgressValue,
   isBankProgressOver,
 } from "./bankFormat";
 import type { BankProgressItem, BankViewModel } from "./bankModel";
@@ -123,6 +125,9 @@ function GoalRow({
   const warn = item.status === "behind" && !over;
   const accName = accountName(model, item.accountKey);
   const dueBit = item.due ? ` · 截止 ${item.due}` : "";
+  const currentLabel = formatBankProgressValue(item.value, item.unit);
+  const targetLabel = formatBankProgressValue(item.target, item.unit);
+  const rangeText = `${currentLabel} / ${targetLabel}`;
 
   return (
     <div className={noTarget ? "k-bankGr nt" : "k-bankGr"}>
@@ -137,7 +142,12 @@ function GoalRow({
         <div className={"k-bankNostart"}>{BANK_NOT_STARTED}</div>
       ) : (
         <div>
-          <BankProgressBar progress={item.progress} warn={warn} />
+          <BankProgressBar
+            progress={item.progress}
+            warn={warn}
+            valueText={rangeText}
+            label={`${item.title} ${rangeText}`}
+          />
           <div style={{ marginTop: "0.45rem" }}>
             <BankStatusChip
               status={item.status}
@@ -149,7 +159,7 @@ function GoalRow({
             <div className={"k-bankMs"}>
               {item.milestones.map((m) => (
                 <span key={`${m.t}-${m.amount}`}>
-                  {m.t} {formatBankMoney(m.amount, item.kind === "streak" ? 0 : 2)}
+                  {formatBankMilestoneLabel(m.t, m.amount, item.unit)}
                 </span>
               ))}
             </div>
@@ -166,10 +176,7 @@ function GoalRow({
           <>
             <div>
               <span>当前 / 目标</span>
-              <b className={over ? "neg" : undefined}>
-                {formatGoalAmount(item.value, item)} /{" "}
-                {formatGoalAmount(item.target, item)}
-              </b>
+              <b className={over ? "neg" : undefined}>{rangeText}</b>
             </div>
             <div>
               <span>进度</span>
@@ -191,13 +198,6 @@ function GoalRow({
       </div>
     </div>
   );
-}
-
-function formatGoalAmount(n: number, item: BankProgressItem): string {
-  if (item.kind === "streak") {
-    return `${Math.round(n)} 个月`;
-  }
-  return formatBankMoney(n);
 }
 
 function AllocCard({
