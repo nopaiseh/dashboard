@@ -1030,3 +1030,394 @@
 .qj-btnCompact .qj-btnHint {
   display: none;
 }
+
+/* —— Dashboard (Plan C blocks) —— */
+.qj-dash {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.qj-dashSampleBanner {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--qj-radius-sm);
+  background: var(--qj-warn-bg);
+  color: var(--qj-warn-ink);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.qj-dashHeadline h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.qj-dashPageEmpty {
+  margin-top: 1.5rem;
+  padding: 2rem 1.25rem;
+  text-align: center;
+  color: var(--qj-ink-muted);
+  background: var(--qj-surface);
+  border: 1px dashed var(--qj-line);
+  border-radius: var(--qj-radius);
+}
+
+.qj-dashPageEmpty p {
+  margin: 0;
+  font-size: 0.975rem;
+  line-height: 1.65;
+}
+
+.qj-dashSection {
+  margin-top: 0.5rem;
+}
+
+.qj-dashSectionPinned {
+  margin-top: 0.85rem;
+}
+
+.qj-dashSectionHead {
+  margin-top: 1.1rem;
+}
+
+.qj-dashBlocks {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 900px) {
+  .qj-dashBlocks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .qj-dashChart,
+  .qj-dashProgress {
+    grid-column: 1 / -1;
+  }
+}
+
+.qj-dashBlock {
+  background: var(--qj-surface);
+  border: 1px solid var(--qj-line);
+  border-radius: var(--qj-radius);
+  padding: 1rem 1.05rem;
+  box-shadow: var(--qj-shadow);
+}
+
+.qj-dashBlockTitle {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--qj-ink);
+}
+
+.qj-dashEmpty {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--qj-bg-soft) 70%, white);
+}
+
+.qj-dashEmptyMsg {
+  margin: 0.55rem 0 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.875rem;
+}
+
+.qj-dashMetricLabel {
+  margin: 0.25rem 0 0;
+  color: var(--qj-ink-soft);
+  font-size: 0.75rem;
+}
+
+.qj-dashMetricValue {
+  margin: 0.45rem 0 0;
+  font-size: 1.65rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.qj-dashMetricDelta {
+  margin: 0.4rem 0 0;
+  color: var(--qj-green);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.qj-dashMetricYtd {
+  margin: 0.2rem 0 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.8125rem;
+}
+
+.qj-dashProgressValue {
+  margin: 0.4rem 0 0.65rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.qj-dashProgressTrackWrap {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.qj-dashProgressSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.qj-dashProgressTrack {
+  fill: var(--qj-green-mid);
+}
+
+.qj-dashProgressFill {
+  fill: var(--qj-green);
+}
+
+.qj-dashOverPatBg {
+  fill: color-mix(in srgb, var(--qj-green) 18%, white);
+}
+
+.qj-dashOverPatFg {
+  fill: var(--qj-green);
+  opacity: 0.55;
+}
+
+.qj-dashTierMark {
+  stroke: var(--qj-ink-soft);
+  stroke-width: 1;
+}
+
+.qj-dashTierLabels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.9rem;
+}
+
+.qj-dashTierLabels li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.75rem;
+  color: var(--qj-ink-muted);
+}
+
+.qj-dashTierKey {
+  font-weight: 700;
+  color: var(--qj-ink);
+}
+
+.qj-dashTierAmt {
+  font-variant-numeric: tabular-nums;
+}
+
+.qj-dashProgressCaption {
+  margin: 0.65rem 0 0;
+  color: var(--qj-ink);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.qj-dashProgressStatus {
+  margin: 0.35rem 0 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.8125rem;
+}
+
+.qj-dashListItems {
+  margin: 0.55rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--qj-ink);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.qj-dashTextBody {
+  margin: 0.55rem 0 0;
+  color: var(--qj-ink);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.qj-dashMissingYears {
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.qj-dashMissingYear {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--qj-radius-sm);
+  color: var(--qj-ink-muted);
+  font-size: 0.8125rem;
+  background: repeating-linear-gradient(
+    -45deg,
+    #eef1ef,
+    #eef1ef 6px,
+    #e4e8e5 6px,
+    #e4e8e5 12px
+  );
+}
+
+.qj-dashMissingStripe {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--qj-ink-soft) 55%, transparent);
+  flex: 0 0 auto;
+}
+
+.qj-dashChartHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  margin-bottom: 0.55rem;
+}
+
+.qj-dashChartTabs {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  border-radius: 999px;
+  background: var(--qj-bg-soft);
+  border: 1px solid var(--qj-line);
+}
+
+.qj-dashChartTab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--qj-ink-muted);
+  font-size: 0.75rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qj-dashChartTabOn {
+  background: var(--qj-surface);
+  color: var(--qj-green-deep);
+  font-weight: 600;
+  box-shadow: var(--qj-shadow);
+}
+
+.qj-dashChartCanvas {
+  margin-top: 0.25rem;
+  border-radius: var(--qj-radius-sm);
+  background: linear-gradient(180deg, #fff 0%, var(--qj-green-soft) 160%);
+  border: 1px solid color-mix(in srgb, var(--qj-green) 12%, var(--qj-line));
+  overflow: hidden;
+}
+
+.qj-dashChartSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.qj-dashChartGrid {
+  stroke: color-mix(in srgb, var(--qj-line) 80%, transparent);
+  stroke-width: 1;
+}
+
+.qj-dashChartLineActual {
+  stroke: var(--qj-green);
+  stroke-width: 2.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.qj-dashChartLineProjected {
+  stroke: var(--qj-green);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+.qj-dashChartDotYear {
+  fill: var(--qj-green-deep);
+}
+
+.qj-dashChartDotMonth {
+  fill: var(--qj-green);
+}
+
+.qj-dashChartDotProjected {
+  fill: #fff;
+  stroke: var(--qj-green);
+  stroke-width: 1.5;
+}
+
+.qj-dashChartHit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.qj-dashChartHit:focus {
+  outline: none;
+}
+
+.qj-dashChartHit:focus-visible {
+  stroke: var(--qj-green-deep);
+  stroke-width: 2;
+}
+
+.qj-dashChartFlagPole {
+  stroke: var(--qj-warn-ink);
+  stroke-width: 1.25;
+}
+
+.qj-dashChartFlag {
+  fill: var(--qj-warn-ink);
+}
+
+.qj-dashChartEmployer {
+  fill: var(--qj-ink);
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.qj-dashChartTooltip {
+  margin: 0.55rem 0 0;
+  min-height: 1.35em;
+  color: var(--qj-ink-muted);
+  font-size: 0.8125rem;
+}
+
+.qj-dashProjectionNote {
+  margin: 0.45rem 0 0;
+  color: var(--qj-ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .qj-dashMetricValue {
+    font-size: 1.45rem;
+  }
+
+  .qj-dashChartTab {
+    font-size: 0.7rem;
+    padding: 0.3rem 0.55rem;
+  }
+}
