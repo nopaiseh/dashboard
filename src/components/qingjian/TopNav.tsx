@@ -6,7 +6,7 @@ import type { Counts } from "@/lib/read";
 import { formatHeaderDate } from "@/lib/ui/format";
 import { NAV_TABS, type NavTabId } from "@/lib/ui/labels";
 
-const PRIMARY_MOBILE = new Set(["today", "pending", "todo", "qa-in"]);
+const PRIMARY_MOBILE = new Set(["today", "pending", "todo", "waiting"]);
 
 function countFor(
   id: NavTabId,
@@ -18,10 +18,6 @@ function countFor(
       return counts.approval;
     case "todo":
       return counts.todo;
-    case "qa-in":
-      return counts.question_to_user;
-    case "qa-out":
-      return counts.question_from_user;
     case "waiting":
       return counts.waiting;
     case "held":

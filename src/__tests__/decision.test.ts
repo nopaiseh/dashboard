@@ -85,7 +85,7 @@ describe("decision API rules", () => {
 
     expect(
       assertDecisionAllowed(
-        "question_to_user",
+        "waiting",
         "reply",
         "open",
         undefined,

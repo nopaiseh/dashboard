@@ -44,7 +44,7 @@ export default async function HomePage() {
     const busy = sisters.filter((s) => s.openCount > 0).slice(0, 3);
     const sistersPreview = busy.length
       ? busy.map((s) => `${s.agent.name}（${s.summary}）`).join("；")
-      : "按负责姐妹浏览待办与问答";
+      : "按负责姐妹浏览待办与待回音";
 
     return (
       <AppShell active="today" counts={counts} siteName={siteName}>

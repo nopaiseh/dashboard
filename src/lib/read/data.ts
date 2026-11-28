@@ -64,8 +64,6 @@ export interface ItemWithMeta extends ItemRow {
 export interface Counts {
   approval: number;
   todo: number;
-  question_to_user: number;
-  question_from_user: number;
   waiting: number;
   held: number;
 }
@@ -279,26 +277,15 @@ export async function loadOpenApprovals(limit = 20): Promise<ItemWithMeta[]> {
 
 export async function loadCounts(now: Date = new Date()): Promise<Counts> {
   await ensureSession();
-  const [
-    approval,
-    todo,
-    question_to_user,
-    question_from_user,
-    waiting,
-    held,
-  ] = await Promise.all([
+  const [approval, todo, waiting, held] = await Promise.all([
     countOpenByKind("approval"),
     countOpenByKind("todo"),
-    countOpenByKind("question_to_user"),
-    countOpenByKind("question_from_user"),
     countOpenByKind("waiting"),
     countHeld(now),
   ]);
   return {
     approval,
     todo,
-    question_to_user,
-    question_from_user,
     waiting,
     held,
   };
@@ -378,19 +365,11 @@ export async function loadSisterCards(): Promise<SisterCard[]> {
       byKind[item.kind] = (byKind[item.kind] ?? 0) + 1;
       if (isHeldItem("open", item.last_activity_at)) held += 1;
     }
-    const kindOrder: ItemKind[] = [
-      "approval",
-      "todo",
-      "question_to_user",
-      "question_from_user",
-      "waiting",
-    ];
+    const kindOrder: ItemKind[] = ["approval", "todo", "waiting"];
     const kindLabels: Record<ItemKind, string> = {
       approval: "待批",
       todo: "待办",
-      question_to_user: "问你的",
-      question_from_user: "你问的",
-      waiting: "等别人",
+      waiting: "待回音",
     };
     for (const k of kindOrder) {
       const n = byKind[k];

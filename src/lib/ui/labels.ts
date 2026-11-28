@@ -12,9 +12,7 @@ export const STATUS_LABELS: Record<ItemStatus, string> = {
 export const KIND_LABELS: Record<ItemKind, string> = {
   approval: "待批",
   todo: "待办",
-  question_to_user: "问你的",
-  question_from_user: "你问的",
-  waiting: "等别人",
+  waiting: "待回音",
 };
 
 export const ACTION_LABELS: Record<ItemAction, string> = {
@@ -31,21 +29,7 @@ export const NAV_TABS = [
   { id: "today", href: "/", label: "今日", primary: true },
   { id: "pending", href: "/pending", label: "待批", kind: "approval" as const, primary: true },
   { id: "todo", href: "/todo", label: "待办", kind: "todo" as const, primary: true },
-  {
-    id: "qa-in",
-    href: "/qa-in",
-    label: "问你的",
-    kind: "question_to_user" as const,
-    primary: true,
-  },
-  {
-    id: "qa-out",
-    href: "/qa-out",
-    label: "你问的",
-    kind: "question_from_user" as const,
-    primary: false,
-  },
-  { id: "waiting", href: "/waiting", label: "等别人", kind: "waiting" as const, primary: false },
+  { id: "waiting", href: "/waiting", label: "待回音", kind: "waiting" as const, primary: true },
   { id: "held", href: "/held", label: "搁置", primary: false },
   { id: "sisters", href: "/sisters", label: "姐妹", primary: false },
   { id: "goals", href: "/goals", label: "目标", primary: false },
@@ -65,8 +49,6 @@ export function navTabFromPathname(pathname: string): NavTabId {
   if (pathname.startsWith("/sisters")) return "sisters";
   if (pathname.startsWith("/pending")) return "pending";
   if (pathname.startsWith("/todo")) return "todo";
-  if (pathname.startsWith("/qa-in")) return "qa-in";
-  if (pathname.startsWith("/qa-out")) return "qa-out";
   if (pathname.startsWith("/waiting")) return "waiting";
   if (pathname.startsWith("/held")) return "held";
   if (pathname.startsWith("/goals")) return "goals";
@@ -76,8 +58,8 @@ export function navTabFromPathname(pathname: string): NavTabId {
 export const MOBILE_BOTTOM = [
   { id: "today", href: "/", label: "今日" },
   { id: "pending", href: "/pending", label: "待批" },
-  { id: "qa", href: "/qa-in", label: "问答" },
   { id: "todo", href: "/todo", label: "待办" },
+  { id: "waiting", href: "/waiting", label: "待回音" },
 ] as const;
 
 export const INVALIDATED_APPROVAL_LABEL = "内容已变更，原批准已失效";

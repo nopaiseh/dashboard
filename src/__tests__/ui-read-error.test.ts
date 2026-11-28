@@ -127,6 +127,7 @@ describe("navTabFromPathname", () => {
     expect(navTabFromPathname("/sisters/abc")).toBe("sisters");
     expect(navTabFromPathname("/settings/agents")).toBe("settings");
     expect(navTabFromPathname("/items/abc")).toBe("today");
-    expect(navTabFromPathname("/qa-out")).toBe("qa-out");
+    expect(navTabFromPathname("/waiting")).toBe("waiting");
+    expect(navTabFromPathname("/todo")).toBe("todo");
   });
 });
