@@ -11,6 +11,8 @@ import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
 import {
   StackedTrendChart,
   buildTwelveMonthXLabels,
+  buildYearXTicks,
+  yearEndMs,
   xPositionsForDates,
 } from "@/components/qingjian/dashboard/StackedTrendChart";
 import {
@@ -420,6 +422,61 @@ describe("StackedTrendChart date scale", () => {
     );
     const monthLabels = axisLabels.filter((t) => /^\d{1,2}月$/.test(t ?? ""));
     expect(monthLabels[0]).toBe("1月");
+  });
+
+  it("year ticks use equal pixel spans for equal years; last tick is not 2026-01", () => {
+    const allInnerW = 900 - 48 - 16;
+    const ts = [
+      "2016",
+      "2018",
+      "2020",
+      "2022",
+      "2024",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07",
+      "2026-08",
+      "2026-09",
+      "2026-10",
+      "2026-11",
+    ];
+    const times = ts.map((t) => parsePointTime(t)!);
+    const tMin = Math.min(...times);
+    const tMax = Math.max(...times);
+    const ticks = buildYearXTicks(tMin, tMax, padLeft, allInnerW);
+
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    // Anchored at year-end, not at 2026-01.
+    const jan2026 = parsePointTime("2026-01")!;
+    for (const tick of ticks) {
+      expect(tick.t).toBe(yearEndMs(tick.year));
+      expect(Math.abs(tick.t - jan2026)).toBeGreaterThan(1);
+    }
+    expect(ticks.map((t) => t.year)).not.toContain(2026);
+
+    // Equal year steps → equal pixel gaps (date scale).
+    const yearSteps = ticks
+      .slice(1)
+      .map((t, i) => t.year - ticks[i]!.year);
+    expect(new Set(yearSteps).size).toBe(1);
+    const gaps = ticks.slice(1).map((t, i) => t.x - ticks[i]!.x);
+    for (const g of gaps) {
+      expect(Math.abs(g - gaps[0]!)).toBeLessThan(0.51);
+    }
+
+    // Old bug: placing "2026" at 2026-01 made 2024→2026 (~13mo) shorter than 24mo spans.
+    const x2024 = ticks.find((t) => t.year === 2024)?.x;
+    const x2022 = ticks.find((t) => t.year === 2022)?.x;
+    expect(x2024).toBeDefined();
+    expect(x2022).toBeDefined();
+    const twoYearGap = x2024! - x2022!;
+    const fake2026AtJan =
+      padLeft + ((jan2026 - tMin) / (tMax - tMin)) * allInnerW;
+    expect(fake2026AtJan - x2024!).toBeLessThan(twoYearGap * 0.7);
   });
 });
 
