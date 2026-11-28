@@ -4,6 +4,7 @@ import {
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
 import { planPatchBlock } from "@/lib/dashboard/logic";
+import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -57,6 +58,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     body = await request.json();
   } catch {
     return jsonError(400, "invalid json");
+  }
+
+  if (containsSingaporeNricOrFin(body)) {
+    console.error("dashboard write rejected", {
+      reason: "forbidden_identifier",
+    });
+    return jsonError(400, "forbidden identifier");
   }
 
   const parsed = patchDashboardBlockSchema.safeParse(body);

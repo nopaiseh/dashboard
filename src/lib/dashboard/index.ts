@@ -19,6 +19,7 @@ export {
   planPatchBlock,
   planPatchSection,
 } from "@/lib/dashboard/logic";
+export { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 export {
   DASHBOARD_BLOCK_TYPES,
   type ChartSeriesPayload,

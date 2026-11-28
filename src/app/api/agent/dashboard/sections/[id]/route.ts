@@ -1,5 +1,6 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planPatchSection } from "@/lib/dashboard/logic";
+import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import type { DashboardSectionRow } from "@/lib/dashboard/types";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -27,6 +28,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     body = await request.json();
   } catch {
     return jsonError(400, "invalid json");
+  }
+
+  if (containsSingaporeNricOrFin(body)) {
+    console.error("dashboard write rejected", {
+      reason: "forbidden_identifier",
+    });
+    return jsonError(400, "forbidden identifier");
   }
 
   const parsed = patchDashboardSectionSchema.safeParse(body);

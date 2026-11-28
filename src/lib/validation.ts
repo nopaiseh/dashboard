@@ -247,6 +247,16 @@ export const DASHBOARD_HEADLINE_MAX = 500;
 export const DASHBOARD_LIST_ITEMS_MAX = 50;
 export const DASHBOARD_LIST_ITEM_MAX = 500;
 export const DASHBOARD_CHART_POINTS_MAX = 366;
+export const DASHBOARD_EMPTY_TEXT_MAX = 500;
+export const DASHBOARD_TIERS_MAX = 20;
+export const DASHBOARD_TIER_KEY_MAX = 64;
+export const DASHBOARD_TIER_LABEL_MAX = 200;
+export const DASHBOARD_CHART_EVENTS_MAX = 100;
+export const DASHBOARD_EVENT_LABEL_MAX = 200;
+export const DASHBOARD_MISSING_YEARS_MAX = 50;
+export const DASHBOARD_MISSING_YEAR_MAX = 16;
+export const DASHBOARD_YEAR_MIN = 1900;
+export const DASHBOARD_YEAR_MAX = 2200;
 
 export const dashboardBlockTypeSchema = z.enum([
   "headline",
@@ -256,6 +266,46 @@ export const dashboardBlockTypeSchema = z.enum([
   "text",
   "chart_series",
 ]);
+
+const dashboardEmptyTextSchema = z.string().max(DASHBOARD_EMPTY_TEXT_MAX);
+const dashboardMissingYearsSchema = z
+  .array(z.string().min(1).max(DASHBOARD_MISSING_YEAR_MAX))
+  .max(DASHBOARD_MISSING_YEARS_MAX);
+const dashboardYearSchema = z
+  .number()
+  .int()
+  .finite()
+  .min(DASHBOARD_YEAR_MIN)
+  .max(DASHBOARD_YEAR_MAX);
+
+const progressTierSchema = z
+  .array(
+    z
+      .object({
+        key: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX),
+        label: z.string().min(1).max(DASHBOARD_TIER_LABEL_MAX),
+        amount: z.number().finite(),
+      })
+      .strict(),
+  )
+  .max(DASHBOARD_TIERS_MAX);
+
+const chartSeriesPointSchema = z
+  .object({
+    t: z.string().min(1).max(64),
+    v: z.number().finite(),
+    phase: z.enum(["actual", "projected"]).optional(),
+    grain: z.enum(["month", "year"]).optional(),
+  })
+  .strict();
+
+const chartEventSchema = z
+  .object({
+    t: z.string().min(1).max(64),
+    kind: z.enum(["employer_change", "lump_sum"]),
+    label: z.string().max(DASHBOARD_EVENT_LABEL_MAX).optional(),
+  })
+  .strict();
 
 const headlinePayloadSchema = z
   .object({
@@ -267,6 +317,8 @@ const textPayloadSchema = z
   .object({
     text: z.string().max(BODY_MAX),
     title: z.string().max(TITLE_MAX).optional(),
+    empty_text: dashboardEmptyTextSchema.optional(),
+    missing_years: dashboardMissingYearsSchema.optional(),
   })
   .strict();
 
@@ -276,6 +328,9 @@ const metricPayloadSchema = z
     value: z.number().finite(),
     unit: z.string().max(64).optional(),
     label: z.string().max(TITLE_MAX).optional(),
+    delta_mom: z.number().finite().optional(),
+    ytd: z.number().finite().optional(),
+    empty_text: dashboardEmptyTextSchema.optional(),
   })
   .strict();
 
@@ -287,6 +342,15 @@ const progressPayloadSchema = z
     progress: z.number().finite(),
     due_at: z.string().datetime().nullable().optional(),
     status: z.string().max(64).optional(),
+    value: z.number().finite().optional(),
+    unit: z.string().max(64).optional(),
+    tiers: progressTierSchema.optional(),
+    reached_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
+    next_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
+    next_tier_year: z
+      .union([dashboardYearSchema, z.string().min(1).max(32)])
+      .optional(),
+    overshoot: z.number().finite().optional(),
   })
   .strict();
 
@@ -296,6 +360,8 @@ const listPayloadSchema = z
     items: z
       .array(z.string().max(DASHBOARD_LIST_ITEM_MAX))
       .max(DASHBOARD_LIST_ITEMS_MAX),
+    empty_text: dashboardEmptyTextSchema.optional(),
+    missing_years: dashboardMissingYearsSchema.optional(),
   })
   .strict();
 
@@ -303,15 +369,11 @@ const chartSeriesPayloadSchema = z
   .object({
     title: z.string().max(TITLE_MAX).optional(),
     series: z
-      .array(
-        z
-          .object({
-            t: z.string().min(1).max(64),
-            v: z.number().finite(),
-          })
-          .strict(),
-      )
+      .array(chartSeriesPointSchema)
       .max(DASHBOARD_CHART_POINTS_MAX),
+    events: z.array(chartEventSchema).max(DASHBOARD_CHART_EVENTS_MAX).optional(),
+    all_from_year: dashboardYearSchema.optional(),
+    range_default: z.enum(["12m", "all"]).optional(),
   })
   .strict();
 
