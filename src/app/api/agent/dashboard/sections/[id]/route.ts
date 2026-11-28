@@ -1,5 +1,8 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
-import { planPatchSection } from "@/lib/dashboard/logic";
+import {
+  assertCategoryAllowedForToken,
+  planPatchSection,
+} from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import type { DashboardSectionRow } from "@/lib/dashboard/types";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
@@ -53,9 +56,22 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(404, "section not found");
   }
 
+  const sectionRow = existing as DashboardSectionRow;
+
+  // Changing category requires allow-list for the *new* category; otherwise
+  // the current category must already be allowed (token scoped writes).
+  const targetCategory = parsed.data.category ?? sectionRow.category;
+  const catAllowed = assertCategoryAllowedForToken(
+    auth.agent.allowedCategories,
+    targetCategory,
+  );
+  if (!catAllowed.ok) {
+    return jsonError(catAllowed.status, catAllowed.error);
+  }
+
   const planned = planPatchSection(
     auth.agent.agentId,
-    existing as DashboardSectionRow,
+    sectionRow,
     parsed.data,
   );
   if (!planned.ok) {

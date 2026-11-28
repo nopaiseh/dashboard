@@ -1,3 +1,4 @@
+import { isCategoryAllowedForToken } from "@/lib/dashboard/category";
 import type {
   DashboardBlockRow,
   DashboardSectionRow,
@@ -6,6 +7,17 @@ import type {
 export type PlanResult<T> =
   | { ok: true; plan: T }
   | { ok: false; status: number; error: string };
+
+/** Token must list the target category (normalized) or writes are forbidden. */
+export function assertCategoryAllowedForToken(
+  allowedCategories: readonly string[],
+  category: string,
+): PlanResult<true> {
+  if (!isCategoryAllowedForToken(allowedCategories, category)) {
+    return { ok: false, status: 403, error: "forbidden" };
+  }
+  return { ok: true, plan: true };
+}
 
 function ownsRow(
   agentId: string,

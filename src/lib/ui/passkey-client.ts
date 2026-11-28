@@ -202,12 +202,18 @@ export async function createAgentWithPasskey(input: {
 export async function issueAgentTokenWithPasskey(input: {
   agentId: string;
   revokePrevious: boolean;
+  /**
+   * Required by the owner API (non-empty). Optional here so existing panel
+   * compiles until the category-picker UI lands; omitting → API 400.
+   */
+  allowedCategories?: string[];
 }): Promise<{
   token: string;
   token_id: string;
   id_suffix: string;
   created_at: string;
   agent_slug: string;
+  allowed_categories?: string[];
 }> {
   const step = await assertWithBoundStepUp({
     purpose: "step_up",
@@ -222,6 +228,9 @@ export async function issueAgentTokenWithPasskey(input: {
       challenge_id: step.challenge_id,
       binding: step.binding,
       revoke_previous: input.revokePrevious,
+      ...(input.allowedCategories !== undefined
+        ? { allowed_categories: input.allowedCategories }
+        : {}),
     }),
   });
   if (!res.ok) {
@@ -233,6 +242,7 @@ export async function issueAgentTokenWithPasskey(input: {
     id_suffix: string;
     created_at: string;
     agent_slug: string;
+    allowed_categories?: string[];
   };
 }
 

@@ -137,6 +137,7 @@ describe("owner agent token APIs", () => {
             assertion: { id: CRED_ID },
             binding,
             revoke_previous: true,
+            allowed_categories: ["cpf"],
           }),
         },
       ),
@@ -176,6 +177,7 @@ describe("owner agent token APIs", () => {
             assertion: { id: CRED_ID },
             binding,
             revoke_previous: true,
+            allowed_categories: ["cpf"],
           }),
         },
       ),
@@ -312,6 +314,7 @@ describe("owner agent token APIs", () => {
                       data: {
                         id: TOKEN_ID,
                         created_at: "2026-11-27T00:00:00.000Z",
+                        allowed_categories: row.allowed_categories ?? ["cpf"],
                       },
                       error: null,
                     }),
@@ -329,6 +332,7 @@ describe("owner agent token APIs", () => {
                           agent_id: AGENT_ID,
                           created_at: "2026-11-27T00:00:00.000Z",
                           revoked_at: null,
+                          allowed_categories: ["cpf"],
                         },
                       ],
                       error: null,
@@ -379,6 +383,7 @@ describe("owner agent token APIs", () => {
             assertion: { id: CRED_ID },
             binding,
             revoke_previous: true,
+            allowed_categories: ["cpf"],
           }),
         },
       ),
@@ -392,8 +397,10 @@ describe("owner agent token APIs", () => {
     rawForAuth = body.token as string;
     expect(rawForAuth.startsWith(AGENT_TOKEN_PREFIX)).toBe(true);
     expect(JSON.stringify(body)).not.toMatch(/token_hash/);
+    expect(body.allowed_categories).toEqual(["cpf"]);
     expect(inserted[0]?.token_hash).toBe(hashAgentToken(rawForAuth));
     expect(inserted[0]?.token_hash).not.toBe(rawForAuth);
+    expect(inserted[0]?.allowed_categories).toEqual(["cpf"]);
 
     // issued token passes agent-auth
     expect(
@@ -450,6 +457,7 @@ describe("owner agent token APIs", () => {
                         agent_id: AGENT_ID,
                         created_at: "2026-11-27T00:00:00.000Z",
                         revoked_at: null,
+                        allowed_categories: ["cpf"],
                       },
                     ],
                     error: null,
@@ -469,6 +477,7 @@ describe("owner agent token APIs", () => {
     expect(listBody).not.toContain(rawForAuth);
     expect(listBody).not.toContain("token_hash");
     expect(listBody).toContain(agentTokenIdSuffix(TOKEN_ID));
+    expect(listBody).toContain("cpf");
 
     expect(auditSpy).toHaveBeenCalled();
     const auditLine = String(auditSpy.mock.calls[0]?.[0]);

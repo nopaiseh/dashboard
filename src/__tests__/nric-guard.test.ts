@@ -14,7 +14,7 @@ const SAMPLE_FIN = "G7654321B";
 const IDENTICAL_ERROR_BODY = { error: DASHBOARD_INVALID_PAYLOAD_ERROR };
 
 describe("forbidden identifier key names", () => {
-  it("blocks nric / fin / cpf_account / account_no / account_number / nric_number variants at any depth", () => {
+  it("blocks nric / fin / cpf_account / account_no / account_number / nric_number / card / iban variants at any depth", () => {
     for (const key of [
       "nric",
       "NRIC",
@@ -33,6 +33,17 @@ describe("forbidden identifier key names", () => {
       "nric_number",
       "nricNumber",
       "NRIC_NUMBER",
+      "card_no",
+      "cardNo",
+      "card_number",
+      "cardNumber",
+      "last4",
+      "iban",
+      "IBAN",
+      "swift",
+      "SWIFT",
+      "pan",
+      "PAN",
     ]) {
       expect(isForbiddenDashboardIdentifierKey(key)).toBe(true);
       expect(containsSingaporeNricOrFin({ [key]: "x" })).toBe(true);
@@ -95,6 +106,25 @@ describe("NRIC separator bypass", () => {
       containsSingaporeNricOrFin({
         text: "余额 S$1234 · 年份 2024",
         missing_years: [2019, 2020],
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects 9+ consecutive digits in strings (not numbers)", async () => {
+    const { stringContainsLongDigitRun } = await import(
+      "@/lib/dashboard/nric-guard"
+    );
+    expect(stringContainsLongDigitRun("12345678")).toBe(false);
+    expect(stringContainsLongDigitRun("123456789")).toBe(true);
+    expect(containsSingaporeNricOrFin({ note: "FAKE ref 1234567890" })).toBe(
+      true,
+    );
+    // Numeric amounts are not scanned as digit runs (CPF-safe).
+    expect(containsSingaporeNricOrFin({ value: 12_345_678 })).toBe(false);
+    // UUID section/block ids must not trip the digit-run check.
+    expect(
+      containsSingaporeNricOrFin({
+        section_id: "11111111-1111-4111-8111-111111111111",
       }),
     ).toBe(false);
   });
@@ -231,7 +261,7 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
+        agent: { agentId: AGENT_A, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({

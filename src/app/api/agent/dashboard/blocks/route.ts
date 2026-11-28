@@ -8,8 +8,15 @@ import {
   decryptBlockPayload,
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
-import { planCreateBlock } from "@/lib/dashboard/logic";
+import {
+  assertCategoryAllowedForToken,
+  planCreateBlock,
+} from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import {
+  earlyValidateDashboardPayload,
+  parseDashboardBlockPayload,
+} from "@/lib/dashboard/parse-payload";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -25,10 +32,7 @@ import {
   isPgNotFound,
 } from "@/lib/pg-errors";
 import { getServiceClient } from "@/lib/supabase/server";
-import {
-  createDashboardBlockSchema,
-  dashboardPayloadSchemaFor,
-} from "@/lib/validation";
+import { createDashboardBlockSchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 function toPublicBlock(row: DashboardBlockRow): DashboardBlockPublic {
@@ -75,14 +79,14 @@ export async function POST(request: Request) {
     return dashboardInvalidPayloadResponse();
   }
 
-  const payloadParsed = dashboardPayloadSchemaFor(
-    parsed.data.block_type,
-  ).safeParse(parsed.data.payload);
-  if (!payloadParsed.success) {
+  if (
+    !earlyValidateDashboardPayload(
+      parsed.data.block_type,
+      parsed.data.payload,
+    )
+  ) {
     return dashboardInvalidPayloadResponse();
   }
-
-  const validatedPayload = payloadParsed.data as Record<string, unknown>;
 
   const { data: section, error: sectionError } = await supabase
     .from("dashboard_sections")
@@ -97,9 +101,30 @@ export async function POST(request: Request) {
     return jsonError(404, "section not found");
   }
 
+  const sectionRow = section as DashboardSectionRow;
+
+  const catAllowed = assertCategoryAllowedForToken(
+    auth.agent.allowedCategories,
+    sectionRow.category,
+  );
+  if (!catAllowed.ok) {
+    return jsonError(catAllowed.status, catAllowed.error);
+  }
+
+  const payloadParsed = parseDashboardBlockPayload(
+    parsed.data.block_type,
+    parsed.data.payload,
+    sectionRow.category,
+  );
+  if (!payloadParsed.ok) {
+    return dashboardInvalidPayloadResponse();
+  }
+
+  const validatedPayload = payloadParsed.data;
+
   const planned = planCreateBlock(
     auth.agent.agentId,
-    section as DashboardSectionRow,
+    sectionRow,
     {
       section_id: parsed.data.section_id,
       block_type: parsed.data.block_type,
@@ -113,11 +138,9 @@ export async function POST(request: Request) {
 
   const blockKey = readPayloadBlockKey(validatedPayload);
   if (blockKey !== undefined) {
-    // Race window: concurrent writers can both pass before either commits
-    // (acceptable for a single-writer agent; key is encrypted, not a DB column).
     const { data: siblings, error: siblingsError } = await supabase
       .from("dashboard_blocks")
-      .select("id, payload")
+      .select("id, payload, block_key")
       .eq("section_id", parsed.data.section_id);
 
     if (siblingsError) {
@@ -125,7 +148,11 @@ export async function POST(request: Request) {
     }
     if (
       sectionHasBlockKeyConflict(
-        (siblings ?? []) as Array<{ id: string; payload: string }>,
+        (siblings ?? []) as Array<{
+          id: string;
+          payload: string;
+          block_key?: string | null;
+        }>,
         blockKey,
       )
     ) {
@@ -143,13 +170,18 @@ export async function POST(request: Request) {
     p_sort_order: planned.plan.sort_order,
     p_agent_id: planned.plan.agent_id,
     p_payload: encryptedPayload,
+    p_block_key: blockKey ?? null,
   });
 
   if (error) {
+    // Never log payload, token, or hash — only opaque ids / codes.
     console.error("create_dashboard_block failed", {
       blockId: id,
       code: (error as { code?: string }).code ?? "unknown",
     });
+    if ((error as { code?: string }).code === "23505") {
+      return dashboardBlockKeyConflictResponse();
+    }
     if (isPgForbidden(error)) {
       return jsonError(403, "forbidden");
     }

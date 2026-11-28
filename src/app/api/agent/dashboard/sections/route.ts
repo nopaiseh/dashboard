@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
-import { planCreateSection } from "@/lib/dashboard/logic";
+import {
+  assertCategoryAllowedForToken,
+  planCreateSection,
+} from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -35,6 +38,14 @@ export async function POST(request: Request) {
   const parsed = createDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
     return dashboardInvalidPayloadResponse();
+  }
+
+  const catAllowed = assertCategoryAllowedForToken(
+    auth.agent.allowedCategories,
+    parsed.data.category,
+  );
+  if (!catAllowed.ok) {
+    return jsonError(catAllowed.status, catAllowed.error);
   }
 
   const planned = planCreateSection(auth.agent.agentId, parsed.data);

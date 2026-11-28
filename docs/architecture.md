@@ -11,10 +11,10 @@
 | 对象 | 说明 |
 |------|------|
 | `agents` | 姐妹（slug / name / area / bot_id） |
-| `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发 |
+| `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发；`allowed_categories text[]`（规范化小写；空＝不能写任何 dashboard 分类） |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
-| `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密） |
+| `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密）；可选明文 `block_key` + 部分唯一索引 `(section_id, block_key)` |
 | `dashboard_block_events` | 区块审计，只增不改（禁止 UPDATE/DELETE/TRUNCATE） |
 | `daily_summaries` | 每日小结 |
 | `webauthn_credentials` | 本人 passkey |
@@ -42,10 +42,11 @@
 | POST | `/api/agent/items` | 新建 |
 | PATCH | `/api/agent/items/:id` | RPC `apply_agent_item_patch` 单事务 FOR UPDATE；不回写旧 status；冲突 `SQLSTATE XJ409`→409；approval 且 open 时只能 `withdrawn`；改内容 → 退回 open；**内容字段与 `status: withdrawn` 同时传入 → 400**；有本人决定后禁改 kind |
 | GET | `/api/agent/inbox?since=` | 已决定事项 + 流水；`invalidated` 表示内容事后变更 |
-| POST | `/api/agent/dashboard/sections` | 新建分区（`agent_id`=自己） |
+| POST | `/api/agent/dashboard/sections` | 新建分区（`agent_id`=自己；须在令牌 `allowed_categories` 内） |
 | PATCH | `/api/agent/dashboard/sections/:id` | 更新自己的分区 |
 | POST | `/api/agent/dashboard/blocks` | 新建区块（加密 payload；无 DELETE） |
 | PATCH | `/api/agent/dashboard/blocks/:id` | 更新自己的区块 |
+| PUT | `/api/agent/dashboard/sections/:id/blocks/:block_key` | 按 `block_key` upsert（明文列 + 唯一索引；RPC 原子） |
 
 ## 本人读接口
 
@@ -55,7 +56,9 @@
 
 | 明文 | 密文（`dashboard_blocks.payload` JSON） |
 |------|----------------------------------------|
-| `category`、`block_type`、`sort_order`、`agent_id`、时间戳 | 标题、数值、正文、一行标题、列表、进度、图表序列等 |
+| `category`、`block_type`、`sort_order`、`agent_id`、可选 `block_key`、时间戳 | 标题、数值、正文、一行标题、列表、进度、图表序列等 |
+
+`block_key` 按分区白名单：`bank` → `BANK_BLOCK_KEYS`；`cpf` → `CPF_BLOCK_KEYS`；其他维持原状。银行区块另有严格字段与等式校验。隐私拦截：禁用键名（含 card/iban/swift/pan/last4 等）与连续 ≥9 位数字 / NRIC 形态 → 整包 `400`（不回显命中内容）。所有者读路径（`GET /api/dashboard`）对所有分区（含 bank）一律会话保护，与 CPF 相同。
 
 AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信封版本查密钥）。`payload` 仅允许 `''` 或 `^v[0-9]+:` 前缀（无遗留明文）。服务端派生值接口：`runDerivedCompute`（内存解密→计算→返回；不落库/不缓存/不打明文日志）。
 

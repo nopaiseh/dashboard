@@ -76,6 +76,20 @@ describe("agent auth", () => {
       },
     ]);
     expect(agent?.agentId).toBe("agent-1");
+    expect(agent?.allowedCategories).toEqual([]);
+  });
+
+  it("carries allowed_categories from the token row", () => {
+    const raw = "live-token-cats";
+    const agent = authenticateAgentToken(raw, [
+      {
+        agent_id: "agent-1",
+        token_hash: hashAgentToken(raw),
+        revoked_at: null,
+        allowed_categories: ["Bank", "cpf"],
+      },
+    ]);
+    expect(agent?.allowedCategories).toEqual(["bank", "cpf"]);
   });
 });
 

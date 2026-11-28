@@ -5,6 +5,8 @@ export interface AgentTokenListItem {
   id_suffix: string;
   created_at: string;
   revoked_at: string | null;
+  /** Normalized lowercase category allow-list. */
+  allowed_categories: string[];
 }
 
 export interface AgentWithTokens {

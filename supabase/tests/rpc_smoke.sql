@@ -516,6 +516,85 @@ BEGIN
 END;
 $$;
 
+-- allowed_categories backfill semantics + block_key unique + upsert
+DO $$
+DECLARE
+  v_cats text[];
+  v_result jsonb;
+  v_count int;
+BEGIN
+  -- Token with a section → backfill-equivalent categories from sections
+  INSERT INTO public.agent_tokens (id, agent_id, token_hash, allowed_categories)
+  VALUES (
+    'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'smoke-hash-with-cats',
+    '{}'::text[]
+  );
+
+  UPDATE public.agent_tokens t
+  SET allowed_categories = COALESCE(
+    (
+      SELECT array_agg(DISTINCT lower(trim(s.category)) ORDER BY lower(trim(s.category)))
+      FROM public.dashboard_sections s
+      WHERE s.agent_id = t.agent_id
+        AND char_length(trim(s.category)) > 0
+    ),
+    '{}'::text[]
+  )
+  WHERE t.id = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+
+  SELECT allowed_categories INTO v_cats
+  FROM public.agent_tokens
+  WHERE id = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+
+  IF NOT ('cpf' = ANY (v_cats)) THEN
+    RAISE EXCEPTION 'backfill should include cpf from existing section, got %', v_cats;
+  END IF;
+
+  -- Upsert by block_key: insert then replace
+  v_result := public.upsert_dashboard_block_by_key(
+    'abababab-abab-4aba-8bab-abababababab',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    'cpf_conclusion',
+    'text',
+    0,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'v1:smoke:tag:cipher-upsert-1'
+  );
+  IF NOT (v_result->>'inserted')::boolean THEN
+    RAISE EXCEPTION 'first upsert should insert';
+  END IF;
+
+  v_result := public.upsert_dashboard_block_by_key(
+    'cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd',
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    'cpf_conclusion',
+    'text',
+    1,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'v1:smoke:tag:cipher-upsert-2'
+  );
+  IF (v_result->>'inserted')::boolean THEN
+    RAISE EXCEPTION 'second upsert should update';
+  END IF;
+  IF v_result->'block'->>'id' IS DISTINCT FROM 'abababab-abab-4aba-8bab-abababababab' THEN
+    RAISE EXCEPTION 'upsert should keep original row id';
+  END IF;
+  IF v_result->'block'->>'payload' IS DISTINCT FROM 'v1:smoke:tag:cipher-upsert-2' THEN
+    RAISE EXCEPTION 'upsert should replace payload';
+  END IF;
+
+  SELECT count(*) INTO v_count
+  FROM public.dashboard_blocks
+  WHERE section_id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    AND block_key = 'cpf_conclusion';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'expected one block for cpf_conclusion, got %', v_count;
+  END IF;
+END;
+$$;
+
 ROLLBACK;
 
 \echo OK rpc_smoke

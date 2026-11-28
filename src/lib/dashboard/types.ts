@@ -1,3 +1,4 @@
+import type { BankBlockKey } from "@/lib/bank-block-keys";
 import type { CpfBlockKey } from "@/lib/cpf-block-keys";
 
 export const DASHBOARD_BLOCK_TYPES = [
@@ -28,6 +29,11 @@ export interface DashboardBlockRow {
   block_type: DashboardBlockType;
   sort_order: number;
   agent_id: string | null;
+  /**
+   * Plaintext slot key for uniqueness / upsert (nullable).
+   * Also mirrored inside the encrypted payload when present.
+   */
+  block_key?: string | null;
   /** AES-256-GCM envelope (or decrypted JSON string after read helpers). */
   payload: string;
   created_at: string;
@@ -35,8 +41,8 @@ export interface DashboardBlockRow {
   decrypt_failed?: boolean;
 }
 
-/** Optional semantic slot; lives only inside the encrypted payload. */
-type WithOptionalBlockKey = { block_key?: CpfBlockKey };
+/** Optional semantic slot; mirrored in plaintext column when set. */
+type WithOptionalBlockKey = { block_key?: CpfBlockKey | BankBlockKey };
 
 /** Decrypted payload shapes (API / compute; never log). */
 export type HeadlinePayload = { text: string } & WithOptionalBlockKey;

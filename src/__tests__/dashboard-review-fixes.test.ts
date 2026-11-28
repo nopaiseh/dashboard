@@ -242,7 +242,7 @@ describe("dashboard route review fixes", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_B, tokenHash: "hash" },
+        agent: { agentId: AGENT_B, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
@@ -297,7 +297,7 @@ describe("dashboard route review fixes", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
+        agent: { agentId: AGENT_A, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
@@ -369,7 +369,7 @@ describe("dashboard route review fixes", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
+        agent: { agentId: AGENT_A, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
@@ -426,33 +426,54 @@ describe("dashboard route review fixes", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
+        agent: { agentId: AGENT_A, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: BLOCK_ID,
-                  section_id: SECTION_ID,
-                  block_type: "progress",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  payload: encryptBlockPayload(BLOCK_ID, {
-                    title: "t",
-                    progress: 0,
+        from: (table: string) => {
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "cpf",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
                   }),
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: BLOCK_ID,
+                    section_id: SECTION_ID,
+                    block_type: "progress",
+                    sort_order: 0,
+                    agent_id: AGENT_A,
+                    payload: encryptBlockPayload(BLOCK_ID, {
+                      title: "t",
+                      progress: 0,
+                    }),
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
               }),
             }),
-          }),
-        }),
+          };
+        },
         rpc: async () => ({
           data: null,
           error: { code: "XJ409", message: "failed to write event" },
