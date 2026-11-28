@@ -25,7 +25,7 @@ Authorization: Bearer xjg_at_…
 
 | 字段 | 说明 |
 |------|------|
-| `kind` | `approval`（待批）/ `todo`（待办）/ `waiting`（等别人）。已移除的 `question_to_user` / `question_from_user` 会返回 `400` |
+| `kind` | `approval`（待批）/ `todo`（待办）/ `waiting`（待回音）。已移除的 `question_to_user` / `question_from_user` 会返回 `400` |
 | `title` | 必填，≤200 |
 | `body` | 可选，≤10000 |
 | `project` | 可选，≤200 |
@@ -72,7 +72,7 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items' \
   }'
 ```
 
-等别人：
+待回音：
 
 ```bash
 curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items' \

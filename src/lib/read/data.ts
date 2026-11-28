@@ -369,7 +369,7 @@ export async function loadSisterCards(): Promise<SisterCard[]> {
     const kindLabels: Record<ItemKind, string> = {
       approval: "待批",
       todo: "待办",
-      waiting: "等别人",
+      waiting: "待回音",
     };
     for (const k of kindOrder) {
       const n = byKind[k];

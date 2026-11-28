@@ -12,7 +12,7 @@ export const STATUS_LABELS: Record<ItemStatus, string> = {
 export const KIND_LABELS: Record<ItemKind, string> = {
   approval: "待批",
   todo: "待办",
-  waiting: "等别人",
+  waiting: "待回音",
 };
 
 export const ACTION_LABELS: Record<ItemAction, string> = {
@@ -29,7 +29,7 @@ export const NAV_TABS = [
   { id: "today", href: "/", label: "今日", primary: true },
   { id: "pending", href: "/pending", label: "待批", kind: "approval" as const, primary: true },
   { id: "todo", href: "/todo", label: "待办", kind: "todo" as const, primary: true },
-  { id: "waiting", href: "/waiting", label: "等别人", kind: "waiting" as const, primary: true },
+  { id: "waiting", href: "/waiting", label: "待回音", kind: "waiting" as const, primary: true },
   { id: "held", href: "/held", label: "搁置", primary: false },
   { id: "sisters", href: "/sisters", label: "姐妹", primary: false },
   { id: "goals", href: "/goals", label: "目标", primary: false },
@@ -59,7 +59,7 @@ export const MOBILE_BOTTOM = [
   { id: "today", href: "/", label: "今日" },
   { id: "pending", href: "/pending", label: "待批" },
   { id: "todo", href: "/todo", label: "待办" },
-  { id: "waiting", href: "/waiting", label: "等别人" },
+  { id: "waiting", href: "/waiting", label: "待回音" },
 ] as const;
 
 export const INVALIDATED_APPROVAL_LABEL = "内容已变更，原批准已失效";

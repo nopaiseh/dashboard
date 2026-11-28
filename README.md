@@ -1,6 +1,6 @@
 # 玄机阁 dashboard
 
-desk.nopaiseh.com — 私人事务面板（待批、待办、等别人、搁置、姐妹分栏、目标、每日小结）。
+desk.nopaiseh.com — 私人事务面板（待批、待办、待回音、搁置、姐妹分栏、目标、每日小结）。
 
 - 部署：Vercel 项目 `dashboard`（函数区新加坡 `sin1`）
 - 数据：Supabase 项目 `ifirvlbeaookzhvvcdzs`
