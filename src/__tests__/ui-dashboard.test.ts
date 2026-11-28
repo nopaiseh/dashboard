@@ -2,7 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DashboardView } from "@/components/qingjian/DashboardView";
-import { CpfProgress } from "@/components/qingjian/dashboard/CpfProgress";
+import {
+  CpfProgress,
+  resolveRetirementStatuses,
+} from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
 import { StackedTrendChart } from "@/components/qingjian/dashboard/StackedTrendChart";
 import {
@@ -11,6 +14,10 @@ import {
 } from "@/components/qingjian/dashboard/parseCpfModel";
 import { parseMissingYears, parseTextPayload } from "@/components/qingjian/dashboard/parse";
 import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
+import {
+  formatWan,
+  progressFill,
+} from "@/components/qingjian/dashboard/format";
 import {
   C2_BAL,
   C2_EXCEED_FRS,
@@ -27,7 +34,10 @@ import {
 } from "@/components/qingjian/dashboard/sortSections";
 import { PROJECTION_NOTE } from "@/components/qingjian/dashboard/labels";
 import { CPF_COLORS } from "@/components/qingjian/dashboard/cpfTheme";
-import type { DashboardSectionPublic } from "@/lib/dashboard/types";
+import type {
+  DashboardBlockPublic,
+  DashboardSectionPublic,
+} from "@/lib/dashboard/types";
 
 const SAMPLE_AMOUNTS = [
   C2_BAL.OA.toLocaleString("en-SG"),
@@ -215,6 +225,24 @@ describe("missing_years (#24 number[])", () => {
   });
 });
 
+describe("progressFill percent (always 0–100 scale)", () => {
+  it("treats 0.55 as 0.55% not a ratio, and 55 as 55%", () => {
+    expect(progressFill(0.55).withinPct).toBe(0.6); // rounded 0.55%
+    expect(progressFill(0.55).ratio).toBeCloseTo(0.0055);
+    expect(progressFill(55).withinPct).toBe(55);
+    expect(progressFill(55).ratio).toBe(0.55);
+    expect(progressFill(112).withinPct).toBe(100);
+    expect(progressFill(112).overshootPct).toBe(12);
+  });
+
+  it("formatWan derives tick labels from targets", () => {
+    expect(formatWan(75_000)).toBe("7.5万");
+    expect(formatWan(110_000)).toBe("11万");
+    expect(formatWan(220_000)).toBe("22万");
+    expect(formatWan(440_000)).toBe("44万");
+  });
+});
+
 describe("C2 CPF section", () => {
   it("renders nine-part layout with Chinese account labels and c2 numbers in sampleMode", () => {
     const cpf = SAMPLE_DASHBOARD.sections.find((s) => s.category === "cpf")!;
@@ -235,13 +263,22 @@ describe("C2 CPF section", () => {
     expect(html).toContain("本年未填补");
     expect(html).toContain("相关待办");
     expect(html).toContain("不可逆");
+    expect(html).toContain("需本人决定");
+    expect(html).not.toContain("玄空哥");
     expect(html).toContain("无提取");
     expect(html).toContain("估算说明");
     expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
     expect(html).toContain(String(C2_EXCEED_FRS.toLocaleString("en-SG")));
     expect(html).toContain("2030 年");
+    expect(html).toContain("下一档，约");
     expect(html).toContain("已达 FRS");
+    expect(html).toContain("k-tblScroll");
+    expect(html).not.toContain("利息 0");
     expect(model.conclusion?.reachedFrs).toBe(true);
+    expect(model.accounts?.monthContribTotal).toBe(2960);
+    expect(model.accounts).not.toBeNull();
+    const bal = model.accounts!.balances;
+    expect(bal.OA + bal.SA + bal.MA).toBe(C2_TOTAL);
   });
 
   it("progress uses thin SVG bar with aligned tier labels and overshoot hatch", () => {
@@ -254,8 +291,14 @@ describe("C2 CPF section", () => {
     expect(html).toContain("BRS");
     expect(html).toContain("FRS");
     expect(html).toContain("ERS");
+    expect(html).toContain("7.5万");
+    expect(html).toContain("11万");
+    expect(html).toContain("22万");
+    expect(html).toContain("44万");
     expect(html).toContain("现在 → 下一档");
     expect(html).toContain("c2-over-");
+    expect(html).toContain("已达，超出");
+    expect(html).toContain("下一档，约");
   });
 
   it("chart exposes keyboard-operable range tabs and stacked series", () => {
@@ -269,6 +312,218 @@ describe("C2 CPF section", () => {
     expect(html).toContain("全部（2016 年起）");
     expect(html).toContain("月底数");
     expect(html).toContain(CPF_COLORS.oa);
+  });
+});
+
+describe("parseCpfModel block_key + title fallback", () => {
+  const baseMeta = {
+    section_id: "sec",
+    agent_id: null as string | null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+
+  function section(blocks: DashboardBlockPublic[]): DashboardSectionPublic {
+    return {
+      id: "sec",
+      category: "cpf",
+      sort_order: 0,
+      agent_id: null,
+      created_at: baseMeta.created_at,
+      updated_at: baseMeta.updated_at,
+      blocks,
+    };
+  }
+
+  function metric(
+    id: string,
+    payload: Record<string, unknown>,
+    sort = 0,
+  ): DashboardBlockPublic {
+    return {
+      id,
+      block_type: "metric",
+      sort_order: sort,
+      payload,
+      ...baseMeta,
+    };
+  }
+
+  it("prefers block_key over title when both present", () => {
+    const model = parseCpfModel(
+      section([
+        metric("oa", {
+          block_key: "cpf_acc_oa",
+          title: "无关标题",
+          value: 10_000,
+          delta_mom: 1,
+          ytd: 2,
+        }),
+        metric("sa", {
+          block_key: "cpf_acc_sa",
+          title: "无关",
+          value: 20_000,
+          delta_mom: 1,
+          ytd: 2,
+        }),
+        metric("ma", {
+          block_key: "cpf_acc_ma",
+          title: "无关",
+          value: 30_000,
+          delta_mom: 1,
+          ytd: 2,
+        }),
+        {
+          id: "contrib",
+          block_type: "list",
+          sort_order: 4,
+          payload: {
+            block_key: "cpf_contrib",
+            title: "本月缴存",
+            items: [
+              JSON.stringify({
+                OA: 1,
+                SA: 1,
+                MA: 1,
+                employer: 1,
+                self: 2,
+                total: 99,
+                annual_limit: 100,
+                paid_ytd: 10,
+                limit_left: 90,
+              }),
+            ],
+          },
+          ...baseMeta,
+        },
+      ]),
+    );
+    expect(model.accounts?.balances).toEqual({
+      OA: 10_000,
+      SA: 20_000,
+      MA: 30_000,
+    });
+    expect(model.accounts?.monthContribTotal).toBe(99);
+    expect(model.contrib?.total).toBe(99);
+  });
+
+  it("falls back to title matching only among blocks without block_key", () => {
+    const model = parseCpfModel(
+      section([
+        metric(
+          "keyed-other",
+          {
+            block_key: "cpf_int_total",
+            title: "普通户口 OA",
+            value: 999,
+          },
+          0,
+        ),
+        metric(
+          "oa",
+          {
+            title: "普通户口 OA",
+            value: 11,
+            delta_mom: 0,
+            ytd: 0,
+          },
+          1,
+        ),
+        metric(
+          "sa",
+          { title: "特别户口 SA", value: 22, delta_mom: 0, ytd: 0 },
+          2,
+        ),
+        metric(
+          "ma",
+          { title: "保健储蓄 MA", value: 33, delta_mom: 0, ytd: 0 },
+          3,
+        ),
+      ]),
+    );
+    expect(model.accounts?.balances.OA).toBe(11);
+    expect(model.accounts?.balances.SA).toBe(22);
+    expect(model.accounts?.balances.MA).toBe(33);
+  });
+
+  it("does not match interest-titled metrics as account balances", () => {
+    const model = parseCpfModel(
+      section([
+        metric("int-oa", { title: "利息 OA", value: 4556 }, 0),
+        metric("int-sa", { title: "利息 SA", value: 2615 }, 1),
+        metric("int-ma", { title: "利息 MA", value: 2566 }, 2),
+        metric(
+          "oa",
+          {
+            title: "普通户口 OA",
+            value: 205_181,
+            delta_mom: 1840,
+            ytd: 18_400,
+          },
+          3,
+        ),
+        metric(
+          "sa",
+          {
+            title: "特别户口 SA",
+            value: 57_781,
+            delta_mom: 480,
+            ytd: 4_800,
+          },
+          4,
+        ),
+        metric(
+          "ma",
+          {
+            title: "保健储蓄 MA",
+            value: 72_613,
+            delta_mom: 640,
+            ytd: 5_900,
+          },
+          5,
+        ),
+      ]),
+    );
+    expect(model.accounts?.balances.OA).toBe(205_181);
+    expect(model.accounts?.balances.SA).toBe(57_781);
+    expect(model.accounts?.balances.MA).toBe(72_613);
+    expect(model.annual?.interest.OA).toBe(4556);
+  });
+
+  it("reads conclusion by cpf_conclusion key", () => {
+    const model = parseCpfModel(
+      section([
+        {
+          id: "c",
+          block_type: "text",
+          sort_order: 0,
+          payload: {
+            block_key: "cpf_conclusion",
+            title: "结论标题",
+            text: "结论正文",
+          },
+          ...baseMeta,
+        },
+      ]),
+    );
+    expect(model.conclusion?.title).toBe("结论标题");
+    expect(model.conclusion?.body).toBe("结论正文");
+  });
+
+  it("derives tier statuses from reached_tier / amounts", () => {
+    const statuses = resolveRetirementStatuses({
+      oaSa: 262_962,
+      brs: 110_000,
+      frs: 220_000,
+      ers: 440_000,
+      exceedFrs: 42_962,
+      reachedTier: "FRS",
+      nextEstimate: "2030 年 7 月",
+    });
+    expect(statuses.BRS.kind).toBe("reached");
+    expect(statuses.FRS.kind).toBe("reached_over");
+    expect(statuses.ERS.kind).toBe("next");
+    expect(statuses.ERS.detail).toBe("2030 年 7 月");
   });
 });
 
