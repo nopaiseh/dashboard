@@ -20,6 +20,14 @@ export {
   planPatchSection,
 } from "@/lib/dashboard/logic";
 export {
+  containsSingaporeNricOrFin,
+  isForbiddenDashboardIdentifierKey,
+} from "@/lib/dashboard/nric-guard";
+export {
+  DASHBOARD_INVALID_PAYLOAD_ERROR,
+  dashboardInvalidPayloadResponse,
+} from "@/lib/dashboard/write-errors";
+export {
   DASHBOARD_BLOCK_TYPES,
   type ChartSeriesPayload,
   type DashboardBlockAction,

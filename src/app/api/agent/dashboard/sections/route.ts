@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planCreateSection } from "@/lib/dashboard/logic";
+import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
 import { createDashboardSectionSchema } from "@/lib/validation";
@@ -26,9 +28,13 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid json");
   }
 
+  if (containsSingaporeNricOrFin(body)) {
+    return dashboardInvalidPayloadResponse();
+  }
+
   const parsed = createDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    return dashboardInvalidPayloadResponse();
   }
 
   const planned = planCreateSection(auth.agent.agentId, parsed.data);

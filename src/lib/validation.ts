@@ -247,6 +247,26 @@ export const DASHBOARD_HEADLINE_MAX = 500;
 export const DASHBOARD_LIST_ITEMS_MAX = 50;
 export const DASHBOARD_LIST_ITEM_MAX = 500;
 export const DASHBOARD_CHART_POINTS_MAX = 366;
+export const DASHBOARD_EMPTY_TEXT_MAX = 500;
+export const DASHBOARD_TIERS_MAX = 20;
+export const DASHBOARD_TIER_KEY_MAX = 64;
+export const DASHBOARD_TIER_LABEL_MAX = 200;
+export const DASHBOARD_CHART_EVENTS_MAX = 100;
+export const DASHBOARD_EVENT_LABEL_MAX = 200;
+export const DASHBOARD_MISSING_YEARS_MAX = 50;
+export const DASHBOARD_CHART_TIME_MAX = 16;
+/** Calendar year bounds for next_tier_year / all_from_year / missing_years. */
+export const DASHBOARD_YEAR_MIN = 1900;
+export const DASHBOARD_YEAR_MAX = 2200;
+/** Money / quantity bounds (SGD) for value, amount, delta_mom, ytd, overshoot, v. */
+export const DASHBOARD_AMOUNT_MIN = -10_000_000;
+export const DASHBOARD_AMOUNT_MAX = 10_000_000;
+/**
+ * Progress field bounds: accepts ratio (0..1+) or percent (0..100).
+ * Upper 100 covers percent; lower 0 rejects negatives.
+ */
+export const DASHBOARD_PROGRESS_MIN = 0;
+export const DASHBOARD_PROGRESS_MAX = 100;
 
 export const dashboardBlockTypeSchema = z.enum([
   "headline",
@@ -256,6 +276,72 @@ export const dashboardBlockTypeSchema = z.enum([
   "text",
   "chart_series",
 ]);
+
+const dashboardFiniteAmount = z
+  .number()
+  .finite()
+  .min(DASHBOARD_AMOUNT_MIN)
+  .max(DASHBOARD_AMOUNT_MAX);
+
+const dashboardProgressRatio = z
+  .number()
+  .finite()
+  .min(DASHBOARD_PROGRESS_MIN)
+  .max(DASHBOARD_PROGRESS_MAX);
+
+const dashboardEmptyTextSchema = z.string().max(DASHBOARD_EMPTY_TEXT_MAX);
+const dashboardYearSchema = z
+  .number()
+  .int()
+  .finite()
+  .min(DASHBOARD_YEAR_MIN)
+  .max(DASHBOARD_YEAR_MAX);
+
+/**
+ * Year or year-month time key (`2026` / `2026-01`) with year in range.
+ */
+const dashboardChartTimeSchema = z
+  .string()
+  .min(1)
+  .max(DASHBOARD_CHART_TIME_MAX)
+  .regex(/^\d{4}(-\d{2})?$/)
+  .refine((t) => {
+    const y = Number(t.slice(0, 4));
+    return y >= DASHBOARD_YEAR_MIN && y <= DASHBOARD_YEAR_MAX;
+  });
+
+const dashboardMissingYearsSchema = z
+  .array(dashboardYearSchema)
+  .max(DASHBOARD_MISSING_YEARS_MAX);
+
+const progressTierSchema = z
+  .array(
+    z
+      .object({
+        key: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX),
+        label: z.string().min(1).max(DASHBOARD_TIER_LABEL_MAX),
+        amount: dashboardFiniteAmount,
+      })
+      .strict(),
+  )
+  .max(DASHBOARD_TIERS_MAX);
+
+const chartSeriesPointSchema = z
+  .object({
+    t: dashboardChartTimeSchema,
+    v: dashboardFiniteAmount,
+    phase: z.enum(["actual", "projected"]).optional(),
+    grain: z.enum(["month", "year"]).optional(),
+  })
+  .strict();
+
+const chartEventSchema = z
+  .object({
+    t: dashboardChartTimeSchema,
+    kind: z.enum(["employer_change", "lump_sum"]),
+    label: z.string().max(DASHBOARD_EVENT_LABEL_MAX).optional(),
+  })
+  .strict();
 
 const headlinePayloadSchema = z
   .object({
@@ -267,15 +353,20 @@ const textPayloadSchema = z
   .object({
     text: z.string().max(BODY_MAX),
     title: z.string().max(TITLE_MAX).optional(),
+    empty_text: dashboardEmptyTextSchema.optional(),
+    missing_years: dashboardMissingYearsSchema.optional(),
   })
   .strict();
 
 const metricPayloadSchema = z
   .object({
     title: z.string().min(1).max(TITLE_MAX),
-    value: z.number().finite(),
+    value: dashboardFiniteAmount,
     unit: z.string().max(64).optional(),
     label: z.string().max(TITLE_MAX).optional(),
+    delta_mom: dashboardFiniteAmount.optional(),
+    ytd: dashboardFiniteAmount.optional(),
+    empty_text: dashboardEmptyTextSchema.optional(),
   })
   .strict();
 
@@ -284,9 +375,16 @@ const progressPayloadSchema = z
     title: z.string().min(1).max(TITLE_MAX),
     target: z.string().max(TITLE_MAX).optional(),
     metric: z.string().max(TITLE_MAX).optional(),
-    progress: z.number().finite(),
+    progress: dashboardProgressRatio,
     due_at: z.string().datetime().nullable().optional(),
     status: z.string().max(64).optional(),
+    value: dashboardFiniteAmount.optional(),
+    unit: z.string().max(64).optional(),
+    tiers: progressTierSchema.optional(),
+    reached_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
+    next_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
+    next_tier_year: dashboardYearSchema.optional(),
+    overshoot: dashboardFiniteAmount.optional(),
   })
   .strict();
 
@@ -296,6 +394,8 @@ const listPayloadSchema = z
     items: z
       .array(z.string().max(DASHBOARD_LIST_ITEM_MAX))
       .max(DASHBOARD_LIST_ITEMS_MAX),
+    empty_text: dashboardEmptyTextSchema.optional(),
+    missing_years: dashboardMissingYearsSchema.optional(),
   })
   .strict();
 
@@ -303,15 +403,11 @@ const chartSeriesPayloadSchema = z
   .object({
     title: z.string().max(TITLE_MAX).optional(),
     series: z
-      .array(
-        z
-          .object({
-            t: z.string().min(1).max(64),
-            v: z.number().finite(),
-          })
-          .strict(),
-      )
+      .array(chartSeriesPointSchema)
       .max(DASHBOARD_CHART_POINTS_MAX),
+    events: z.array(chartEventSchema).max(DASHBOARD_CHART_EVENTS_MAX).optional(),
+    all_from_year: dashboardYearSchema.optional(),
+    range_default: z.enum(["12m", "all"]).optional(),
   })
   .strict();
 

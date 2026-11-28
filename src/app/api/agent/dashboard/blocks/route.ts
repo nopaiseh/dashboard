@@ -5,11 +5,13 @@ import {
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
 import { planCreateBlock } from "@/lib/dashboard/logic";
+import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
   DashboardSectionRow,
 } from "@/lib/dashboard/types";
+import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
   isPgForbidden,
@@ -57,16 +59,20 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid json");
   }
 
+  if (containsSingaporeNricOrFin(body)) {
+    return dashboardInvalidPayloadResponse();
+  }
+
   const parsed = createDashboardBlockSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    return dashboardInvalidPayloadResponse();
   }
 
   const payloadParsed = dashboardPayloadSchemaFor(
     parsed.data.block_type,
   ).safeParse(parsed.data.payload);
   if (!payloadParsed.success) {
-    return jsonError(400, "invalid body");
+    return dashboardInvalidPayloadResponse();
   }
 
   const { data: section, error: sectionError } = await supabase

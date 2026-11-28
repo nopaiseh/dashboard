@@ -35,12 +35,25 @@ export interface DashboardBlockRow {
 
 /** Decrypted payload shapes (API / compute; never log). */
 export type HeadlinePayload = { text: string };
-export type TextPayload = { text: string; title?: string };
+export type TextPayload = {
+  text: string;
+  title?: string;
+  empty_text?: string;
+  missing_years?: number[];
+};
 export type MetricPayload = {
   title: string;
   value: number;
   unit?: string;
   label?: string;
+  delta_mom?: number;
+  ytd?: number;
+  empty_text?: string;
+};
+export type ProgressTier = {
+  key: string;
+  label: string;
+  amount: number;
 };
 export type ProgressPayload = {
   title: string;
@@ -49,15 +62,41 @@ export type ProgressPayload = {
   progress: number;
   due_at?: string | null;
   status?: string;
+  value?: number;
+  unit?: string;
+  tiers?: ProgressTier[];
+  reached_tier?: string;
+  next_tier?: string;
+  next_tier_year?: number;
+  overshoot?: number;
 };
 export type ListPayload = {
   title?: string;
   items: string[];
+  empty_text?: string;
+  missing_years?: number[];
 };
-export type ChartSeriesPoint = { t: string; v: number };
+export type ChartPointPhase = "actual" | "projected";
+export type ChartPointGrain = "month" | "year";
+export type ChartEventKind = "employer_change" | "lump_sum";
+export type ChartRangeDefault = "12m" | "all";
+export type ChartSeriesPoint = {
+  t: string;
+  v: number;
+  phase?: ChartPointPhase;
+  grain?: ChartPointGrain;
+};
+export type ChartSeriesEvent = {
+  t: string;
+  kind: ChartEventKind;
+  label?: string;
+};
 export type ChartSeriesPayload = {
   title?: string;
   series: ChartSeriesPoint[];
+  events?: ChartSeriesEvent[];
+  all_from_year?: number;
+  range_default?: ChartRangeDefault;
 };
 
 export type DashboardPayload =

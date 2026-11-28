@@ -1,6 +1,8 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planPatchSection } from "@/lib/dashboard/logic";
+import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import type { DashboardSectionRow } from "@/lib/dashboard/types";
+import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
 import { patchDashboardSectionSchema } from "@/lib/validation";
@@ -29,9 +31,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError(400, "invalid json");
   }
 
+  if (containsSingaporeNricOrFin(body)) {
+    return dashboardInvalidPayloadResponse();
+  }
+
   const parsed = patchDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    return dashboardInvalidPayloadResponse();
   }
 
   const { data: existing, error: loadError } = await supabase
