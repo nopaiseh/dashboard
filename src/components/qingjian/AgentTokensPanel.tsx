@@ -1,12 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useState, useTransition, type FormEvent } from "react";
+import { useState, useTransition } from "react";
 import type { AgentWithTokens } from "@/lib/owner-agent-tokens-types";
 import {
-  createAgentWithPasskey,
   issueAgentTokenWithPasskey,
-  PasskeyError,
   revokeAgentTokenWithPasskey,
 } from "@/lib/ui/passkey-client";
 import { FingerprintIcon } from "./FingerprintIcon";
@@ -21,14 +19,17 @@ function formatWhen(iso: string): string {
 
 export function AgentTokensPanel({
   initialAgents,
+  agentId,
 }: {
   initialAgents: AgentWithTokens[];
+  /** 若提供，只显示该专员的令牌（不展示其它专员）。 */
+  agentId?: string;
 }) {
   const router = useRouter();
-  const slugId = useId();
-  const nameId = useId();
-  const areaId = useId();
-  const botId = useId();
+
+  const agents = agentId
+    ? initialAgents.filter((a) => a.id === agentId)
+    : initialAgents;
 
   const [error, setError] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<{
@@ -39,52 +40,17 @@ export function AgentTokensPanel({
   const [revokePrevious, setRevokePrevious] = useState(true);
   const [pending, startTransition] = useTransition();
 
-  const [slug, setSlug] = useState("");
-  const [name, setName] = useState("");
-  const [area, setArea] = useState("");
-  const [bot, setBot] = useState("");
-
   function refresh() {
     router.refresh();
   }
 
-  function onCreate(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    startTransition(async () => {
-      try {
-        await createAgentWithPasskey({
-          slug: slug.trim(),
-          name: name.trim(),
-          area: area.trim(),
-          botId: bot.trim() ? bot.trim() : null,
-        });
-        setSlug("");
-        setName("");
-        setArea("");
-        setBot("");
-        refresh();
-      } catch (err) {
-        if (err instanceof Error && err.name === "NotAllowedError") {
-          setError("已取消通行密钥验证");
-          return;
-        }
-        if (err instanceof PasskeyError && err.status === 409) {
-          setError("slug 已存在");
-          return;
-        }
-        setError("新增失败，请重试");
-      }
-    });
-  }
-
-  function onIssue(agentId: string) {
+  function onIssue(targetAgentId: string) {
     setError(null);
     setIssuedToken(null);
     startTransition(async () => {
       try {
         const result = await issueAgentTokenWithPasskey({
-          agentId,
+          agentId: targetAgentId,
           revokePrevious,
         });
         setIssuedToken({
@@ -103,11 +69,14 @@ export function AgentTokensPanel({
     });
   }
 
-  function onRevoke(agentId: string, tokenId: string) {
+  function onRevoke(targetAgentId: string, tokenId: string) {
     setError(null);
     startTransition(async () => {
       try {
-        await revokeAgentTokenWithPasskey({ agentId, tokenId });
+        await revokeAgentTokenWithPasskey({
+          agentId: targetAgentId,
+          tokenId,
+        });
         refresh();
       } catch (err) {
         if (err instanceof Error && err.name === "NotAllowedError") {
@@ -130,7 +99,7 @@ export function AgentTokensPanel({
   return (
     <div>
       <p className={"qj-listHint"}>
-        发令牌 / 吊销 / 新增姐妹均需重新验证通行密钥。明文令牌只显示一次。
+        发令牌 / 吊销均需重新验证通行密钥。明文令牌只显示一次。
       </p>
 
       {error ? (
@@ -175,26 +144,36 @@ export function AgentTokensPanel({
             onChange={(e) => setRevokePrevious(e.target.checked)}
             disabled={pending}
           />{" "}
-          发新令牌时同时吊销该姐妹旧令牌（默认开启）
+          发新令牌时同时吊销该专员旧令牌（默认开启）
         </span>
       </label>
 
-      {initialAgents.length === 0 ? (
-        <p className={"qj-empty"}>暂无姐妹</p>
+      {agents.length === 0 ? (
+        <p className={"qj-empty"}>暂无专员令牌资料</p>
       ) : (
         <ul className={"qj-list"}>
-          {initialAgents.map((agent) => (
+          {agents.map((agent) => (
             <li key={agent.id} className={"qj-item"}>
-              <div className={"qj-itemHead"}>
-                <span className={"qj-itemTitle"}>
-                  {agent.name}{" "}
-                  <span className={"qj-role"}>({agent.slug})</span>
-                </span>
-              </div>
-              <div className={"qj-itemFoot"}>
-                <span>{agent.area || "—"}</span>
-                {agent.bot_id ? <span>bot: {agent.bot_id}</span> : null}
-              </div>
+              {!agentId ? (
+                <div className={"qj-itemHead"}>
+                  <span className={"qj-itemTitle"}>
+                    {agent.name}{" "}
+                    <span className={"qj-role"}>({agent.slug})</span>
+                  </span>
+                </div>
+              ) : (
+                <div className={"qj-itemFoot"}>
+                  <span className={"qj-role"}>{agent.slug}</span>
+                  {agent.area ? <span>{agent.area}</span> : null}
+                  {agent.bot_id ? <span>bot: {agent.bot_id}</span> : null}
+                </div>
+              )}
+              {!agentId ? (
+                <div className={"qj-itemFoot"}>
+                  <span>{agent.area || "—"}</span>
+                  {agent.bot_id ? <span>bot: {agent.bot_id}</span> : null}
+                </div>
+              ) : null}
               {agent.tokens.length === 0 ? (
                 <p className={"qj-listHint"}>尚无令牌</p>
               ) : (
@@ -243,75 +222,6 @@ export function AgentTokensPanel({
           ))}
         </ul>
       )}
-
-      <div className={"qj-pageTitleRow"}>
-        <h2>新增姐妹</h2>
-      </div>
-      <form className={"qj-setupForm"} onSubmit={onCreate}>
-        <div className={"qj-setupField"}>
-          <label htmlFor={slugId} className={"qj-setupLabel"}>
-            slug（小写 kebab-case）
-          </label>
-          <input
-            id={slugId}
-            className={"qj-setupInput"}
-            value={slug}
-            onChange={(e) => setSlug(e.target.value)}
-            pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$"
-            minLength={2}
-            maxLength={64}
-            required
-            disabled={pending}
-          />
-        </div>
-        <div className={"qj-setupField"}>
-          <label htmlFor={nameId} className={"qj-setupLabel"}>
-            名称
-          </label>
-          <input
-            id={nameId}
-            className={"qj-setupInput"}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={100}
-            required
-            disabled={pending}
-          />
-        </div>
-        <div className={"qj-setupField"}>
-          <label htmlFor={areaId} className={"qj-setupLabel"}>
-            领域
-          </label>
-          <input
-            id={areaId}
-            className={"qj-setupInput"}
-            value={area}
-            onChange={(e) => setArea(e.target.value)}
-            maxLength={100}
-            disabled={pending}
-          />
-        </div>
-        <div className={"qj-setupField"}>
-          <label htmlFor={botId} className={"qj-setupLabel"}>
-            bot_id（可选）
-          </label>
-          <input
-            id={botId}
-            className={"qj-setupInput"}
-            value={bot}
-            onChange={(e) => setBot(e.target.value)}
-            maxLength={128}
-            disabled={pending}
-          />
-        </div>
-        <button type="submit" className={"qj-btn"} disabled={pending}>
-          <span className={"qj-btnRow"}>
-            <FingerprintIcon />
-            新增姐妹
-          </span>
-          <span className={"qj-btnHint"}>需通行密钥确认</span>
-        </button>
-      </form>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isValidUuid } from "@/lib/read";
 
 /**
- * 详情 / 姐妹页在进入数据读取前：非法 id → notFound()，渲染 not-found UI。
+ * 详情 / 专员页在进入数据读取前：非法 id → notFound()，渲染 not-found UI。
  * 受保护 layout 会先 streaming，HTTP 状态为 200（soft 404）+ noindex；
  * 此处锁定与 validation.ts 一致的 zod uuid 判定。
  */

@@ -580,9 +580,9 @@ describe("owner agent token APIs", () => {
     expect(body.revoked_at).toBeTruthy();
   });
 
-  it("proxy keeps /settings/agents and /api/owner/* protected", async () => {
+  it("proxy keeps /agents and /api/owner/* protected", async () => {
     const { proxy } = await import("@/proxy");
-    for (const path of ["/settings/agents", "/api/owner/agents"]) {
+    for (const path of ["/agents", "/agents/00000000-0000-4000-8000-000000000001", "/api/owner/agents"]) {
       const res = await proxy({
         nextUrl: new URL(`http://localhost${path}`),
         cookies: { get: () => undefined },

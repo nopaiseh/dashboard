@@ -944,10 +944,31 @@
   background: var(--qj-green-soft);
 }
 
-.qj-sistersGrid {
+.qj-agentsGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.65rem;
+}
+
+.qj-pageTabs {
+  padding: 0;
+  margin: 0 0 1rem;
+  max-width: none;
+  border-bottom: 1px solid var(--qj-line);
+}
+
+.qj-pageTabs .qj-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font: inherit;
+  margin-bottom: -1px;
+}
+
+.qj-pageTabs .qj-tab:focus-visible {
+  outline: 2px solid var(--qj-green);
+  outline-offset: 2px;
 }
 
 .qj-desktopTabs .qj-tabSec {
