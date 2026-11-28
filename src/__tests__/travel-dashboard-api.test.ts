@@ -20,6 +20,8 @@ import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
 import {
   expectedTravelBlockType,
   parseTravelBlockPayload,
+  travelIsoOffsetMatchesIanaTz,
+  travelTextLooksLikeUrlOrScript,
 } from "@/lib/dashboard/travel-validation";
 import { DASHBOARD_INVALID_PAYLOAD_ERROR } from "@/lib/dashboard/write-errors";
 import { encryptBlockPayload } from "@/lib/dashboard/crypto";
@@ -332,6 +334,137 @@ describe("travel strict schemas (FAKE)", () => {
     ).toBe(false);
   });
 
+  it("rejects ISO offset that does not match IANA tz at that instant", () => {
+    expect(
+      travelIsoOffsetMatchesIanaTz(
+        "2027-01-10T08:30+08:00",
+        "Asia/Singapore",
+      ),
+    ).toBe(true);
+    expect(
+      travelIsoOffsetMatchesIanaTz(
+        "2027-01-10T08:30+08:00",
+        "America/New_York",
+      ),
+    ).toBe(false);
+
+    const mismatch = {
+      ...FAKE_TRANSPORT,
+      legs: [
+        {
+          ...FAKE_TRANSPORT.legs[0]!,
+          depart_at: "2027-01-10T08:30+08:00",
+          depart_tz: "America/New_York",
+        },
+      ],
+    };
+    expect(
+      parseTravelBlockPayload("list", mismatch, "travel_transport").ok,
+    ).toBe(false);
+  });
+
+  it("rejects arrival before departure (and checkout before check-in)", () => {
+    const earlyArrive = {
+      ...FAKE_TRANSPORT,
+      legs: [
+        {
+          ...FAKE_TRANSPORT.legs[0]!,
+          depart_at: "2027-01-10T09:35+08:00",
+          arrive_at: "2027-01-10T08:30+08:00",
+          arrive_tz: "Asia/Singapore",
+        },
+      ],
+    };
+    expect(
+      parseTravelBlockPayload("list", earlyArrive, "travel_transport").ok,
+    ).toBe(false);
+
+    expect(
+      parseTravelBlockPayload(
+        "list",
+        {
+          block_key: "travel_stays",
+          stays: [
+            {
+              name: "FAKE Hotel",
+              address: "1 Fake Jalan",
+              check_in_at: "2027-01-14T15:00+08:00",
+              check_in_tz: "Asia/Kuala_Lumpur",
+              check_out_at: "2027-01-10T12:00+08:00",
+              check_out_tz: "Asia/Kuala_Lumpur",
+              free_cancellation: false,
+              status: "已订",
+            },
+          ],
+        },
+        "travel_stays",
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("rejects javascript: embedded mid-text and unsafe transport/stay notes", () => {
+    expect(travelTextLooksLikeUrlOrScript("see javascript:alert(1)")).toBe(
+      true,
+    );
+    expect(travelTextLooksLikeUrlOrScript("ok note")).toBe(false);
+
+    expect(
+      parseTravelBlockPayload(
+        "list",
+        {
+          block_key: "travel_candidates",
+          flights: [
+            {
+              label: "FAKE",
+              price: 10,
+              currency: "SGD",
+              source: "fake-ota",
+              notes: "see javascript:alert(1)",
+            },
+          ],
+          hotels: [],
+        },
+        "travel_candidates",
+      ).ok,
+    ).toBe(false);
+
+    const badLegNote = {
+      ...FAKE_TRANSPORT,
+      legs: [
+        {
+          ...FAKE_TRANSPORT.legs[0]!,
+          note: "see javascript:alert(1)",
+        },
+      ],
+    };
+    expect(
+      parseTravelBlockPayload("list", badLegNote, "travel_transport").ok,
+    ).toBe(false);
+
+    expect(
+      parseTravelBlockPayload(
+        "list",
+        {
+          block_key: "travel_stays",
+          stays: [
+            {
+              name: "FAKE Hotel",
+              address: "1 Fake Jalan",
+              check_in_at: "2027-01-10T15:00+08:00",
+              check_in_tz: "Asia/Kuala_Lumpur",
+              check_out_at: "2027-01-14T12:00+08:00",
+              check_out_tz: "Asia/Kuala_Lumpur",
+              free_cancellation: false,
+              note: "https://evil.example/x",
+              status: "已订",
+            },
+          ],
+        },
+        "travel_stays",
+      ).ok,
+    ).toBe(false);
+  });
+
   it("rejects ref_tail longer than 2 and documents with numbers", () => {
     const longRef = {
       ...FAKE_TRANSPORT,
@@ -577,6 +710,13 @@ describe("travel privacy guard", () => {
       expect(stringContainsBookingKeywordRef(note), note).toBe(true);
       expect(containsSingaporeNricOrFin({ note }), note).toBe(true);
     }
+  });
+
+  it("allows keyword + YYYYMMDD date-like token (ref 20270110)", () => {
+    expect(stringContainsBookingKeywordRef("ref 20270110")).toBe(false);
+    expect(containsSingaporeNricOrFin({ note: "ref 20270110" })).toBe(false);
+    // Non-calendar 8-digit token still hits.
+    expect(stringContainsBookingKeywordRef("ref 12345678")).toBe(true);
   });
 
   it("allows FAKE travel payloads through privacy walk", () => {

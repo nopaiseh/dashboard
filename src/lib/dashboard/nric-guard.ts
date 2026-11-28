@@ -85,11 +85,27 @@ const PASSPORT_LIKE = /[A-Z]\d{7,9}[A-Z]/i;
 const SEPARATED_CARD_CHUNK = /\d(?:[\s\-]*\d){12,18}/g;
 
 /**
- * Booking/ref keyword immediately followed by a 5–8 char alphanumeric token.
- * Case-insensitive; optional colon / space / # / fullwidth colon between.
+ * Booking/ref keyword immediately followed by a 5–8 char alphanumeric token
+ * (capture group 1). Case-insensitive; optional colon / space / # / fullwidth
+ * colon between. Pure YYYYMMDD date-like tokens are excluded in
+ * {@link stringContainsBookingKeywordRef} (e.g. `ref 20270110` is allowed).
  */
 const BOOKING_KEYWORD_REF =
-  /(?:\b(?:PNR|booking|ref|reference|confirmation)\b|订单号|确认码|预订号|订单)\s*[:#：]?\s*[A-Za-z0-9]{5,8}\b/i;
+  /(?:\b(?:PNR|booking|ref|reference|confirmation)\b|订单号|确认码|预订号|订单)\s*[:#：]?\s*([A-Za-z0-9]{5,8})\b/gi;
+
+/** True when token is a calendar YYYYMMDD (used to exempt date notes after keywords). */
+function isYyyymmddDateLikeToken(token: string): boolean {
+  if (!/^\d{8}$/.test(token)) return false;
+  const y = Number(token.slice(0, 4));
+  const m = Number(token.slice(4, 6));
+  const d = Number(token.slice(6, 8));
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) {
+    return false;
+  }
+  const iso = `${token.slice(0, 4)}-${token.slice(4, 6)}-${token.slice(6, 8)}`;
+  const dt = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(dt.getTime()) && dt.toISOString().slice(0, 10) === iso;
+}
 
 /** Request ids / section ids are UUIDs and must not trip the digit-run check. */
 const UUID_STRING =
@@ -176,9 +192,20 @@ export function stringContainsSeparatedCardNumber(value: string): boolean {
   return false;
 }
 
-/** Keyword + nearby alphanumeric token (PNR / 订单号 / …). Never log the match. */
+/**
+ * Keyword + nearby alphanumeric token (PNR / 订单号 / …). Never log the match.
+ * Pure 8-digit YYYYMMDD tokens after the keyword are not treated as refs
+ * (`ref 20270110` allowed; `ref ABC12X` / invalid `ref 12345678` still hit).
+ */
 export function stringContainsBookingKeywordRef(value: string): boolean {
-  return BOOKING_KEYWORD_REF.test(value);
+  BOOKING_KEYWORD_REF.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = BOOKING_KEYWORD_REF.exec(value)) !== null) {
+    const token = match[1]!;
+    if (isYyyymmddDateLikeToken(token)) continue;
+    return true;
+  }
+  return false;
 }
 
 /** Flight/train-style service numbers (e.g. SQ321, AF1234) — not booking refs. */

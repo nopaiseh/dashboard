@@ -60,12 +60,12 @@ const travelAmount = z
   .max(DASHBOARD_AMOUNT_MAX);
 
 /**
- * Reject `javascript:` and URL-looking strings in free-text candidate fields.
- * Never logs the matched value.
+ * Reject `javascript:` (anywhere, including mid-text) and URL-looking strings
+ * in free-text fields. Never logs the matched value.
  */
 export function travelTextLooksLikeUrlOrScript(value: string): boolean {
+  if (/javascript\s*:/i.test(value)) return true;
   const trimmed = value.trim();
-  if (/^javascript\s*:/i.test(trimmed)) return true;
   if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return true;
   if (/https?:\/\//i.test(trimmed)) return true;
   if (/www\./i.test(trimmed)) return true;
@@ -126,6 +126,69 @@ export function isValidTravelIsoOffsetDateTime(raw: string): boolean {
     return false;
   }
   return true;
+}
+
+/** Offset minutes from an ISO string ending in `Z` or `±HH:MM`. */
+export function travelIsoOffsetMinutes(raw: string): number | null {
+  if (raw.endsWith("Z")) return 0;
+  const m = /([+-])(\d{2}):(\d{2})$/.exec(raw);
+  if (!m) return null;
+  const sign = m[1] === "-" ? -1 : 1;
+  return sign * (Number(m[2]) * 60 + Number(m[3]));
+}
+
+/** IANA zone offset in minutes at `instantMs` via `Intl` `longOffset`. */
+export function ianaOffsetMinutesAt(
+  timeZone: string,
+  instantMs: number,
+): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "longOffset",
+      hour: "2-digit",
+    }).formatToParts(new Date(instantMs));
+    const name = parts.find((p) => p.type === "timeZoneName")?.value;
+    if (!name) return null;
+    if (name === "GMT" || name === "UTC") return 0;
+    const m = /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/.exec(name);
+    if (!m) return null;
+    const sign = m[1] === "-" ? -1 : 1;
+    return sign * (Number(m[2]) * 60 + Number(m[3] ?? "0"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the ISO offset equals the IANA zone's offset at that instant
+ * (e.g. `…+08:00` + `Asia/Singapore` ok; same ISO + `America/New_York` not).
+ */
+export function travelIsoOffsetMatchesIanaTz(
+  iso: string,
+  timeZone: string,
+): boolean {
+  const instant = Date.parse(iso);
+  if (Number.isNaN(instant)) return false;
+  const declared = travelIsoOffsetMinutes(iso);
+  const actual = ianaOffsetMinutesAt(timeZone, instant);
+  if (declared === null || actual === null) return false;
+  return declared === actual;
+}
+
+function addOffsetTzMismatchIssue(
+  ctx: z.RefinementCtx,
+  iso: string,
+  tz: string,
+  path: string,
+): void {
+  if (!travelIsoOffsetMatchesIanaTz(iso, tz)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "ISO offset does not match IANA timezone at that instant",
+      path: [path],
+    });
+  }
 }
 
 const travelBlockKeySchema = z.string().refine(isTravelBlockKey, {
@@ -251,9 +314,22 @@ const transportLegSchema = z
     check_in: z.string().max(TITLE_MAX).optional(),
     baggage: z.string().max(TRAVEL_NOTE_MAX).optional(),
     status: bookingStatus,
-    note: z.string().max(TRAVEL_NOTE_MAX).optional(),
+    note: travelSafeText(TRAVEL_NOTE_MAX).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((val, ctx) => {
+    addOffsetTzMismatchIssue(ctx, val.depart_at, val.depart_tz, "depart_at");
+    addOffsetTzMismatchIssue(ctx, val.arrive_at, val.arrive_tz, "arrive_at");
+    const dep = Date.parse(val.depart_at);
+    const arr = Date.parse(val.arrive_at);
+    if (!Number.isNaN(dep) && !Number.isNaN(arr) && arr < dep) {
+      ctx.addIssue({
+        code: "custom",
+        message: "arrive_at must be on or after depart_at",
+        path: ["arrive_at"],
+      });
+    }
+  });
 
 const travelTransportSchema = z
   .object({
@@ -277,10 +353,31 @@ const staySchema = z
     free_cancellation: z.boolean(),
     free_cancellation_until: travelIsoOffsetDateTime.optional(),
     status: bookingStatus.optional(),
-    note: z.string().max(TRAVEL_NOTE_MAX).optional(),
+    note: travelSafeText(TRAVEL_NOTE_MAX).optional(),
   })
   .strict()
   .superRefine((val, ctx) => {
+    addOffsetTzMismatchIssue(
+      ctx,
+      val.check_in_at,
+      val.check_in_tz,
+      "check_in_at",
+    );
+    addOffsetTzMismatchIssue(
+      ctx,
+      val.check_out_at,
+      val.check_out_tz,
+      "check_out_at",
+    );
+    const cin = Date.parse(val.check_in_at);
+    const cout = Date.parse(val.check_out_at);
+    if (!Number.isNaN(cin) && !Number.isNaN(cout) && cout < cin) {
+      ctx.addIssue({
+        code: "custom",
+        message: "check_out_at must be on or after check_in_at",
+        path: ["check_out_at"],
+      });
+    }
     if (val.free_cancellation && val.free_cancellation_until === undefined) {
       ctx.addIssue({
         code: "custom",
@@ -316,6 +413,10 @@ const itineraryItemSchema = z
         message: "at and tz must be paired",
         path: val.at === undefined ? ["at"] : ["tz"],
       });
+      return;
+    }
+    if (val.at !== undefined && val.tz !== undefined) {
+      addOffsetTzMismatchIssue(ctx, val.at, val.tz, "at");
     }
   });
 
