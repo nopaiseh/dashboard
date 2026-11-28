@@ -1053,6 +1053,119 @@
 }
 
 
+/* —— Dashboard overview (全部看板) —— */
+.qj-boardOverview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.qj-boardGrid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+
+@media (min-width: 640px) {
+  .qj-boardGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .qj-boardGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.qj-boardGridItem {
+  margin: 0;
+  min-width: 0;
+}
+
+.qj-boardCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  height: 100%;
+  background: var(--qj-surface);
+  border: 1px solid var(--qj-line);
+  border-radius: var(--qj-radius);
+  padding: 1.05rem 1.1rem 1rem;
+  box-shadow: var(--qj-shadow);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.qj-boardCard:hover {
+  border-color: color-mix(in srgb, var(--qj-green) 40%, var(--qj-line));
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--qj-green) 12%, transparent);
+}
+
+.qj-boardCard:focus-visible {
+  outline: 2px solid var(--qj-green);
+  outline-offset: 2px;
+}
+
+.qj-boardCardTitle {
+  margin: 0;
+  font-family: var(--qj-font-display);
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--qj-ink);
+  letter-spacing: 0.02em;
+}
+
+.qj-boardCardSummary {
+  margin: 0;
+  flex: 1;
+  color: var(--qj-ink-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.qj-boardCardMeta {
+  margin: 0.35rem 0 0;
+  color: var(--qj-ink-muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.qj-boardEmptyHint {
+  margin: 0.55rem 0 0 !important;
+  font-size: 0.875rem !important;
+}
+
+.qj-dashDetailHead {
+  margin: 0 0 0.85rem;
+}
+
+.qj-dashBack {
+  color: var(--qj-green);
+  font-size: 0.875rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.qj-dashBack:hover {
+  color: var(--qj-green-deep);
+}
+
+.qj-dashBack:focus-visible {
+  outline: 2px solid var(--qj-green);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* —— Dashboard / C2 CPF —— */
 .qj-dash { display: flex; flex-direction: column; gap: 0.15rem; }
 .qj-dashPageEmpty {

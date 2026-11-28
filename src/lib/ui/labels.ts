@@ -43,6 +43,7 @@ export function navTabFromPathname(pathname: string): NavTabId {
   if (pathname.startsWith("/todo")) return "todo";
   if (pathname.startsWith("/waiting")) return "waiting";
   if (pathname.startsWith("/held")) return "held";
+  // `/` overview and `/dashboard/[category]` detail both highlight 今日
   return "today";
 }
 

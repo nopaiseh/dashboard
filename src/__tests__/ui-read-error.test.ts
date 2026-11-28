@@ -130,5 +130,7 @@ describe("navTabFromPathname", () => {
     expect(navTabFromPathname("/items/abc")).toBe("today");
     expect(navTabFromPathname("/waiting")).toBe("waiting");
     expect(navTabFromPathname("/todo")).toBe("todo");
+    expect(navTabFromPathname("/dashboard/cpf")).toBe("today");
+    expect(navTabFromPathname("/dashboard/travel")).toBe("today");
   });
 });
