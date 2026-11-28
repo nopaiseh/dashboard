@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DASHBOARD_AMOUNT_MAX,
+  DASHBOARD_AMOUNT_MIN,
   DASHBOARD_CHART_EVENTS_MAX,
   DASHBOARD_CHART_POINTS_MAX,
   DASHBOARD_EMPTY_TEXT_MAX,
   DASHBOARD_MISSING_YEARS_MAX,
   DASHBOARD_PROGRESS_MAX,
+  DASHBOARD_PROGRESS_MIN,
   DASHBOARD_TIERS_MAX,
   DASHBOARD_YEAR_MAX,
   DASHBOARD_YEAR_MIN,
@@ -37,12 +39,8 @@ describe("dashboard payload CPF field relaxation", () => {
         progress: 0.8,
       }).success,
     ).toBe(true);
-    expect(
-      parsePayload("list", { items: ["a"] }).success,
-    ).toBe(true);
-    expect(
-      parsePayload("text", { text: "hello" }).success,
-    ).toBe(true);
+    expect(parsePayload("list", { items: ["a"] }).success).toBe(true);
+    expect(parsePayload("text", { text: "hello" }).success).toBe(true);
     expect(
       parsePayload("chart_series", {
         series: [{ t: "2026-01", v: 1 }],
@@ -51,22 +49,35 @@ describe("dashboard payload CPF field relaxation", () => {
   });
 
   it("accepts metric delta_mom / ytd / empty_text", () => {
-    const parsed = parsePayload("metric", {
-      title: "OA",
-      value: 12_345.67,
-      delta_mom: 100.5,
-      ytd: -20,
-      empty_text: "暂无余额",
-    });
-    expect(parsed.success).toBe(true);
+    expect(
+      parsePayload("metric", {
+        title: "OA",
+        value: 12_345.67,
+        delta_mom: 100.5,
+        ytd: -20,
+        empty_text: "暂无余额",
+      }).success,
+    ).toBe(true);
   });
 
-  it("rejects invalid metric extras (type / NaN / oversize / unknown)", () => {
+  it("rejects number out of money / progress range", () => {
+    expect(
+      parsePayload("metric", {
+        title: "OA",
+        value: DASHBOARD_AMOUNT_MAX + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("metric", {
+        title: "OA",
+        value: DASHBOARD_AMOUNT_MIN - 1,
+      }).success,
+    ).toBe(false);
     expect(
       parsePayload("metric", {
         title: "OA",
         value: 1,
-        delta_mom: "up",
+        delta_mom: DASHBOARD_AMOUNT_MAX + 1,
       }).success,
     ).toBe(false);
     expect(
@@ -77,9 +88,50 @@ describe("dashboard payload CPF field relaxation", () => {
       }).success,
     ).toBe(false);
     expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: DASHBOARD_PROGRESS_MAX + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: DASHBOARD_PROGRESS_MIN - 0.01,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        overshoot: DASHBOARD_AMOUNT_MAX + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        tiers: [
+          {
+            key: "FRS",
+            label: "FRS",
+            amount: DASHBOARD_AMOUNT_MAX + 1,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("chart_series", {
+        series: [{ t: "2026-01", v: DASHBOARD_AMOUNT_MAX + 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects invalid metric extras (type / oversize / unknown)", () => {
+    expect(
       parsePayload("metric", {
         title: "OA",
-        value: DASHBOARD_AMOUNT_MAX + 1,
+        value: 1,
+        delta_mom: "up",
       }).success,
     ).toBe(false);
     expect(
@@ -98,31 +150,92 @@ describe("dashboard payload CPF field relaxation", () => {
     ).toBe(false);
   });
 
-  it("accepts progress value / unit / tiers / tier markers / overshoot", () => {
-    const parsed = parsePayload("progress", {
-      title: "SA+OA",
-      progress: 1.1,
-      value: 220_000,
-      unit: "SGD",
-      tiers: [
-        { key: "BRS", label: "BRS", amount: 100_000 },
-        { key: "FRS", label: "FRS", amount: 200_000 },
-        { key: "ERS", label: "ERS", amount: 300_000 },
-      ],
-      reached_tier: "FRS",
-      next_tier: "ERS",
-      next_tier_year: 2028,
-      overshoot: 20_000,
-    });
-    expect(parsed.success).toBe(true);
-
+  it("accepts progress value / unit / tiers / integer next_tier_year", () => {
     expect(
       parsePayload("progress", {
-        title: "MA",
-        progress: 0.5,
-        next_tier_year: "2027-03",
+        title: "SA+OA",
+        progress: 1.1,
+        value: 220_000,
+        unit: "SGD",
+        tiers: [
+          { key: "BRS", label: "BRS", amount: 100_000 },
+          { key: "FRS", label: "FRS", amount: 200_000 },
+          { key: "ERS", label: "ERS", amount: 300_000 },
+        ],
+        reached_tier: "FRS",
+        next_tier: "ERS",
+        next_tier_year: 2028,
+        overshoot: 20_000,
       }).success,
     ).toBe(true);
+  });
+
+  it("rejects year out of range and non-integer years", () => {
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        next_tier_year: DASHBOARD_YEAR_MIN - 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        next_tier_year: DASHBOARD_YEAR_MAX + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        next_tier_year: "2027-03",
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        next_tier_year: "2028",
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        next_tier_year: 2028.5,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("chart_series", {
+        series: [{ t: "2026-01", v: 1 }],
+        all_from_year: DASHBOARD_YEAR_MIN - 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("chart_series", {
+        series: [{ t: "2026-01", v: 1 }],
+        all_from_year: DASHBOARD_YEAR_MAX + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("text", {
+        text: "ok",
+        missing_years: [DASHBOARD_YEAR_MIN - 1],
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("text", {
+        text: "ok",
+        missing_years: [DASHBOARD_YEAR_MAX + 1],
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("text", {
+        text: "ok",
+        missing_years: ["2020"],
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects invalid progress extras", () => {
@@ -131,12 +244,6 @@ describe("dashboard payload CPF field relaxation", () => {
         title: "x",
         progress: 1,
         value: "100",
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("progress", {
-        title: "x",
-        progress: DASHBOARD_PROGRESS_MAX + 1,
       }).success,
     ).toBe(false);
     expect(
@@ -171,38 +278,24 @@ describe("dashboard payload CPF field relaxation", () => {
         overshoot: Number.POSITIVE_INFINITY,
       }).success,
     ).toBe(false);
-    expect(
-      parsePayload("progress", {
-        title: "x",
-        progress: 1,
-        next_tier_year: DASHBOARD_YEAR_MIN - 1,
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("progress", {
-        title: "x",
-        progress: 1,
-        next_tier_year: DASHBOARD_YEAR_MAX + 1,
-      }).success,
-    ).toBe(false);
   });
 
   it("accepts chart_series phase / grain / events / range fields", () => {
-    const parsed = parsePayload("chart_series", {
-      title: "余额走势",
-      series: [
-        { t: "2026-01", v: 1, phase: "actual", grain: "month" },
-        { t: "2027", v: 2, phase: "projected", grain: "year" },
-      ],
-      events: [
-        { t: "2025-06", kind: "employer_change", label: "换雇主" },
-        { t: "2024-01", kind: "lump_sum" },
-      ],
-      all_from_year: 2016,
-      range_default: "12m",
-    });
-    expect(parsed.success).toBe(true);
-
+    expect(
+      parsePayload("chart_series", {
+        title: "余额走势",
+        series: [
+          { t: "2026-01", v: 1, phase: "actual", grain: "month" },
+          { t: "2027", v: 2, phase: "projected", grain: "year" },
+        ],
+        events: [
+          { t: "2025-06", kind: "employer_change", label: "换雇主" },
+          { t: "2024-01", kind: "lump_sum" },
+        ],
+        all_from_year: 2016,
+        range_default: "12m",
+      }).success,
+    ).toBe(true);
     expect(
       parsePayload("chart_series", {
         series: [{ t: "2026-01", v: 1 }],
@@ -211,7 +304,7 @@ describe("dashboard payload CPF field relaxation", () => {
     ).toBe(true);
   });
 
-  it("rejects invalid chart_series extras / year-out-of-range times", () => {
+  it("rejects invalid chart_series extras", () => {
     expect(
       parsePayload("chart_series", {
         series: [{ t: "2026-01", v: 1, phase: "forecast" }],
@@ -246,7 +339,7 @@ describe("dashboard payload CPF field relaxation", () => {
           { length: DASHBOARD_CHART_POINTS_MAX + 1 },
           (_, i) => ({
             t: `2000-${String((i % 12) + 1).padStart(2, "0")}`,
-            v: i,
+            v: Math.min(i, DASHBOARD_AMOUNT_MAX),
           }),
         ),
       }).success,
@@ -260,52 +353,29 @@ describe("dashboard payload CPF field relaxation", () => {
     expect(
       parsePayload("chart_series", {
         series: [{ t: "2026-01", v: 1 }],
-        all_from_year: 2016.5,
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("chart_series", {
-        series: [{ t: "2026-01", v: 1 }],
-        all_from_year: DASHBOARD_YEAR_MIN - 1,
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("chart_series", {
-        series: [{ t: String(DASHBOARD_YEAR_MIN - 1), v: 1 }],
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("chart_series", {
-        series: [{ t: "2026-01", v: 1 }],
-        events: [{ t: String(DASHBOARD_YEAR_MAX + 1), kind: "lump_sum" }],
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("chart_series", {
-        series: [{ t: "2026-01", v: 1 }],
         unit: "SGD",
       }).success,
     ).toBe(false);
   });
 
-  it("accepts list/text empty_text and missing_years", () => {
+  it("accepts list/text empty_text and integer missing_years", () => {
     expect(
       parsePayload("list", {
         items: [],
         empty_text: "无提取",
-        missing_years: ["2019", "2020"],
+        missing_years: [2019, 2020],
       }).success,
     ).toBe(true);
     expect(
       parsePayload("text", {
         text: "",
         empty_text: "本年未填补",
-        missing_years: ["2021"],
+        missing_years: [2021],
       }).success,
     ).toBe(true);
   });
 
-  it("rejects invalid list/text extras / out-of-range years", () => {
+  it("rejects invalid list/text extras", () => {
     expect(
       parsePayload("list", {
         items: [],
@@ -317,26 +387,8 @@ describe("dashboard payload CPF field relaxation", () => {
         text: "ok",
         missing_years: Array.from(
           { length: DASHBOARD_MISSING_YEARS_MAX + 1 },
-          (_, i) => String(2000 + (i % 50)),
+          (_, i) => 2000 + (i % 50),
         ),
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("text", {
-        text: "ok",
-        missing_years: [123],
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("text", {
-        text: "ok",
-        missing_years: [String(DASHBOARD_YEAR_MIN - 1)],
-      }).success,
-    ).toBe(false);
-    expect(
-      parsePayload("text", {
-        text: "ok",
-        missing_years: ["2020-01"],
       }).success,
     ).toBe(false);
   });

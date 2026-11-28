@@ -1,9 +1,17 @@
 /**
  * Singapore NRIC / FIN (CPF account number equals NRIC).
- * Word-boundary aware so currency like "S$1234" and bare years are not matched.
- * Never log a matched value — callers must only log a generic reason.
+ * Never log a matched value.
  */
-const SINGAPORE_NRIC_OR_FIN = /\b[STFGM]\d{7}[A-Z]\b/i;
+
+/** Match after separator normalization (no word-boundary — separators already stripped). */
+const SINGAPORE_NRIC_OR_FIN = /[STFGM]\d{7}[A-Z]/i;
+
+/**
+ * Separators removed before the NRIC regex so values like `S-1234567-A`
+ * and `S 1234567 A` still match. `$` is intentionally kept so `S$1234`
+ * is not treated as an identifier.
+ */
+const NRIC_SCAN_SEPARATORS = /[\s\-._/\\]+/g;
 
 /**
  * Forbidden identifier key names (case-insensitive; camelCase / snake_case
@@ -28,14 +36,19 @@ export function isForbiddenDashboardIdentifierKey(key: string): boolean {
   return FORBIDDEN_IDENTIFIER_KEYS.has(normalizeDashboardIdentifierKey(key));
 }
 
+/** Strip whitespace / hyphen / dot / underscore / slash before NRIC scan. */
+export function normalizeForNricScan(value: string): string {
+  return value.replace(NRIC_SCAN_SEPARATORS, "");
+}
+
 export function stringContainsSingaporeNricOrFin(value: string): boolean {
-  return SINGAPORE_NRIC_OR_FIN.test(value);
+  return SINGAPORE_NRIC_OR_FIN.test(normalizeForNricScan(value));
 }
 
 /**
  * Two-layer NRIC / CPF-account blocking:
  * (a) reject forbidden object keys at any depth (nric, fin, cpf_account, …)
- * (b) regex-scan all string values (titles, body, list items, labels, …)
+ * (b) regex-scan all string values after separator normalization
  *
  * Also rejects keys whose *name* itself matches the NRIC/FIN pattern.
  */

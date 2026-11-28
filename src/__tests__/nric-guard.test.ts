@@ -2,14 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  normalizeForNricScan,
+  stringContainsSingaporeNricOrFin,
 } from "@/lib/dashboard/nric-guard";
 import { DASHBOARD_INVALID_PAYLOAD_ERROR } from "@/lib/dashboard/write-errors";
 
 const SAMPLE_NRIC = "S1234567A";
 const SAMPLE_FIN = "G7654321B";
+const IDENTICAL_ERROR_BODY = { error: DASHBOARD_INVALID_PAYLOAD_ERROR };
 
 describe("forbidden identifier key names", () => {
-  it("blocks nric / fin / cpf_account / account_no variants", () => {
+  it("blocks nric / fin / cpf_account / account_no variants at any depth", () => {
     for (const key of [
       "nric",
       "NRIC",
@@ -38,6 +41,43 @@ describe("forbidden identifier key names", () => {
   });
 });
 
+describe("NRIC separator bypass", () => {
+  it("normalizes whitespace / hyphen / dot / underscore / slash away", () => {
+    expect(normalizeForNricScan("S-1234567-A")).toBe("S1234567A");
+    expect(normalizeForNricScan("S 1234567 A")).toBe("S1234567A");
+    expect(normalizeForNricScan("S_1234567_A")).toBe("S1234567A");
+    expect(normalizeForNricScan("S.1234567.A")).toBe("S1234567A");
+    expect(normalizeForNricScan("S/1234567/A")).toBe("S1234567A");
+  });
+
+  it("rejects NRIC with separators", () => {
+    expect(stringContainsSingaporeNricOrFin("S-1234567-A")).toBe(true);
+    expect(stringContainsSingaporeNricOrFin("S 1234567 A")).toBe(true);
+    expect(stringContainsSingaporeNricOrFin("G_7654321_B")).toBe(true);
+    expect(stringContainsSingaporeNricOrFin("id: S.1234567.A")).toBe(true);
+    expect(
+      containsSingaporeNricOrFin({ text: `acct ${SAMPLE_NRIC.slice(0, 1)}-${SAMPLE_NRIC.slice(1, 8)}-${SAMPLE_NRIC.slice(8)}` }),
+    ).toBe(true);
+  });
+
+  it("does not falsely reject currency, years, or ordinary text", () => {
+    expect(stringContainsSingaporeNricOrFin("S$1234")).toBe(false);
+    expect(stringContainsSingaporeNricOrFin("S$12,345.67")).toBe(false);
+    expect(stringContainsSingaporeNricOrFin("2024")).toBe(false);
+    expect(stringContainsSingaporeNricOrFin("2016-2026")).toBe(false);
+    expect(stringContainsSingaporeNricOrFin("version 1.2.3")).toBe(false);
+    expect(containsSingaporeNricOrFin({ year: 2025, unit: "SGD" })).toBe(
+      false,
+    );
+    expect(
+      containsSingaporeNricOrFin({
+        text: "余额 S$1234 · 年份 2024",
+        missing_years: [2019, 2020],
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("containsSingaporeNricOrFin (value regex)", () => {
   it("rejects NRIC/FIN at top-level strings", () => {
     expect(containsSingaporeNricOrFin(SAMPLE_NRIC)).toBe(true);
@@ -48,7 +88,7 @@ describe("containsSingaporeNricOrFin (value regex)", () => {
     expect(containsSingaporeNricOrFin("M3333333L")).toBe(true);
   });
 
-  it("rejects NRIC nested in objects and arrays (titles, labels, items)", () => {
+  it("rejects NRIC nested in objects and arrays", () => {
     expect(
       containsSingaporeNricOrFin({
         payload: { title: `account ${SAMPLE_NRIC}` },
@@ -64,44 +104,17 @@ describe("containsSingaporeNricOrFin (value regex)", () => {
         series: [{ t: "2026-01", v: 1, label: SAMPLE_NRIC }],
       }),
     ).toBe(true);
-    expect(
-      containsSingaporeNricOrFin({
-        text: `body mentions ${SAMPLE_NRIC}`,
-      }),
-    ).toBe(true);
   });
 
   it("rejects NRIC when used as an object key", () => {
+    expect(containsSingaporeNricOrFin({ [SAMPLE_NRIC]: "value" })).toBe(true);
     expect(
-      containsSingaporeNricOrFin({
-        [SAMPLE_NRIC]: "value",
-      }),
+      containsSingaporeNricOrFin({ payload: { [SAMPLE_FIN]: 1 } }),
     ).toBe(true);
-    expect(
-      containsSingaporeNricOrFin({
-        payload: { [SAMPLE_FIN]: 1 },
-      }),
-    ).toBe(true);
-  });
-
-  it("does not falsely reject currency or years", () => {
-    expect(containsSingaporeNricOrFin("S$1234")).toBe(false);
-    expect(containsSingaporeNricOrFin("S$12,345.67")).toBe(false);
-    expect(containsSingaporeNricOrFin("2024")).toBe(false);
-    expect(containsSingaporeNricOrFin("2016-2026")).toBe(false);
-    expect(containsSingaporeNricOrFin({ year: 2025, unit: "SGD" })).toBe(
-      false,
-    );
-    expect(
-      containsSingaporeNricOrFin({
-        text: "余额 S$1234 · 年份 2024",
-        missing_years: ["2019", "2020"],
-      }),
-    ).toBe(false);
   });
 });
 
-describe("dashboard write routes reject with generic invalid payload", () => {
+describe("dashboard write routes: identical invalid payload bodies", () => {
   const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const SECTION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -116,8 +129,7 @@ describe("dashboard write routes reject with generic invalid payload", () => {
     vi.restoreAllMocks();
   });
 
-  it("POST /blocks NRIC → 400 { error: 'invalid payload' }, no leak in logs", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  function mockAgentAuth() {
     vi.doMock("@/lib/require-request", () => ({
       requireRequest: async () => undefined,
     }));
@@ -137,9 +149,17 @@ describe("dashboard write routes reject with generic invalid payload", () => {
         },
       }),
     }));
+  }
 
-    const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
-    const res = await POST(
+  it("NRIC value, banned key, schema failure, and section NRIC share one body", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockAgentAuth();
+
+    const { POST: postBlock } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+
+    const nricRes = await postBlock(
       new Request("http://localhost/api/agent/dashboard/blocks", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -151,41 +171,12 @@ describe("dashboard write routes reject with generic invalid payload", () => {
       }),
     );
 
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body).toEqual({ error: DASHBOARD_INVALID_PAYLOAD_ERROR });
-    expect(JSON.stringify(body)).not.toContain(SAMPLE_NRIC);
-
-    expect(errorSpy).toHaveBeenCalled();
-    for (const call of errorSpy.mock.calls) {
-      const serialized = JSON.stringify(call);
-      expect(serialized).not.toContain(SAMPLE_NRIC);
-      expect(serialized).not.toContain("NRIC");
-      expect(serialized).toContain("invalid_payload");
-    }
-  });
-
-  it("POST /blocks forbidden key name → same generic error", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.doMock("@/lib/require-request", () => ({
-      requireRequest: async () => undefined,
-    }));
-    vi.doMock("@/lib/agent-service", () => ({
-      resolveAgentFromRequest: async () => ({
-        ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
-      }),
-    }));
-    vi.doMock("@/lib/supabase/server", () => ({
-      getServiceClient: () => ({
-        from: () => {
-          throw new Error("should not reach db");
-        },
-      }),
-    }));
-
-    const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
-    const res = await POST(
+    vi.resetModules();
+    mockAgentAuth();
+    const { POST: postBlock2 } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+    const bannedKeyRes = await postBlock2(
       new Request("http://localhost/api/agent/dashboard/blocks", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -197,36 +188,12 @@ describe("dashboard write routes reject with generic invalid payload", () => {
       }),
     );
 
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: DASHBOARD_INVALID_PAYLOAD_ERROR,
-    });
-    for (const call of errorSpy.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain("cpfAccount");
-    }
-  });
-
-  it("POST /blocks schema failure → generic invalid payload (no details)", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.doMock("@/lib/require-request", () => ({
-      requireRequest: async () => undefined,
-    }));
-    vi.doMock("@/lib/agent-service", () => ({
-      resolveAgentFromRequest: async () => ({
-        ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
-      }),
-    }));
-    vi.doMock("@/lib/supabase/server", () => ({
-      getServiceClient: () => ({
-        from: () => {
-          throw new Error("should not reach db");
-        },
-      }),
-    }));
-
-    const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
-    const res = await POST(
+    vi.resetModules();
+    mockAgentAuth();
+    const { POST: postBlock3 } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+    const schemaRes = await postBlock3(
       new Request("http://localhost/api/agent/dashboard/blocks", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -238,35 +205,44 @@ describe("dashboard write routes reject with generic invalid payload", () => {
       }),
     );
 
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body).toEqual({ error: DASHBOARD_INVALID_PAYLOAD_ERROR });
-    expect(body).not.toHaveProperty("details");
-    expect(JSON.stringify(body)).not.toContain("secret-leak");
-    expect(JSON.stringify(body)).not.toContain("unexpected_field");
-    for (const call of errorSpy.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain("secret-leak");
+    vi.resetModules();
+    mockAgentAuth();
+    const { POST: postSection } = await import(
+      "@/app/api/agent/dashboard/sections/route"
+    );
+    const sectionRes = await postSection(
+      new Request("http://localhost/api/agent/dashboard/sections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ category: SAMPLE_FIN }),
+      }),
+    );
+
+    const bodies = await Promise.all([
+      nricRes.json(),
+      bannedKeyRes.json(),
+      schemaRes.json(),
+      sectionRes.json(),
+    ]);
+
+    for (const res of [nricRes, bannedKeyRes, schemaRes, sectionRes]) {
+      expect(res.status).toBe(400);
     }
+    for (const body of bodies) {
+      expect(body).toEqual(IDENTICAL_ERROR_BODY);
+      expect(body).not.toHaveProperty("details");
+      expect(JSON.stringify(body)).not.toContain(SAMPLE_NRIC);
+      expect(JSON.stringify(body)).not.toContain("secret-leak");
+      expect(JSON.stringify(body)).not.toContain("cpfAccount");
+    }
+
+    // No rejection logging (reason distinction removed).
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("PATCH /blocks rejects NRIC in object keys with generic error", async () => {
+  it("PATCH rejects separator-obfuscated NRIC with the same body", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.doMock("@/lib/require-request", () => ({
-      requireRequest: async () => undefined,
-    }));
-    vi.doMock("@/lib/agent-service", () => ({
-      resolveAgentFromRequest: async () => ({
-        ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
-      }),
-    }));
-    vi.doMock("@/lib/supabase/server", () => ({
-      getServiceClient: () => ({
-        from: () => {
-          throw new Error("should not reach db");
-        },
-      }),
-    }));
+    mockAgentAuth();
 
     const { PATCH } = await import(
       "@/app/api/agent/dashboard/blocks/[id]/route"
@@ -276,49 +252,13 @@ describe("dashboard write routes reject with generic invalid payload", () => {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          payload: { [SAMPLE_NRIC]: "secret" },
+          payload: { text: "S-1234567-A" },
         }),
       }),
       { params: Promise.resolve({ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }) },
     );
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: DASHBOARD_INVALID_PAYLOAD_ERROR,
-    });
-  });
-
-  it("POST /sections rejects NRIC in category with generic error", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.doMock("@/lib/require-request", () => ({
-      requireRequest: async () => undefined,
-    }));
-    vi.doMock("@/lib/agent-service", () => ({
-      resolveAgentFromRequest: async () => ({
-        ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash" },
-      }),
-    }));
-    vi.doMock("@/lib/supabase/server", () => ({
-      getServiceClient: () => ({
-        from: () => {
-          throw new Error("should not reach db");
-        },
-      }),
-    }));
-
-    const { POST } = await import("@/app/api/agent/dashboard/sections/route");
-    const res = await POST(
-      new Request("http://localhost/api/agent/dashboard/sections", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ category: SAMPLE_FIN }),
-      }),
-    );
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: DASHBOARD_INVALID_PAYLOAD_ERROR,
-    });
+    expect(await res.json()).toEqual(IDENTICAL_ERROR_BODY);
   });
 });

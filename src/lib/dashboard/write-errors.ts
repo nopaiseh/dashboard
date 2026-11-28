@@ -6,9 +6,8 @@ export const DASHBOARD_INVALID_PAYLOAD_ERROR = "invalid payload";
 
 /**
  * HTTP 400 with body `{ error: "invalid payload" }` only.
- * Logs a generic reason — never the match, field path, or raw payload.
+ * No logging of matches, field paths, or raw payloads.
  */
 export function dashboardInvalidPayloadResponse(): NextResponse {
-  console.error("dashboard write rejected", { reason: "invalid_payload" });
   return jsonError(400, DASHBOARD_INVALID_PAYLOAD_ERROR);
 }

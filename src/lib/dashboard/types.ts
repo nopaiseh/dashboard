@@ -39,7 +39,7 @@ export type TextPayload = {
   text: string;
   title?: string;
   empty_text?: string;
-  missing_years?: string[];
+  missing_years?: number[];
 };
 export type MetricPayload = {
   title: string;
@@ -67,14 +67,14 @@ export type ProgressPayload = {
   tiers?: ProgressTier[];
   reached_tier?: string;
   next_tier?: string;
-  next_tier_year?: number | string;
+  next_tier_year?: number;
   overshoot?: number;
 };
 export type ListPayload = {
   title?: string;
   items: string[];
   empty_text?: string;
-  missing_years?: string[];
+  missing_years?: number[];
 };
 export type ChartPointPhase = "actual" | "projected";
 export type ChartPointGrain = "month" | "year";

@@ -255,13 +255,17 @@ export const DASHBOARD_CHART_EVENTS_MAX = 100;
 export const DASHBOARD_EVENT_LABEL_MAX = 200;
 export const DASHBOARD_MISSING_YEARS_MAX = 50;
 export const DASHBOARD_CHART_TIME_MAX = 16;
-export const DASHBOARD_YEAR_MIN = 1950;
-export const DASHBOARD_YEAR_MAX = 2100;
-/** Finite money / quantity bounds for metric/progress/chart values. */
-export const DASHBOARD_AMOUNT_MIN = -1_000_000_000_000;
-export const DASHBOARD_AMOUNT_MAX = 1_000_000_000_000;
-/** Progress ratio / fraction bounds. */
-export const DASHBOARD_PROGRESS_MIN = -10;
+/** Calendar year bounds for next_tier_year / all_from_year / missing_years. */
+export const DASHBOARD_YEAR_MIN = 1900;
+export const DASHBOARD_YEAR_MAX = 2200;
+/** Money / quantity bounds (SGD) for value, amount, delta_mom, ytd, overshoot, v. */
+export const DASHBOARD_AMOUNT_MIN = -10_000_000;
+export const DASHBOARD_AMOUNT_MAX = 10_000_000;
+/**
+ * Progress field bounds: accepts ratio (0..1+) or percent (0..100).
+ * Upper 100 covers percent; lower 0 rejects negatives.
+ */
+export const DASHBOARD_PROGRESS_MIN = 0;
 export const DASHBOARD_PROGRESS_MAX = 100;
 
 export const dashboardBlockTypeSchema = z.enum([
@@ -293,15 +297,6 @@ const dashboardYearSchema = z
   .min(DASHBOARD_YEAR_MIN)
   .max(DASHBOARD_YEAR_MAX);
 
-/** Four-digit year string within DASHBOARD_YEAR_MIN..MAX. */
-const dashboardYearStringSchema = z
-  .string()
-  .regex(/^\d{4}$/)
-  .refine((y) => {
-    const n = Number(y);
-    return n >= DASHBOARD_YEAR_MIN && n <= DASHBOARD_YEAR_MAX;
-  });
-
 /**
  * Year or year-month time key (`2026` / `2026-01`) with year in range.
  */
@@ -315,22 +310,8 @@ const dashboardChartTimeSchema = z
     return y >= DASHBOARD_YEAR_MIN && y <= DASHBOARD_YEAR_MAX;
   });
 
-/** next_tier_year: int year or `YYYY` / `YYYY-MM` string. */
-const dashboardNextTierYearSchema = z.union([
-  dashboardYearSchema,
-  z
-    .string()
-    .min(4)
-    .max(7)
-    .regex(/^\d{4}(-\d{2})?$/)
-    .refine((t) => {
-      const y = Number(t.slice(0, 4));
-      return y >= DASHBOARD_YEAR_MIN && y <= DASHBOARD_YEAR_MAX;
-    }),
-]);
-
 const dashboardMissingYearsSchema = z
-  .array(dashboardYearStringSchema)
+  .array(dashboardYearSchema)
   .max(DASHBOARD_MISSING_YEARS_MAX);
 
 const progressTierSchema = z
@@ -402,7 +383,7 @@ const progressPayloadSchema = z
     tiers: progressTierSchema.optional(),
     reached_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
     next_tier: z.string().min(1).max(DASHBOARD_TIER_KEY_MAX).optional(),
-    next_tier_year: dashboardNextTierYearSchema.optional(),
+    next_tier_year: dashboardYearSchema.optional(),
     overshoot: dashboardFiniteAmount.optional(),
   })
   .strict();
