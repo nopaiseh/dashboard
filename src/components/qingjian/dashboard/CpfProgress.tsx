@@ -97,13 +97,9 @@ function isReached(status: TierStatus): boolean {
 function statusTag(status: TierStatus) {
   switch (status.kind) {
     case "reached":
-      return <span className={"chip chipOver"}>已达</span>;
     case "reached_over":
-      return (
-        <span className={"chip chipOver"}>
-          已达，超出 {status.detail}
-        </span>
-      );
+      // Progress card: plain 已达 only (超出 amount lives in 一句话结论).
+      return <span className={"chip chipOver"}>已达</span>;
     case "next":
       return (
         <span className={"chip chipNext"}>

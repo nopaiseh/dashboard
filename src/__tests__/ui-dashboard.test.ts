@@ -294,7 +294,10 @@ describe("C2 CPF section", () => {
     expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
     expect(html).toContain(String(C2_EXCEED_FRS.toLocaleString("en-SG")));
     expect(html).toContain("2030 年");
-    expect(html).toContain("已达，超出");
+    // Progress rows: plain 已达 only; 超出 amount stays in 一句话结论.
+    expect(html).toContain("chipOver");
+    expect(html).toContain(">已达<");
+    expect(html).not.toContain("已达，超出");
     expect(html).toContain("已达 FRS");
     expect(html).toContain("k-tblScroll");
     expect(html).toContain('aria-label="本月缴存表格"');
@@ -324,7 +327,8 @@ describe("C2 CPF section", () => {
     expect(html).toContain("44万");
     expect(html).toContain("现在 → 下一档");
     expect(html).toContain("c2-over-");
-    expect(html).toContain("已达，超出");
+    expect(html).toContain(">已达<");
+    expect(html).not.toContain("已达，超出");
     expect(html).toContain("医疗储蓄");
     expect(html).toContain("退休储蓄");
     expect(html).toContain("BHS S$75,000");
