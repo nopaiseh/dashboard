@@ -278,6 +278,8 @@ describe("C2 CPF section", () => {
     expect(html).toContain("特别户口 SA");
     expect(html).toContain("保健储蓄 MA");
     expect(html).toContain("合计");
+    // 合计卡与 OA/SA/MA 一致：仅余额、比上月、比年初，无「缴存」行。
+    expect(html).not.toContain("缴存 2,960");
     expect(html).not.toContain("Ordinary Account");
     expect(html).toContain(C2_BAL.OA.toLocaleString("en-SG"));
     expect(html).toContain(C2_TOTAL.toLocaleString("en-SG"));
