@@ -1,11 +1,25 @@
 "use client";
 
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { EmptyBlock } from "./EmptyBlock";
 import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
+import {
+  resolveAnnualRates,
+  resolveProjectionInflow,
+  withNearTermProjection,
+  type ProjectionInflowKind,
+} from "./cpfProjection";
 import { CPF_COLORS } from "./cpfTheme";
 import { formatMoney, parseTrendPointTime } from "./format";
 import type { ChartRangeMode } from "./types";
+
+export type TrendProjectionInput = {
+  rates?: { OA?: string; SA?: string; MA?: string };
+  contrib?: AccBalances;
+  bhs?: number;
+  /** Full Retirement Sum — used for MA overflow routing (under 55). */
+  frs?: number;
+};
 
 /** Evenly pick ~`count` indices from `length` points (inclusive ends). */
 export function pickEvenIndices(length: number, count = 5): number[] {
@@ -215,16 +229,63 @@ export function StackedTrendChart({
   data,
   sampleMode = false,
   initialRange,
+  projection,
 }: {
   data: CpfTrendData | null;
   sampleMode?: boolean;
   initialRange?: ChartRangeMode;
+  /** Rates / contrib / BHS used when API series has no near-term projected points. */
+  projection?: TrendProjectionInput;
 }) {
   const baseId = useId();
   const [range, setRange] = useState<ChartRangeMode>(
     initialRange ?? data?.defaultRange ?? "12m",
   );
   const [hover, setHover] = useState<string | null>(null);
+
+  const projOpts = useMemo(() => {
+    const rates = resolveAnnualRates(projection?.rates);
+    const source = data
+      ? [...data.points12, ...data.pointsAll]
+      : [];
+    const monthlyActuals = source.filter(
+      (p) => p.phase === "actual" && p.grain === "month",
+    );
+    const { kind: inflowKind } = resolveProjectionInflow(
+      projection?.contrib,
+      monthlyActuals,
+    );
+    return {
+      rates,
+      contrib: projection?.contrib,
+      bhs: projection?.bhs,
+      frs: projection?.frs,
+      inflowKind,
+    };
+  }, [data, projection]);
+
+  const inflowKind: ProjectionInflowKind =
+    projOpts.inflowKind ?? "balance_growth";
+
+  const points12 = useMemo(() => {
+    if (!data) return [];
+    return withNearTermProjection(
+      data.points12,
+      [...data.points12, ...data.pointsAll],
+      6,
+      projOpts,
+    );
+  }, [data, projOpts]);
+
+  const pointsAll = useMemo(() => {
+    if (!data) return [];
+    return withNearTermProjection(
+      data.pointsAll,
+      data.pointsAll,
+      6,
+      projOpts,
+    );
+  }, [data, projOpts]);
 
   if (!data || (data.points12.length === 0 && data.pointsAll.length === 0)) {
     return (
@@ -243,7 +304,7 @@ export function StackedTrendChart({
     );
   }
 
-  const points = range === "12m" ? data.points12 : data.pointsAll;
+  const points = range === "12m" ? points12 : pointsAll;
   const hovered = points.find((p) => p.t === hover) ?? null;
 
   const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -285,7 +346,7 @@ export function StackedTrendChart({
               className={range === "all" ? "opt on" : "opt"}
               onClick={() => setRange("all")}
             >
-              全部（2016 年起）
+              全部
             </button>
           </div>
           <span className={"r"}>实线为实际，虚线为估算</span>
@@ -294,11 +355,11 @@ export function StackedTrendChart({
 
       <div className={"card"}>
         <div className={"k-ph"}>
-          {range === "12m" ? "近 12 个月 · 实际" : "全部 · 实际 + 估算"}
+          {range === "12m" ? "近 12 个月 · 实际 + 估算" : "全部 · 实际 + 估算"}
           <span className={"k-yr"}>
             {range === "12m"
-              ? data.subtitle12 ?? "月底数为主；虚线为推算"
-              : data.subtitleAll ?? "年底数 / 月底数 · 虚线为推算"}
+              ? data.subtitle12 ?? "月底数为主；虚线为估算"
+              : data.subtitleAll ?? "年底数 / 月底数 · 虚线为估算"}
           </span>
         </div>
 
@@ -335,7 +396,9 @@ export function StackedTrendChart({
           </span>
           <span>
             <i className={"leg-dash"} aria-hidden="true" />
-            估算（按月复利）
+            {inflowKind === "contrib"
+              ? "估算（利息年末入账）"
+              : "估算（余额增幅 · 利息年末入账）"}
           </span>
           {range === "all" ? (
             <>
@@ -357,7 +420,7 @@ export function StackedTrendChart({
 
 function tipText(p: CpfTrendPoint): string {
   const grain = p.grain === "year" ? "年底数" : "月底数";
-  const phase = p.phase === "projected" ? "（推算）" : "";
+  const phase = p.phase === "projected" ? " · 估算" : "";
   const tot = p.balances.OA + p.balances.SA + p.balances.MA;
   return `${p.t} ${grain}${phase}：OA ${formatMoney(p.balances.OA)} · SA ${formatMoney(p.balances.SA)} · MA ${formatMoney(p.balances.MA)} · 合计 ${formatMoney(tot)}`;
 }
@@ -581,17 +644,23 @@ function TrendSvg({
         : null}
 
       {ordered.map((p, i) => {
-        if (p.phase === "projected") return null;
         const tot = p.balances.OA + p.balances.SA + p.balances.MA;
         const { x, y } = xy(i, tot);
-        const r = p.grain === "year" ? 4.5 : 2.2;
+        const r =
+          p.phase === "projected" ? 2.4 : p.grain === "year" ? 4.5 : 2.2;
         return (
           <g key={`${p.t}-${i}`}>
             <circle
               cx={x}
               cy={y}
               r={r}
-              className={p.grain === "year" ? "k-dotYear" : "k-dotMonth"}
+              className={
+                p.phase === "projected"
+                  ? "k-dotProjected"
+                  : p.grain === "year"
+                    ? "k-dotYear"
+                    : "k-dotMonth"
+              }
             />
             <circle
               cx={x}

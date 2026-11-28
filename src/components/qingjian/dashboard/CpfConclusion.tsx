@@ -44,11 +44,15 @@ export function CpfConclusion({
   );
 }
 
-function splitConclusion(
+/**
+ * Highlight currency amounts and year/month phrases in green.
+ * Amounts like S$14,280.45 must match as one token (decimals stay green).
+ */
+export function splitConclusion(
   text: string,
 ): Array<{ text: string; em?: boolean }> {
   const re =
-    /(S\$\s*[\d,]+|S\$\s*[\d.]+|\d{4}\s*年(?:\s*\d+\s*月)?)/g;
+    /(S\$\s*[\d,]+(?:\.\d+)?|\d{4}\s*年(?:\s*\d+\s*月)?)/g;
   const out: Array<{ text: string; em?: boolean }> = [];
   let last = 0;
   for (const m of text.matchAll(re)) {

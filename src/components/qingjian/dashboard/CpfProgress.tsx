@@ -68,7 +68,12 @@ export function resolveRetirementStatuses(data: {
           data.exceedFrs > 0
             ? data.exceedFrs
             : Math.max(0, data.oaSa - data.frs);
-        if (over > 0) return { kind: "reached_over", detail: formatMoney(over) };
+        if (over > 0) {
+          return {
+            kind: "reached_over",
+            detail: formatMoney(over, "S$", 0, { tight: true }),
+          };
+        }
       }
       return { kind: "reached" };
     }
@@ -85,16 +90,16 @@ export function resolveRetirementStatuses(data: {
   };
 }
 
+function isReached(status: TierStatus): boolean {
+  return status.kind === "reached" || status.kind === "reached_over";
+}
+
 function statusTag(status: TierStatus) {
   switch (status.kind) {
     case "reached":
-      return <span className={"chip chipOver"}>已达</span>;
     case "reached_over":
-      return (
-        <span className={"chip chipOver"}>
-          已达，超出 {status.detail}
-        </span>
-      );
+      // Progress card: plain 已达 only (超出 amount lives in 一句话结论).
+      return <span className={"chip chipOver"}>已达</span>;
     case "next":
       return (
         <span className={"chip chipNext"}>
@@ -104,6 +109,16 @@ function statusTag(status: TierStatus) {
     case "not_yet":
       return <span className={"chip chipNeutral"}>未到</span>;
   }
+}
+
+/** Right-end: 已达 badge when reached; otherwise percentage. */
+function targetEnd(status: TierStatus, pct: number) {
+  if (isReached(status)) return statusTag(status);
+  return <b>{`${Math.round(pct)}%`}</b>;
+}
+
+function moneyTight(value: number, fractionDigits = 0) {
+  return formatMoney(value, "S$", fractionDigits, { tight: true });
 }
 
 export function CpfProgress({
@@ -140,7 +155,6 @@ export function CpfProgress({
     exceedFrs,
     reachedTier,
     nextEstimate,
-    hitBhs,
   } = data;
   const maPct = Math.min(100, ratioPct(ma, bhs));
   const brsX = ratioPct(BRS, ERS);
@@ -148,6 +162,7 @@ export function CpfProgress({
   const nowX = Math.min(100, ratioPct(oaSa, ERS));
   const brsPct = Math.round(ratioPct(oaSa, BRS));
   const frsPct = Math.round(ratioPct(oaSa, FRS));
+  const ersPct = Math.round(ratioPct(oaSa, ERS));
   const solidToFrs = frsX;
   const overshootW = Math.max(0, nowX - frsX);
   const statuses = resolveRetirementStatuses({
@@ -159,6 +174,10 @@ export function CpfProgress({
     reachedTier,
     nextEstimate,
   });
+  const maReached = ma >= bhs && bhs > 0;
+  const maStatus: TierStatus = maReached
+    ? { kind: "reached" }
+    : { kind: "not_yet" };
 
   return (
     <>
@@ -176,8 +195,8 @@ export function CpfProgress({
         <div className={"k-goal"}>
           <div className={"k-grow"}>
             <h3>
-              MA 对 BHS
-              <small>医疗储蓄上限</small>
+              医疗储蓄
+              <small>现有 {moneyTight(ma, 2)}</small>
             </h3>
             <div
               className={"k-bw"}
@@ -185,7 +204,7 @@ export function CpfProgress({
               aria-valuenow={Math.round(maPct)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label={`MA 对 BHS 已达 ${Math.round(maPct)}%`}
+              aria-label={`医疗储蓄已达 BHS 的 ${Math.round(maPct)}%`}
             >
               <ProgressSvg
                 marks={[
@@ -204,21 +223,9 @@ export function CpfProgress({
             </div>
             <div className={"k-ro"}>
               <div>
-                <span>已达 BHS</span>
-                <b>{Math.round(maPct)}%</b>
+                <span>BHS {moneyTight(bhs)}</span>
+                {targetEnd(maStatus, maPct)}
               </div>
-              <div>
-                <span>
-                  {formatMoney(ma)} / {formatMoney(bhs)}
-                </span>
-                <b />
-              </div>
-              {hitBhs ? (
-                <div>
-                  <span>估算 达 BHS</span>
-                  <b>约 {hitBhs}</b>
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -226,9 +233,8 @@ export function CpfProgress({
 
           <div className={"k-grow"}>
             <h3>
-              SA+OA 对 BRS / FRS / ERS
-              <small>55 岁退休存款三档</small>
-              <small>现有 {formatMoney(oaSa)}</small>
+              退休储蓄
+              <small>现有 {moneyTight(oaSa, 2)}</small>
             </h3>
             <div
               className={"k-bw"}
@@ -236,7 +242,7 @@ export function CpfProgress({
               aria-valuenow={Math.round(nowX)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label={`SA 加 OA 已达 FRS 的 ${frsPct}%，下一档 ERS 已达 ${Math.round(nowX)}%`}
+              aria-label={`退休储蓄已达 FRS 的 ${frsPct}%，ERS 已达 ${Math.round(nowX)}%`}
             >
               <ProgressSvg
                 marks={[
@@ -258,22 +264,16 @@ export function CpfProgress({
             </div>
             <div className={"k-ro"}>
               <div>
-                <span>
-                  BRS {formatMoney(BRS)}（{brsPct}%）
-                </span>
-                <b>{statusTag(statuses.BRS)}</b>
+                <span>BRS {moneyTight(BRS)}</span>
+                {targetEnd(statuses.BRS, brsPct)}
               </div>
               <div>
-                <span>
-                  FRS {formatMoney(FRS)}（{frsPct}%）
-                </span>
-                <b>{statusTag(statuses.FRS)}</b>
+                <span>FRS {moneyTight(FRS)}</span>
+                {targetEnd(statuses.FRS, frsPct)}
               </div>
               <div>
-                <span>
-                  下一档 ERS {formatMoney(ERS)}（{Math.round(nowX)}%）
-                </span>
-                <b>{statusTag(statuses.ERS)}</b>
+                <span>ERS {moneyTight(ERS)}</span>
+                {targetEnd(statuses.ERS, ersPct)}
               </div>
             </div>
           </div>

@@ -2,12 +2,23 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DashboardView } from "@/components/qingjian/DashboardView";
+import { splitConclusion } from "@/components/qingjian/dashboard/CpfConclusion";
 import {
   CpfProgress,
   ratioPct,
   resolveRetirementStatuses,
 } from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
+import {
+  accrueFromActualMonths,
+  applyMaOverflow,
+  averageMonthlyBalanceGrowth,
+  extraInterestBase,
+  monthlyInterestAccrual,
+  projectNextMonths,
+  stepProjectedMonth,
+  withNearTermProjection,
+} from "@/components/qingjian/dashboard/cpfProjection";
 import {
   StackedTrendChart,
   buildTwelveMonthXLabels,
@@ -23,6 +34,7 @@ import {
 import { parseMissingYears, parseTextPayload } from "@/components/qingjian/dashboard/parse";
 import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
 import {
+  formatMoney,
   formatWan,
   parsePointTime,
   parseTrendPointTime,
@@ -269,8 +281,14 @@ describe("C2 CPF section", () => {
     expect(html).not.toContain("Ordinary Account");
     expect(html).toContain(C2_BAL.OA.toLocaleString("en-SG"));
     expect(html).toContain(C2_TOTAL.toLocaleString("en-SG"));
-    expect(html).toContain("MA 对 BHS");
-    expect(html).toContain("SA+OA 对 BRS / FRS / ERS");
+    expect(html).toContain("医疗储蓄");
+    expect(html).toContain("退休储蓄");
+    expect(html).toContain("现有 S$72,613.00");
+    expect(html).toContain("现有 S$262,962.00");
+    expect(html).toContain("BHS S$75,000");
+    expect(html).toContain("BRS S$110,000");
+    expect(html).toContain("FRS S$220,000");
+    expect(html).toContain("ERS S$440,000");
     expect(html).toContain("本月缴存");
     expect(html).toContain("本年未填补");
     expect(html).toContain("相关待办");
@@ -281,7 +299,10 @@ describe("C2 CPF section", () => {
     expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
     expect(html).toContain(String(C2_EXCEED_FRS.toLocaleString("en-SG")));
     expect(html).toContain("2030 年");
-    expect(html).toContain("下一档，约");
+    // Progress rows: plain 已达 only; 超出 amount stays in 一句话结论.
+    expect(html).toContain("chipOver");
+    expect(html).toContain(">已达<");
+    expect(html).not.toContain("已达，超出");
     expect(html).toContain("已达 FRS");
     expect(html).toContain("k-tblScroll");
     expect(html).toContain('aria-label="本月缴存表格"');
@@ -311,8 +332,16 @@ describe("C2 CPF section", () => {
     expect(html).toContain("44万");
     expect(html).toContain("现在 → 下一档");
     expect(html).toContain("c2-over-");
-    expect(html).toContain("已达，超出");
-    expect(html).toContain("下一档，约");
+    expect(html).toContain(">已达<");
+    expect(html).not.toContain("已达，超出");
+    expect(html).toContain("医疗储蓄");
+    expect(html).toContain("退休储蓄");
+    expect(html).toContain("BHS S$75,000");
+    expect(html).toContain("ERS S$440,000");
+    // Not-yet ERS shows percentage at right; no in-label (213%) / 下一档 prefix.
+    expect(html).toMatch(/>\d+%</);
+    expect(html).not.toContain("下一档 ERS");
+    expect(html).not.toContain("（213%）");
   });
 
   it("chart exposes keyboard-operable range tabs and stacked series", () => {
@@ -323,9 +352,15 @@ describe("C2 CPF section", () => {
     );
     expect(html).toContain('role="tablist"');
     expect(html).toContain("近 12 个月");
-    expect(html).toContain("全部（2016 年起）");
+    expect(html).toContain(">全部<");
+    expect(html).not.toContain("全部（2016 年起）");
     expect(html).toContain("月底数");
     expect(html).toContain(CPF_COLORS.oa);
+    expect(html).toContain("估算");
+    // Near-term projection months after last actual (2026-10).
+    expect(html).toContain("2026-11");
+    expect(html).toContain("k-topProjected");
+    expect(html).toContain(" · 估算");
   });
 });
 
@@ -437,13 +472,17 @@ describe("StackedTrendChart date scale", () => {
         initialRange: "12m",
       }),
     );
-    expect(html).toContain(">1月<");
-    // Must not keep the old hardcoded first tick 「11月」 as the only/leading label pattern.
+    // With a 6-month estimate the axis may cross into 2027, so the first tick
+    // can be 「2026年1月」 or 「1月」 — never the old hardcoded 「11月」.
+    expect(html).toMatch(/>2026年1月<|>1月</);
     const axisLabels = [...html.matchAll(/class="k-axisText"[^>]*>([^<]+)</g)].map(
       (m) => m[1],
     );
-    const monthLabels = axisLabels.filter((t) => /^\d{1,2}月$/.test(t ?? ""));
-    expect(monthLabels[0]).toBe("1月");
+    const monthLabels = axisLabels.filter((t) =>
+      /^(\d{4}年)?\d{1,2}月$/.test(t ?? ""),
+    );
+    expect(monthLabels[0]).toMatch(/^(2026年)?1月$/);
+    expect(html).toContain("k-topProjected");
   });
 
   it("year ticks use equal pixel spans for equal years; last tick is not 2026-01", () => {
@@ -894,7 +933,7 @@ describe("CpfProgress zero denominators", () => {
     );
     expect(html).not.toContain("Infinity");
     expect(html).not.toContain("NaN");
-    expect(html).toContain("已达 BHS");
+    expect(html).toContain("BHS S$0");
     expect(html).toContain(">0%<");
   });
 });
@@ -966,5 +1005,301 @@ describe("dashboard UI rendering", () => {
     expect(html).toContain("k-late");
     expect(html).toContain("k-badgeRed");
     expect(html).toContain("不可逆");
+  });
+});
+
+describe("CpfConclusion amount highlighting", () => {
+  it("keeps decimals inside the green amount token", () => {
+    const parts = splitConclusion("合计约 S$14,280.45，下一档预计 2030 年 7 月");
+    const amount = parts.find((p) => p.em && p.text.includes("14,280"));
+    expect(amount?.text).toBe("S$14,280.45");
+    expect(parts.some((p) => p.text === ".45")).toBe(false);
+  });
+});
+
+describe("formatMoney tight option", () => {
+  it("omits the space after S$ when tight", () => {
+    expect(formatMoney(72613, "S$", 2, { tight: true })).toBe("S$72,613.00");
+    expect(formatMoney(75000, "S$", 0, { tight: true })).toBe("S$75,000");
+    expect(formatMoney(75000, "S$", 0)).toBe("S$ 75,000");
+  });
+});
+
+describe("cpf near-term projection", () => {
+  const rates = { OA: 0.025, SA: 0.04, MA: 0.04 };
+  const actuals = C2_MONTHS.map((m) => ({
+    t: m.t,
+    balances: m.balances,
+    phase: "actual" as const,
+    grain: "month" as const,
+  }));
+  const projected = C2_PROJ.slice(0, 8).map((m) => ({
+    t: m.t,
+    balances: m.balances,
+    phase: "projected" as const,
+    grain: "month" as const,
+  }));
+
+  it("projects six months after last actual when source has samples", () => {
+    const out = withNearTermProjection(actuals, [...actuals, ...projected], 6);
+    const proj = out.filter((p) => p.phase === "projected");
+    expect(proj).toHaveLength(6);
+    expect(proj[0]!.t).toBe("2026-11");
+    expect(proj[5]!.t).toBe("2027-04");
+    expect(proj[0]!.balances.OA).toBe(C2_PROJ[0]!.balances.OA);
+  });
+
+  it("grows balances from inflow when no projected samples exist", () => {
+    const last = actuals[actuals.length - 1]!;
+    const inflow = averageMonthlyBalanceGrowth(actuals, 3);
+    const out = projectNextMonths(last, 6, {
+      rates,
+      inflow,
+      bhs: 75_000,
+      frs: 220_000,
+      actualsForAccrual: actuals,
+    });
+    expect(out).toHaveLength(6);
+    expect(out.every((p) => p.phase === "projected")).toBe(true);
+    const lastTot =
+      out[5]!.balances.OA + out[5]!.balances.SA + out[5]!.balances.MA;
+    const firstTot =
+      last.balances.OA + last.balances.SA + last.balances.MA;
+    expect(lastTot).toBeGreaterThan(firstTot);
+  });
+
+  it("credits the whole year's accrued interest on Dec→Jan (no monthly compounding)", () => {
+    const bal = { OA: 100_000, SA: 50_000, MA: 40_000 };
+    // Accrue two months without crediting.
+    const nov = stepProjectedMonth(bal, { OA: 0, SA: 0, MA: 0 }, "2026-11", {
+      rates,
+      inflow: { OA: 0, SA: 0, MA: 0 },
+    });
+    const dec = stepProjectedMonth(nov.balances, nov.accrued, "2026-12", {
+      rates,
+      inflow: { OA: 0, SA: 0, MA: 0 },
+    });
+    // Balances should not have received interest yet (only accrue).
+    expect(dec.balances.OA).toBe(bal.OA);
+    expect(dec.accrued.OA).toBeGreaterThan(0);
+    expect(dec.accrued.SA).toBeGreaterThan(0);
+    expect(dec.accrued.MA).toBeGreaterThan(0);
+
+    const jan = stepProjectedMonth(dec.balances, dec.accrued, "2027-01", {
+      rates,
+      inflow: { OA: 0, SA: 0, MA: 0 },
+    });
+    // Year-end credit: Jan balances include all accrued interest from Nov+Dec.
+    expect(jan.balances.OA).toBeCloseTo(bal.OA + dec.accrued.OA, 2);
+    expect(jan.balances.SA).toBeCloseTo(bal.SA + dec.accrued.SA, 2);
+    expect(jan.balances.MA).toBeCloseTo(bal.MA + dec.accrued.MA, 2);
+    // Accrual resets after credit, then Jan's own month accrues again.
+    expect(jan.accrued.OA).toBeGreaterThan(0);
+    expect(jan.accrued.OA).toBeLessThan(dec.accrued.OA);
+  });
+
+  it("caps OA at S$20k when computing the extra 1% base", () => {
+    const highOa = { OA: 100_000, SA: 10_000, MA: 10_000 };
+    const cappedOa = { OA: 20_000, SA: 10_000, MA: 10_000 };
+    const high = monthlyInterestAccrual(highOa, rates);
+    const capped = monthlyInterestAccrual(cappedOa, rates);
+    // Extra portion to SA must match the 20k-capped OA case.
+    const ordinaryHighOA = (highOa.OA * rates.OA) / 12;
+    const ordinaryCapOA = (cappedOa.OA * rates.OA) / 12;
+    const extraHigh = high.SA - (highOa.SA * rates.SA) / 12;
+    const extraCap = capped.SA - (cappedOa.SA * rates.SA) / 12;
+    expect(extraHigh).toBeCloseTo(extraCap, 6);
+    // Ordinary OA interest still uses the full OA balance.
+    expect(high.OA).toBeCloseTo(ordinaryHighOA, 6);
+    expect(capped.OA).toBeCloseTo(ordinaryCapOA, 6);
+  });
+
+  it("fills the S$60k extra base OA→SA→MA (no proportional scale above 60k)", () => {
+    // Made-up balances: combined well above 60k.
+    const bal = { OA: 30_000, SA: 40_000, MA: 20_000 };
+    const base = extraInterestBase(bal);
+    // OA first (capped 20k), then SA takes the remaining 40k; MA gets 0.
+    expect(base).toEqual({ oa: 20_000, sa: 40_000, ma: 0 });
+    const accrual = monthlyInterestAccrual(bal, rates);
+    const ordinarySA = (bal.SA * rates.SA) / 12;
+    const ordinaryMA = (bal.MA * rates.MA) / 12;
+    const ordinaryOA = (bal.OA * rates.OA) / 12;
+    // Extra: (20k+40k)*1%/12 → SA; MA share 0.
+    expect(accrual.OA).toBeCloseTo(ordinaryOA, 6);
+    expect(accrual.SA).toBeCloseTo(ordinarySA + (60_000 * 0.01) / 12, 6);
+    expect(accrual.MA).toBeCloseTo(ordinaryMA, 6);
+  });
+
+  it("gives MA a share of extra interest only after OA+SA fill the 60k", () => {
+    const bal = { OA: 10_000, SA: 20_000, MA: 50_000 };
+    const base = extraInterestBase(bal);
+    expect(base).toEqual({ oa: 10_000, sa: 20_000, ma: 30_000 });
+    const accrual = monthlyInterestAccrual(bal, rates);
+    expect(accrual.SA - (bal.SA * rates.SA) / 12).toBeCloseTo(
+      (30_000 * 0.01) / 12,
+      6,
+    );
+    expect(accrual.MA - (bal.MA * rates.MA) / 12).toBeCloseTo(
+      (30_000 * 0.01) / 12,
+      6,
+    );
+  });
+
+  it("routes MA overflow to OA when SA has already reached FRS (under 55)", () => {
+    const bal = { OA: 10_000, SA: 220_000, MA: 80_000 };
+    const out = applyMaOverflow(bal, 75_000, 220_000);
+    expect(out.MA).toBe(75_000);
+    expect(out.OA).toBe(15_000); // +5,000 overflow → OA
+    expect(out.SA).toBe(220_000);
+  });
+
+  it("routes MA overflow to SA while SA is still below FRS", () => {
+    const bal = { OA: 10_000, SA: 100_000, MA: 80_000 };
+    const out = applyMaOverflow(bal, 75_000, 220_000);
+    expect(out.MA).toBe(75_000);
+    expect(out.SA).toBe(105_000);
+    expect(out.OA).toBe(10_000);
+  });
+
+  it("only tops SA up to FRS; remainder of MA overflow goes to OA", () => {
+    // Hypothetical: FRS 220,000, SA 218,000, overflow 5,000.
+    const bal = { OA: 10_000, SA: 218_000, MA: 80_000 };
+    const out = applyMaOverflow(bal, 75_000, 220_000);
+    expect(out.MA).toBe(75_000);
+    expect(out.SA).toBe(220_000); // +2,000 to FRS
+    expect(out.OA).toBe(13_000); // +3,000 remainder
+  });
+
+  it("uses the new calendar year's FRS/BHS after crossing Dec→Jan", () => {
+    // Zero rates so the year-switch is isolated from interest credit.
+    const ratesZero = { OA: 0, SA: 0, MA: 0 };
+    const opts = {
+      rates: ratesZero,
+      inflow: { OA: 0, SA: 0, MA: 0 },
+      bhs: 75_000,
+      frs: 220_000,
+      targetsByYear: {
+        2026: { bhs: 75_000, frs: 220_000 },
+        2027: { bhs: 76_000, frs: 225_000 },
+      },
+    };
+    const dec = stepProjectedMonth(
+      { OA: 10_000, SA: 218_000, MA: 80_000 },
+      { OA: 0, SA: 0, MA: 0 },
+      "2026-12",
+      opts,
+    );
+    // 2026 FRS 220k: +2k to SA, +3k remainder to OA.
+    expect(dec.balances).toEqual({ OA: 13_000, SA: 220_000, MA: 75_000 });
+
+    // Jan 2027 with higher FRS: MA still above new BHS → SA can absorb more.
+    const jan = stepProjectedMonth(
+      { OA: 13_000, SA: 220_000, MA: 80_000 },
+      { OA: 0, SA: 0, MA: 0 },
+      "2027-01",
+      opts,
+    );
+    // Overflow 4k above BHS 76k; room to FRS 225k is 5k → all 4k to SA.
+    expect(jan.balances).toEqual({ OA: 13_000, SA: 224_000, MA: 76_000 });
+  });
+
+  it("projects a window that crosses Dec→Jan with a January interest step", () => {
+    const last = {
+      t: "2026-10",
+      balances: { OA: 200_000, SA: 50_000, MA: 70_000 },
+      phase: "actual" as const,
+      grain: "month" as const,
+    };
+    // Minimal actuals so YTD accrual for 2026 is seedable from Oct only.
+    const seedActuals = [last];
+    const out = projectNextMonths(last, 4, {
+      rates,
+      inflow: { OA: 1_000, SA: 200, MA: 300 },
+      bhs: 75_000,
+      frs: 220_000,
+      actualsForAccrual: seedActuals,
+    });
+    expect(out.map((p) => p.t)).toEqual([
+      "2026-11",
+      "2026-12",
+      "2027-01",
+      "2027-02",
+    ]);
+    const nov = out[0]!;
+    const dec = out[1]!;
+    const jan = out[2]!;
+    // Nov/Dec grow only by inflow (+ overflow), not by monthly-credited interest.
+    expect(nov.balances.OA + nov.balances.SA + nov.balances.MA).toBeGreaterThan(
+      last.balances.OA + last.balances.SA + last.balances.MA,
+    );
+    // January credit makes a larger jump than a plain inflow month.
+    const decTot = dec.balances.OA + dec.balances.SA + dec.balances.MA;
+    const janTot = jan.balances.OA + jan.balances.SA + jan.balances.MA;
+    const novTot = nov.balances.OA + nov.balances.SA + nov.balances.MA;
+    const novDelta = novTot - (last.balances.OA + last.balances.SA + last.balances.MA);
+    const janDelta = janTot - decTot;
+    expect(janDelta).toBeGreaterThan(novDelta);
+  });
+
+  it("excludes January deltas from 「余额增幅」 average", () => {
+    const pts = [
+      {
+        t: "2025-12",
+        balances: { OA: 100, SA: 100, MA: 100 },
+        phase: "actual" as const,
+        grain: "month" as const,
+      },
+      {
+        t: "2026-01",
+        balances: { OA: 10_000, SA: 5_000, MA: 3_000 }, // interest cliff
+        phase: "actual" as const,
+        grain: "month" as const,
+      },
+      {
+        t: "2026-02",
+        balances: { OA: 10_100, SA: 5_050, MA: 3_050 },
+        phase: "actual" as const,
+        grain: "month" as const,
+      },
+      {
+        t: "2026-03",
+        balances: { OA: 10_200, SA: 5_100, MA: 3_100 },
+        phase: "actual" as const,
+        grain: "month" as const,
+      },
+    ];
+    const avg = averageMonthlyBalanceGrowth(pts, 6);
+    // Only Feb and Mar deltas (~100/50/50), not the Jan cliff.
+    expect(avg.OA).toBeCloseTo(100, 6);
+    expect(avg.SA).toBeCloseTo(50, 6);
+    expect(avg.MA).toBeCloseTo(50, 6);
+  });
+
+  it("seeds YTD accrual from actual months of the current year", () => {
+    const yearActuals = [
+      {
+        t: "2026-01",
+        balances: { OA: 10_000, SA: 10_000, MA: 10_000 },
+        phase: "actual" as const,
+        grain: "month" as const,
+      },
+      {
+        t: "2026-02",
+        balances: { OA: 11_000, SA: 10_000, MA: 10_000 },
+        phase: "actual" as const,
+        grain: "month" as const,
+      },
+    ];
+    const accrued = accrueFromActualMonths(yearActuals, 2026, 2, rates);
+    const expected = [
+      monthlyInterestAccrual(yearActuals[0]!.balances, rates),
+      monthlyInterestAccrual(yearActuals[1]!.balances, rates),
+    ].reduce(
+      (a, b) => ({ OA: a.OA + b.OA, SA: a.SA + b.SA, MA: a.MA + b.MA }),
+      { OA: 0, SA: 0, MA: 0 },
+    );
+    expect(accrued.OA).toBeCloseTo(expected.OA, 6);
+    expect(accrued.SA).toBeCloseTo(expected.SA, 6);
+    expect(accrued.MA).toBeCloseTo(expected.MA, 6);
   });
 });
