@@ -387,6 +387,59 @@ describe("parseBankModel (FAKE blocks)", () => {
     });
     expect(parsed.progress[0]?.unit).toBe("月");
   });
+
+  it("streak 缺省 unit 取自 BANK_UNITS「月」而非「个月」；展示仍为「N 个月」", () => {
+    const [, unitMonth] = BANK_UNITS;
+    expect(unitMonth).toBe("月");
+
+    const streakNoUnit: DashboardBlockPublic = {
+      id: "prog-streak-default-unit",
+      section_id: "s",
+      block_type: "progress",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      payload: {
+        block_key: "bank_prog_hsbc",
+        title: "FAKE streak 无 unit",
+        account_key: "hsbc",
+        kind: "streak",
+        value: 0,
+        target: 12,
+        progress: 0,
+        due: "2027-12",
+        status: "on_track",
+        status_text: "FAKE",
+        milestones: [{ t: "2027-12", amount: 12 }],
+        label: "FAKE",
+        note: "",
+      },
+    };
+    const parsed = parseBankModel({
+      id: "s",
+      category: "bank",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      blocks: [streakNoUnit],
+    });
+    const item = parsed.progress[0]!;
+    expect(item.unit).toBe(unitMonth);
+    expect(item.unit).toBe("月");
+    expect(item.unit).not.toBe("个月");
+    // 模型存「月」；可见文案由共用格式化函数渲染成「N 个月」
+    expect(formatBankProgressValue(item.value, item.unit)).toBe("0 个月");
+    expect(formatBankProgressValue(item.target, item.unit)).toBe("12 个月");
+    expect(
+      formatBankMilestoneLabel(
+        item.milestones[0]!.t,
+        item.milestones[0]!.amount,
+        item.unit,
+      ),
+    ).toBe("2027-12 · 12 个月");
+  });
 });
 
 describe("bank trend Y domain", () => {

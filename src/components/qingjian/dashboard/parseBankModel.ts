@@ -18,8 +18,10 @@ import type {
 } from "@/lib/dashboard/types";
 import {
   asBankNumber,
+  BANK_UNITS,
   isBankUnit,
   splitBankConclusionText,
+  type BankUnit,
 } from "./bankFormat";
 import {
   emptyBankViewModel,
@@ -42,6 +44,12 @@ import { BANK_GROUP_LABELS } from "./bankTheme";
 import { isSensitivePayloadKey } from "./format";
 
 const KEY_SET = new Set<string>(BANK_BLOCK_KEYS);
+
+/** 缺省 unit 取自 BANK_UNITS（"S$" | "月"），禁止写死「个月」。 */
+function defaultProgressUnit(kind: BankProgressKind): BankUnit {
+  const [sgd, month] = BANK_UNITS;
+  return kind === "streak" ? month : sgd;
+}
 
 type BankAccBlockKey = Extract<BankBlockKey, `bank_acc_${string}`>;
 type BankTrendBlockKey = Extract<BankBlockKey, `bank_trend_${string}`>;
@@ -219,15 +227,13 @@ function parseProgressItem(
 
   const monthlyNeeded = asBankNumber(p.monthly_needed) ?? undefined;
   // 优先读 payload.unit：白名单内规范化；白名单外原样保留（展示层数字兜底）；
-  // 缺省时 streak →「月」，其余 → S$（与 BANK_UNITS 一致）
+  // 缺省取自 BANK_UNITS（streak →「月」，其余 → S$）
   const rawUnit = str(p.unit)?.trim();
   const unit = isBankUnit(rawUnit)
     ? rawUnit
     : rawUnit
       ? rawUnit
-      : kind === "streak"
-        ? ("月" as const)
-        : ("S$" as const);
+      : defaultProgressUnit(kind);
 
   return {
     key,
