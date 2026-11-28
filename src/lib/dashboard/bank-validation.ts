@@ -31,6 +31,12 @@ import {
 export const BANK_LEDGER_LIST_ITEMS_MAX = 200;
 /** One ledger row per month; at most a year of months. */
 export const BANK_LEDGER_MONTHS_MAX = 12;
+/**
+ * Max chars for one ledger month JSON string (payload still stores months as
+ * JSON strings). 500 was too small for ~200 lines; 32k covers 200 compact lines
+ * with headroom while staying a sane overall cap.
+ */
+export const BANK_LEDGER_MONTH_JSON_MAX = 32_000;
 export const BANK_ROLE_TAG_MAX = 12;
 export const BANK_STATUS_TEXT_MAX = 40;
 export const BANK_NOTE_MAX = 200;
@@ -93,9 +99,10 @@ function jsonStringItems<T>(
   itemSchema: z.ZodType<T>,
   maxItems: number,
   refineItems?: (items: T[], ctx: z.RefinementCtx) => void,
+  maxItemChars: number = DASHBOARD_LIST_ITEM_MAX,
 ) {
   return z
-    .array(z.string().max(DASHBOARD_LIST_ITEM_MAX))
+    .array(z.string().max(maxItemChars))
     .max(maxItems)
     .superRefine((rawItems, ctx) => {
       const parsed: T[] = [];
@@ -345,6 +352,7 @@ const bankLedgerListSchema = z
           }
         }
       },
+      BANK_LEDGER_MONTH_JSON_MAX,
     ),
     empty_text: z.string().max(DASHBOARD_EMPTY_TEXT_MAX).optional(),
   })

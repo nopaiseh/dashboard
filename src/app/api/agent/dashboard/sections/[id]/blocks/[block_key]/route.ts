@@ -58,8 +58,8 @@ function toPublicBlock(row: DashboardBlockRow): DashboardBlockPublic {
  */
 export async function PUT(request: Request, context: RouteContext) {
   await requireRequest();
-  const { id: sectionId, block_key: blockKeyParam } = await context.params;
-  const blockKey = decodeURIComponent(blockKeyParam);
+  // Next.js already percent-decodes dynamic params; do not decode again.
+  const { id: sectionId, block_key: blockKey } = await context.params;
 
   const supabase = getServiceClient();
   const auth = await resolveAgentFromRequest(
@@ -167,6 +167,7 @@ export async function PUT(request: Request, context: RouteContext) {
     if (matches.length === 1) {
       const legacyId = matches[0]!;
       const encryptedPayload = encryptBlockPayload(legacyId, payloadParsed.data);
+      const touchSort = parsed.data.sort_order !== undefined;
       const { data, error } = await supabase.rpc(
         "apply_agent_dashboard_block_patch",
         {
@@ -174,7 +175,7 @@ export async function PUT(request: Request, context: RouteContext) {
           p_agent_id: auth.agent.agentId,
           p_touch_block_type: true,
           p_block_type: parsed.data.block_type,
-          p_touch_sort_order: true,
+          p_touch_sort_order: touchSort,
           p_sort_order: parsed.data.sort_order ?? 0,
           p_touch_payload: true,
           p_payload: encryptedPayload,
@@ -223,7 +224,8 @@ export async function PUT(request: Request, context: RouteContext) {
     p_section_id: sectionId,
     p_block_key: blockKey,
     p_block_type: parsed.data.block_type,
-    p_sort_order: parsed.data.sort_order ?? 0,
+    // Omit → NULL → SQL COALESCE preserves existing sort_order on update.
+    p_sort_order: parsed.data.sort_order ?? null,
     p_agent_id: auth.agent.agentId,
     p_payload: encryptedPayload,
   });
@@ -235,6 +237,10 @@ export async function PUT(request: Request, context: RouteContext) {
       code: (error as { code?: string }).code ?? "unknown",
     });
     if ((error as { code?: string }).code === "23505") {
+      return dashboardBlockKeyConflictResponse();
+    }
+    // Concurrent first-write id mismatch (and other XJ409 conflicts) → 409 retry.
+    if (isPgConflict(error)) {
       return dashboardBlockKeyConflictResponse();
     }
     if (isPgForbidden(error)) {

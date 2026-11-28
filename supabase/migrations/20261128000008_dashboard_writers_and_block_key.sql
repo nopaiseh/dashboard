@@ -36,10 +36,12 @@ REVOKE ALL ON TABLE public.dashboard_writers FROM anon, authenticated;
 -- service_role bypasses RLS; owner/agent APIs use the service client only.
 
 -- Backfill (no agent ids hardcoded):
--- - Ordinary categories: every section owner becomes a writer.
--- - cpf / bank: at most one writer. Only when exactly one agent owns a
---   cpf section → that agent is writer for both cpf and bank.
---   Otherwise leave both empty (deny writes until owner assigns).
+-- - Ordinary categories: every section owner becomes a writer
+--   (multiple writers allowed; owner may add more later).
+-- - cpf / bank: backfill only when exactly one agent owns a cpf section →
+--   that agent is seeded as a writer for both cpf and bank. Owner may
+--   assign additional writers afterward. Otherwise leave both empty
+--   (deny writes until owner assigns).
 INSERT INTO public.dashboard_writers (category, agent_id)
 SELECT DISTINCT
   lower(trim(s.category)) AS category,
@@ -95,14 +97,20 @@ CREATE OR REPLACE FUNCTION public.is_dashboard_category_writer(
 RETURNS boolean
 LANGUAGE sql
 STABLE
-STRICT
+-- Not STRICT: NULL agent/category must yield false (not NULL), else
+-- `IF NOT is_dashboard_category_writer(...)` skips the forbid branch.
 SET search_path = public, pg_temp
 AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.dashboard_writers w
-    WHERE w.category = lower(trim(p_category))
-      AND w.agent_id = p_agent_id
+  SELECT COALESCE(
+    (
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.dashboard_writers w
+        WHERE w.category = lower(trim(p_category))
+          AND w.agent_id = p_agent_id
+      )
+    ),
+    false
   );
 $$;
 
@@ -331,12 +339,19 @@ BEGIN
     id, section_id, block_type, sort_order, agent_id, payload, block_key
   )
   VALUES (
-    p_id, p_section_id, p_block_type, p_sort_order, p_agent_id, p_payload, p_block_key
+    p_id,
+    p_section_id,
+    p_block_type,
+    COALESCE(p_sort_order, 0),
+    p_agent_id,
+    p_payload,
+    p_block_key
   )
   ON CONFLICT (section_id, block_key) WHERE block_key IS NOT NULL
   DO UPDATE SET
     block_type = EXCLUDED.block_type,
-    sort_order = EXCLUDED.sort_order,
+    -- NULL p_sort_order preserves the existing row's sort_order.
+    sort_order = COALESCE(p_sort_order, public.dashboard_blocks.sort_order),
     payload = EXCLUDED.payload,
     agent_id = p_agent_id,
     updated_at = now()
@@ -345,6 +360,15 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'forbidden: upsert failed'
       USING ERRCODE = 'XJ403';
+  END IF;
+
+  -- Ciphertext AAD is bound to block id. Concurrent first-writes of the same
+  -- key can race: loser hits ON CONFLICT and would otherwise overwrite the
+  -- winner's row with payload encrypted under the loser's id. Abort so the
+  -- agent can retry against the surviving id.
+  IF v_block.id IS DISTINCT FROM p_id THEN
+    RAISE EXCEPTION 'conflict: upsert block id mismatch'
+      USING ERRCODE = 'XJ409';
   END IF;
 
   IF v_existing_id IS NULL THEN

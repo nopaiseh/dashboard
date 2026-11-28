@@ -5,7 +5,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BANK_BLOCK_KEYS } from "@/lib/bank-block-keys";
 import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
-import { parseBankBlockPayload } from "@/lib/dashboard/bank-validation";
+import {
+  BANK_LEDGER_LIST_ITEMS_MAX,
+  BANK_LEDGER_MONTH_JSON_MAX,
+  parseBankBlockPayload,
+} from "@/lib/dashboard/bank-validation";
 import { isBlockKeyAllowedForCategory } from "@/lib/dashboard/block-key-policy";
 import {
   containsSingaporeNricOrFin,
@@ -352,6 +356,46 @@ describe("bank strict field validation", () => {
         "bank_ledger",
       ).ok,
     ).toBe(true);
+  });
+
+  it("accepts bank_ledger month with 200 lines (relaxed month JSON cap)", () => {
+    const lines = Array.from({ length: BANK_LEDGER_LIST_ITEMS_MAX }, (_, i) => ({
+      kind: i % 2 === 0 ? ("in" as const) : ("out" as const),
+      category: "other" as const,
+      amount: 1,
+    }));
+    const in_total = lines
+      .filter((l) => l.kind === "in")
+      .reduce((s, l) => s + l.amount, 0);
+    const out_total = lines
+      .filter((l) => l.kind === "out")
+      .reduce((s, l) => s + l.amount, 0);
+    const month = JSON.stringify({
+      month: "2026-11",
+      in_total,
+      out_total,
+      lines,
+    });
+    expect(month.length).toBeGreaterThan(500);
+    expect(month.length).toBeLessThanOrEqual(BANK_LEDGER_MONTH_JSON_MAX);
+    expect(
+      parseBankBlockPayload(
+        "list",
+        { block_key: "bank_ledger", items: [month] },
+        "bank_ledger",
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("rejects bank_ledger month JSON above the sane overall cap", () => {
+    const huge = "x".repeat(BANK_LEDGER_MONTH_JSON_MAX + 1);
+    expect(
+      parseBankBlockPayload(
+        "list",
+        { block_key: "bank_ledger", items: [huge] },
+        "bank_ledger",
+      ).ok,
+    ).toBe(false);
   });
 
   it("rejects unknown fields via .strict() and bad unit", () => {
@@ -842,6 +886,167 @@ describe("upsert by block_key", () => {
     );
     expect(res.status).toBe(201);
     expect(rpcName).toBe("upsert_dashboard_block_by_key");
+  });
+
+  it("maps upsert id-mismatch XJ409 to 409 conflict for retry", async () => {
+    mockAuth();
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          return blocksFrom({ columnId: null, nullKeyRows: [] });
+        },
+        rpc: async () => ({
+          data: null,
+          error: {
+            code: "XJ409",
+            message: "conflict: upsert block id mismatch",
+          },
+        }),
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: FAKE_BANK_ACC_PAYLOAD,
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
+    });
+  });
+
+  it("omitted sort_order passes null so SQL preserves existing", async () => {
+    mockAuth();
+    const captured: { sort?: unknown } = {};
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          return blocksFrom({ columnId: BLOCK_ID });
+        },
+        rpc: async (_name: string, args: Record<string, unknown>) => {
+          captured.sort = args.p_sort_order;
+          return {
+            data: {
+              inserted: false,
+              block: {
+                id: BLOCK_ID,
+                section_id: SECTION_ID,
+                block_type: "metric",
+                sort_order: 9,
+                agent_id: AGENT_A,
+                block_key: "bank_acc_hsbc",
+                payload: encryptBlockPayload(BLOCK_ID, FAKE_BANK_ACC_PAYLOAD),
+                created_at: "2026-01-01T00:00:00.000Z",
+                updated_at: "2026-01-01T00:00:00.000Z",
+              },
+            },
+            error: null,
+          };
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: FAKE_BANK_ACC_PAYLOAD,
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(captured.sort).toBeNull();
+  });
+
+  it("uses already-decoded block_key params (no second decode)", async () => {
+    mockAuth();
+    // Next would pass the already-decoded key; a literal "%" must not 500.
+    const keyWithPercent = "bank_acc_hsbc%";
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          throw new Error("blocks lookup should not run for invalid key");
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/${encodeURIComponent(keyWithPercent)}`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: FAKE_BANK_ACC_PAYLOAD,
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: keyWithPercent,
+        }),
+      },
+    );
+    // Not a whitelisted key → 400 invalid payload (not URIError 500).
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: DASHBOARD_INVALID_PAYLOAD_ERROR,
+    });
   });
 
   it("rejects CPF key upsert into bank section with identical 400 body", async () => {

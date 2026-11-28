@@ -530,6 +530,8 @@ DECLARE
   v_bank_writer uuid;
   v_result jsonb;
   v_count int;
+  v_sqlstate text;
+  v_payload text;
 BEGIN
   -- Ordinary categories: all owners. cpf/bank: only unique cpf owner.
   INSERT INTO public.dashboard_writers (category, agent_id)
@@ -570,26 +572,30 @@ BEGIN
     RAISE EXCEPTION 'bank should include unique cpf writer';
   END IF;
 
-  -- Upsert by block_key: insert then replace
+  -- Upsert by block_key: insert then replace (same id required; ciphertext AAD)
   v_result := public.upsert_dashboard_block_by_key(
     'abababab-abab-4aba-8bab-abababababab',
     'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
     'cpf_conclusion',
     'text',
-    0,
+    7,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'v1:smoke:tag:cipher-upsert-1'
   );
   IF NOT (v_result->>'inserted')::boolean THEN
     RAISE EXCEPTION 'first upsert should insert';
   END IF;
+  IF (v_result->'block'->>'sort_order')::int <> 7 THEN
+    RAISE EXCEPTION 'first upsert sort_order should be 7';
+  END IF;
 
+  -- Overwrite without sort_order (NULL) must preserve existing 7
   v_result := public.upsert_dashboard_block_by_key(
-    'cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd',
+    'abababab-abab-4aba-8bab-abababababab',
     'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
     'cpf_conclusion',
     'text',
-    1,
+    NULL,
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     'v1:smoke:tag:cipher-upsert-2'
   );
@@ -601,6 +607,43 @@ BEGIN
   END IF;
   IF v_result->'block'->>'payload' IS DISTINCT FROM 'v1:smoke:tag:cipher-upsert-2' THEN
     RAISE EXCEPTION 'upsert should replace payload';
+  END IF;
+  IF (v_result->'block'->>'sort_order')::int <> 7 THEN
+    RAISE EXCEPTION 'omit sort_order should preserve 7, got %',
+      v_result->'block'->>'sort_order';
+  END IF;
+
+  -- Concurrent-style id mismatch must abort (XJ409), not corrupt ciphertext
+  BEGIN
+    PERFORM public.upsert_dashboard_block_by_key(
+      'cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd',
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      'cpf_conclusion',
+      'text',
+      0,
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      'v1:smoke:tag:cipher-upsert-race'
+    );
+    RAISE EXCEPTION 'expected XJ409 for upsert id mismatch';
+  EXCEPTION
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+      IF v_sqlstate IS DISTINCT FROM 'XJ409' THEN
+        RAISE EXCEPTION 'expected XJ409 for id mismatch, got %', v_sqlstate;
+      END IF;
+  END;
+
+  -- Payload must remain the pre-race value (failed upsert rolls back)
+  SELECT payload INTO v_payload
+  FROM public.dashboard_blocks
+  WHERE id = 'abababab-abab-4aba-8bab-abababababab';
+  IF v_payload IS DISTINCT FROM 'v1:smoke:tag:cipher-upsert-2' THEN
+    RAISE EXCEPTION 'id-mismatch upsert must not overwrite payload';
+  END IF;
+
+  -- NULL agent id must not pass the writer gate
+  IF public.is_dashboard_category_writer(NULL, 'cpf') IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'NULL agent must not be a category writer';
   END IF;
 
   SELECT count(*) INTO v_count
