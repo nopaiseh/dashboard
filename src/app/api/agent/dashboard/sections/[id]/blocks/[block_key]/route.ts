@@ -11,6 +11,7 @@ import {
 } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
+import { assertSensitiveCategoryWritable } from "@/lib/dashboard/sensitive-exclusivity";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -111,6 +112,16 @@ export async function PUT(request: Request, context: RouteContext) {
   );
   if (!catAllowed.ok) {
     return jsonError(catAllowed.status, catAllowed.error);
+  }
+
+  const writable = await assertSensitiveCategoryWritable(
+    supabase,
+    auth.agent.agentId,
+    sectionRow.category,
+    { knownSectionAgentId: sectionRow.agent_id },
+  );
+  if (!writable.ok) {
+    return jsonError(writable.status, writable.error);
   }
 
   if (!isBlockKeyAllowedForCategory(sectionRow.category, blockKey)) {

@@ -4,7 +4,10 @@ import {
   planPatchSection,
 } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
-import { assertSensitiveSectionCreatable } from "@/lib/dashboard/sensitive-exclusivity";
+import {
+  assertSensitiveCategoryWritable,
+  assertSensitiveSectionCreatable,
+} from "@/lib/dashboard/sensitive-exclusivity";
 import type { DashboardSectionRow } from "@/lib/dashboard/types";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -68,6 +71,20 @@ export async function PATCH(request: Request, context: RouteContext) {
   );
   if (!catAllowed.ok) {
     return jsonError(catAllowed.status, catAllowed.error);
+  }
+
+  // Write-time sensitive lock: changing into a sensitive category uses the
+  // full uniqueness check; otherwise ownership of the loaded section.
+  const writable = await assertSensitiveCategoryWritable(
+    supabase,
+    auth.agent.agentId,
+    targetCategory,
+    parsed.data.category !== undefined
+      ? undefined
+      : { knownSectionAgentId: sectionRow.agent_id },
+  );
+  if (!writable.ok) {
+    return jsonError(writable.status, writable.error);
   }
 
   if (parsed.data.category !== undefined) {

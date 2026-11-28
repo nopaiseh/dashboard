@@ -42,23 +42,31 @@ SET allowed_categories = (
   )
 );
 
+-- PG forbids subqueries in CHECK; use an IMMUTABLE helper instead.
+CREATE OR REPLACE FUNCTION public.allowed_categories_are_normalized(cats text[])
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+STRICT
+SET search_path = public, pg_temp
+AS $$
+  SELECT cats = '{}'::text[]
+    OR (
+      SELECT bool_and(
+        char_length(c) BETWEEN 1 AND 64
+        AND c = lower(c)
+        AND c = trim(c)
+      )
+      FROM unnest(cats) AS c
+    );
+$$;
+
 ALTER TABLE public.agent_tokens
   DROP CONSTRAINT IF EXISTS agent_tokens_allowed_categories_normalized;
 
 ALTER TABLE public.agent_tokens
   ADD CONSTRAINT agent_tokens_allowed_categories_normalized CHECK (
-    allowed_categories = '{}'::text[]
-    OR (
-      -- every element is non-empty lowercase trimmed text ≤64
-      (
-        SELECT bool_and(
-          char_length(c) BETWEEN 1 AND 64
-          AND c = lower(c)
-          AND c = trim(c)
-        )
-        FROM unnest(allowed_categories) AS c
-      )
-    )
+    public.allowed_categories_are_normalized(allowed_categories)
   );
 
 -- RLS / grants unchanged: table already RLS-on; anon/authenticated revoked;

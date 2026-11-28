@@ -16,6 +16,7 @@ import {
   earlyValidateDashboardPayload,
   parseDashboardBlockPayload,
 } from "@/lib/dashboard/parse-payload";
+import { assertSensitiveCategoryWritable } from "@/lib/dashboard/sensitive-exclusivity";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -127,6 +128,16 @@ export async function PATCH(request: Request, context: RouteContext) {
   );
   if (!catAllowed.ok) {
     return jsonError(catAllowed.status, catAllowed.error);
+  }
+
+  const writable = await assertSensitiveCategoryWritable(
+    supabase,
+    auth.agent.agentId,
+    sectionRow.category,
+    { knownSectionAgentId: sectionRow.agent_id },
+  );
+  if (!writable.ok) {
+    return jsonError(writable.status, writable.error);
   }
 
   let nextPayload: Record<string, unknown> | undefined;

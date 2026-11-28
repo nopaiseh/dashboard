@@ -17,6 +17,7 @@ import {
   earlyValidateDashboardPayload,
   parseDashboardBlockPayload,
 } from "@/lib/dashboard/parse-payload";
+import { assertSensitiveCategoryWritable } from "@/lib/dashboard/sensitive-exclusivity";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -109,6 +110,16 @@ export async function POST(request: Request) {
   );
   if (!catAllowed.ok) {
     return jsonError(catAllowed.status, catAllowed.error);
+  }
+
+  const writable = await assertSensitiveCategoryWritable(
+    supabase,
+    auth.agent.agentId,
+    sectionRow.category,
+    { knownSectionAgentId: sectionRow.agent_id },
+  );
+  if (!writable.ok) {
+    return jsonError(writable.status, writable.error);
   }
 
   const payloadParsed = parseDashboardBlockPayload(

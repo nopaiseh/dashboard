@@ -335,6 +335,197 @@ describe("token allowed_categories + sensitive exclusivity", () => {
     );
     expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
   });
+
+  it("write-time: non-owner denied even when known section lists them out", async () => {
+    vi.resetModules();
+    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
+    const { assertSensitiveCategoryWritable } = await import(
+      "@/lib/dashboard/sensitive-exclusivity"
+    );
+    const denied = await assertSensitiveCategoryWritable(
+      {} as never,
+      AGENT_B,
+      "bank",
+      { knownSectionAgentId: AGENT_A },
+    );
+    expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
+
+    const allowed = await assertSensitiveCategoryWritable(
+      {} as never,
+      AGENT_A,
+      "bank",
+      { knownSectionAgentId: AGENT_A },
+    );
+    expect(allowed).toEqual({ ok: true });
+  });
+
+  it("write-time: no section → non-unique token holder denied", async () => {
+    vi.resetModules();
+    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
+    const { assertSensitiveCategoryWritable } = await import(
+      "@/lib/dashboard/sensitive-exclusivity"
+    );
+    const supabase = {
+      from: (table: string) => {
+        if (table === "dashboard_sections") {
+          return {
+            select: () => Promise.resolve({ data: [], error: null }),
+          };
+        }
+        if (table === "agent_tokens") {
+          return {
+            select: () => ({
+              is: () =>
+                Promise.resolve({
+                  data: [
+                    {
+                      agent_id: AGENT_A,
+                      allowed_categories: ["cpf", "bank"],
+                    },
+                    {
+                      agent_id: AGENT_B,
+                      allowed_categories: ["bank"],
+                    },
+                  ],
+                  error: null,
+                }),
+            }),
+          };
+        }
+        throw new Error(table);
+      },
+    };
+
+    const denied = await assertSensitiveCategoryWritable(
+      supabase as never,
+      AGENT_B,
+      "bank",
+    );
+    expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
+
+    const allowedOwner = await assertSensitiveCategoryWritable(
+      supabase as never,
+      AGENT_A,
+      "bank",
+    );
+    // A is also not unique → denied too when no section
+    expect(allowedOwner).toEqual({
+      ok: false,
+      status: 403,
+      error: "forbidden",
+    });
+  });
+
+  it("poisoned allowed_categories=['bank'] write bank → 403", async () => {
+    // Simulate direct DB tamper: other agent token lists bank, but A owns bank.
+    vi.resetModules();
+    setEnv();
+    vi.doMock("@/lib/require-request", () => ({
+      requireRequest: async () => undefined,
+    }));
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: {
+          agentId: AGENT_B,
+          tokenHash: "hash",
+          // Tampered allow-list — would pass assertCategoryAllowedForToken alone.
+          allowedCategories: ["bank"],
+        },
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_sections") {
+            return {
+              select: () =>
+                Promise.resolve({
+                  data: [
+                    {
+                      id: SECTION_ID,
+                      agent_id: AGENT_A,
+                      category: "bank",
+                    },
+                  ],
+                  error: null,
+                }),
+            };
+          }
+          throw new Error(`unexpected table ${table}`);
+        },
+      }),
+    }));
+
+    const { POST } = await import("@/app/api/agent/dashboard/sections/route");
+    const res = await POST(
+      new Request("http://localhost/api/agent/dashboard/sections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ category: "bank" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("poisoned token writing block into bank section → 403", async () => {
+    vi.resetModules();
+    setEnv();
+    vi.doMock("@/lib/require-request", () => ({
+      requireRequest: async () => undefined,
+    }));
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: {
+          agentId: AGENT_B,
+          tokenHash: "hash",
+          allowedCategories: ["bank"],
+        },
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: {
+                  id: SECTION_ID,
+                  category: "bank",
+                  sort_order: 0,
+                  agent_id: AGENT_A,
+                  created_at: "2026-01-01T00:00:00.000Z",
+                  updated_at: "2026-01-01T00:00:00.000Z",
+                },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc: async () => {
+          throw new Error("rpc should not be called");
+        },
+      }),
+    }));
+
+    const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
+    const res = await POST(
+      new Request("http://localhost/api/agent/dashboard/blocks", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer xjg_at_test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          section_id: SECTION_ID,
+          block_type: "metric",
+          payload: FAKE_BANK_ACC_PAYLOAD,
+        }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("bank strict field validation", () => {

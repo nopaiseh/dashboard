@@ -11,7 +11,7 @@
 | 对象 | 说明 |
 |------|------|
 | `agents` | 姐妹（slug / name / area / bot_id） |
-| `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发；`allowed_categories text[]`（规范化小写；空＝不能写任何 dashboard 分类）。敏感分类 `cpf`/`bank` 跨 agent 互斥（触发器 + 服务端校验） |
+| `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发；`allowed_categories text[]`（规范化小写；空＝不能写任何 dashboard 分类）。敏感分类 `cpf`/`bank` 跨 agent 互斥（触发器 + 签发/修改 409 + **写入时独立 403**） |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
 | `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密）；可选明文 `block_key` + 部分唯一索引 `(section_id, block_key)` |

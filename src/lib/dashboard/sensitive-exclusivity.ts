@@ -81,6 +81,10 @@ export async function assertSensitiveCategoriesGrantable(
   return { ok: true };
 }
 
+export type SensitiveWriteResult =
+  | { ok: true }
+  | { ok: false; status: 403; error: string };
+
 /**
  * Reject creating/renaming a section into a sensitive category when another
  * agent already owns a section with that category.
@@ -90,7 +94,7 @@ export async function assertSensitiveSectionCreatable(
   agentId: string,
   category: string,
   options?: { excludeSectionId?: string },
-): Promise<SensitiveExclusivityResult | { ok: false; status: 403; error: string }> {
+): Promise<SensitiveWriteResult> {
   if (!isSensitiveDashboardCategory(category)) {
     return { ok: true };
   }
@@ -118,4 +122,82 @@ export async function assertSensitiveSectionCreatable(
   }
 
   return { ok: true };
+}
+
+/**
+ * Write-time enforcement for sensitive categories (independent of issue/update).
+ * Even if `allowed_categories` was tampered to include cpf/bank:
+ * - if a section for that category exists → requester must own it
+ * - if no section yet → requester must be the unique active-token holder
+ * Otherwise 403.
+ *
+ * When `knownSectionAgentId` is provided (block writes into an already-loaded
+ * section), ownership of that section is sufficient — no extra queries.
+ */
+export async function assertSensitiveCategoryWritable(
+  supabase: SupabaseClient,
+  agentId: string,
+  category: string,
+  options?: { knownSectionAgentId?: string | null },
+): Promise<SensitiveWriteResult> {
+  if (!isSensitiveDashboardCategory(category)) {
+    return { ok: true };
+  }
+
+  if (options && "knownSectionAgentId" in options) {
+    if (options.knownSectionAgentId === agentId) {
+      return { ok: true };
+    }
+    return { ok: false, status: 403, error: "forbidden" };
+  }
+
+  const needle = normalizeDashboardCategory(category);
+
+  const { data: sections, error: sectionsError } = await supabase
+    .from("dashboard_sections")
+    .select("id, agent_id, category");
+
+  if (sectionsError) {
+    return { ok: false, status: 403, error: "forbidden" };
+  }
+
+  const owners = new Set<string>();
+  for (const row of sections ?? []) {
+    if (row.agent_id == null) continue;
+    if (normalizeDashboardCategory(row.category) === needle) {
+      owners.add(row.agent_id);
+    }
+  }
+
+  if (owners.size > 0) {
+    if (owners.size === 1 && owners.has(agentId)) {
+      return { ok: true };
+    }
+    return { ok: false, status: 403, error: "forbidden" };
+  }
+
+  // No section yet: must be the unique active-token holder of this category.
+  const { data: tokens, error: tokensError } = await supabase
+    .from("agent_tokens")
+    .select("agent_id, allowed_categories")
+    .is("revoked_at", null);
+
+  if (tokensError) {
+    return { ok: false, status: 403, error: "forbidden" };
+  }
+
+  const holders = new Set<string>();
+  for (const row of tokens ?? []) {
+    const cats = Array.isArray(row.allowed_categories)
+      ? (row.allowed_categories as string[])
+      : [];
+    if (cats.some((c) => normalizeDashboardCategory(c) === needle)) {
+      holders.add(row.agent_id);
+    }
+  }
+
+  if (holders.size === 1 && holders.has(agentId)) {
+    return { ok: true };
+  }
+  return { ok: false, status: 403, error: "forbidden" };
 }

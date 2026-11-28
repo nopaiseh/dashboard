@@ -5,7 +5,10 @@ import {
   planCreateSection,
 } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
-import { assertSensitiveSectionCreatable } from "@/lib/dashboard/sensitive-exclusivity";
+import {
+  assertSensitiveCategoryWritable,
+  assertSensitiveSectionCreatable,
+} from "@/lib/dashboard/sensitive-exclusivity";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -47,6 +50,17 @@ export async function POST(request: Request) {
   );
   if (!catAllowed.ok) {
     return jsonError(catAllowed.status, catAllowed.error);
+  }
+
+  // Independent of token allow-list: sensitive categories require ownership /
+  // unique-holder even if allowed_categories was tampered.
+  const writable = await assertSensitiveCategoryWritable(
+    supabase,
+    auth.agent.agentId,
+    parsed.data.category,
+  );
+  if (!writable.ok) {
+    return jsonError(writable.status, writable.error);
   }
 
   const exclusive = await assertSensitiveSectionCreatable(
