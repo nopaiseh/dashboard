@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { EmptyBlock } from "./EmptyBlock";
 import type { AccBalances, CpfAccountsData } from "./cpfModel";
 import { formatMoney } from "./format";
@@ -7,6 +8,36 @@ const LABELS = [
   { key: "SA" as const, title: "特别户口 SA", colorClass: "k-sw-sa" },
   { key: "MA" as const, title: "保健储蓄 MA", colorClass: "k-sw-ma" },
 ];
+
+/** 比上月：正 ▲、负 ▼、零无箭头。 */
+export function momChangeLabel(value: number): ReactNode {
+  if (!Number.isFinite(value) || value === 0) {
+    return <>比上月持平</>;
+  }
+  if (value > 0) {
+    return (
+      <>
+        比上月 <b>▲ {formatMoney(value)}</b>
+      </>
+    );
+  }
+  return (
+    <>
+      比上月 <b>▼ {formatMoney(Math.abs(value))}</b>
+    </>
+  );
+}
+
+/** 比年初：正 +、负 −、零中性。 */
+export function ytdChangeLabel(value: number): ReactNode {
+  if (!Number.isFinite(value) || value === 0) {
+    return <>比年初持平</>;
+  }
+  if (value > 0) {
+    return <>比年初 +{formatMoney(value)}</>;
+  }
+  return <>比年初 −{formatMoney(Math.abs(value))}</>;
+}
 
 export function CpfAccounts({
   data,
@@ -56,12 +87,8 @@ export function CpfAccounts({
               </span>
             </div>
             <b>{formatMoney(balances[acc.key])}</b>
-            <span className={"k-chg"}>
-              比上月 <b>▲ {formatMoney(chgM[acc.key])}</b>
-            </span>
-            <span className={"k-yr"}>
-              比年初 +{formatMoney(chgY[acc.key])}
-            </span>
+            <span className={"k-chg"}>{momChangeLabel(chgM[acc.key])}</span>
+            <span className={"k-yr"}>{ytdChangeLabel(chgY[acc.key])}</span>
           </div>
         ))}
         <TotalCard
@@ -89,6 +116,11 @@ function TotalCard({
   monthContribTotal?: number;
   monthInterest?: number;
 }) {
+  const interestBit =
+    typeof monthInterest === "number" && monthInterest !== 0
+      ? ` · 利息 ${monthInterest.toLocaleString("en-SG")}`
+      : "";
+
   return (
     <div className={"num numEm"}>
       <div className={"lb"}>
@@ -97,17 +129,15 @@ function TotalCard({
         </span>
       </div>
       <b>{formatMoney(total)}</b>
-      <span className={"k-chg"}>
-        比上月 <b>▲ {formatMoney(totalChgM)}</b>
-      </span>
+      <span className={"k-chg"}>{momChangeLabel(totalChgM)}</span>
       {monthContribTotal !== undefined ? (
         <span className={"k-yr"}>
-          缴存 {monthContribTotal.toLocaleString("en-SG")} · 利息{" "}
-          {(monthInterest ?? 0).toLocaleString("en-SG")}
+          缴存 {monthContribTotal.toLocaleString("en-SG")}
+          {interestBit}
         </span>
       ) : null}
       <span className={"k-yr"}>
-        比年初 +{formatMoney(chgY.OA + chgY.SA + chgY.MA)}
+        {ytdChangeLabel(chgY.OA + chgY.SA + chgY.MA)}
       </span>
     </div>
   );

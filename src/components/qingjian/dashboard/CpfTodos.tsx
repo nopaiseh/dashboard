@@ -48,15 +48,7 @@ export function CpfTodos({
               <li key={item.title} className={liClass || undefined}>
                 <span className={"box"} role="img" aria-label="未完成" />
                 <div>
-                  <span className={"t"}>
-                    {item.irreversible ? (
-                      <>
-                        OA 转 SA（<em>不可逆</em>，需玄空哥决定）
-                      </>
-                    ) : (
-                      item.title
-                    )}
-                  </span>
+                  <span className={"t"}>{item.title}</span>
                   <span className={"sub"}>{item.sub}</span>
                 </div>
                 <div className={"r"}>

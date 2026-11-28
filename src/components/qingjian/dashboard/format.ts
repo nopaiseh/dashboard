@@ -39,8 +39,8 @@ export function formatYtd(value: number, unit = "S$", label?: string): string {
 }
 
 /**
- * Progress ratio → fill within current tier band (0–100) and optional overshoot.
- * Values ≤ 2 are treated as ratios (0.55 / 1.12); larger values as percent (55 / 112).
+ * Progress percent (0–100, may exceed 100) → fill within band and optional overshoot.
+ * Always treat input as percent; do not interpret ≤2 as a 0–1 ratio.
  */
 export function progressFill(progress: number): {
   withinPct: number;
@@ -50,7 +50,7 @@ export function progressFill(progress: number): {
   if (!Number.isFinite(progress) || progress <= 0) {
     return { withinPct: 0, overshootPct: 0, ratio: 0 };
   }
-  const ratio = progress <= 2 ? progress : progress / 100;
+  const ratio = progress / 100;
   if (ratio <= 1) {
     return {
       withinPct: Math.round(ratio * 1000) / 10,
@@ -65,6 +65,18 @@ export function progressFill(progress: number): {
     overshootPct: Math.round(over * 1000) / 10,
     ratio,
   };
+}
+
+/** 目标金额 → 刻度文案，如 75000 →「7.5万」、110000 →「11万」。 */
+export function formatWan(amount: number): string {
+  if (!Number.isFinite(amount) || amount < 0) return "—";
+  const wan = amount / 10_000;
+  const rounded = Math.round(wan * 10) / 10;
+  const label =
+    Number.isInteger(rounded) || Math.abs(rounded - Math.round(rounded)) < 1e-9
+      ? String(Math.round(rounded))
+      : String(rounded);
+  return `${label}万`;
 }
 
 export function progressCaption(view: {

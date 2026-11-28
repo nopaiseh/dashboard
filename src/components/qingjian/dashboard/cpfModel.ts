@@ -52,6 +52,7 @@ export type CpfAccountsData = {
   monthInterest?: number;
 };
 
+/** 三档状态文案由组件根据 reachedTier / 金额推导；此处只保留原始字段。 */
 export type CpfProgressData = {
   ma: number;
   bhs: number;
@@ -60,11 +61,12 @@ export type CpfProgressData = {
   frs: number;
   ers: number;
   exceedFrs: number;
+  /** 规范化后的 reached_tier（如 FRS）；缺省时组件按金额比较。 */
+  reachedTier?: string;
+  /** 下一档估算时间，如「2030 年 7 月」。 */
+  nextEstimate?: string;
+  /** MA→BHS 估算达成年月。 */
   hitBhs?: string;
-  hitBrs?: string;
-  hitFrs?: string;
-  hitErs?: string;
-  footnote?: string;
 };
 
 export type CpfTrendData = {
@@ -96,6 +98,8 @@ export type CpfContribData = {
 export type CpfAnnualData = {
   yearLabel: string;
   rates: { OA: string; SA: string; MA: string };
+  /** 三个户口的利率 label 均缺省时隐藏「当年利率」列。 */
+  showRates: boolean;
   interest: AccBalances;
   interestTotal: number;
   note?: string;
@@ -104,6 +108,9 @@ export type CpfAnnualData = {
   rstuBody?: string;
   rstuExtra?: string;
   rstuDueChip?: string;
+  /** 「已填补 S$ X」；有值时显示在 RSTU 标题右侧。 */
+  rstuPaidLabel?: string;
+  rstuPaidPositive?: boolean;
 };
 
 export type CpfAssumptionsData = {
