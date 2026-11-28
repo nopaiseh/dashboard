@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  DASHBOARD_AMOUNT_MAX,
   DASHBOARD_CHART_EVENTS_MAX,
   DASHBOARD_CHART_POINTS_MAX,
   DASHBOARD_EMPTY_TEXT_MAX,
   DASHBOARD_MISSING_YEARS_MAX,
+  DASHBOARD_PROGRESS_MAX,
   DASHBOARD_TIERS_MAX,
+  DASHBOARD_YEAR_MAX,
+  DASHBOARD_YEAR_MIN,
   createDashboardBlockSchema,
   dashboardPayloadSchemaFor,
 } from "@/lib/validation";
@@ -57,7 +61,7 @@ describe("dashboard payload CPF field relaxation", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("rejects invalid metric extras", () => {
+  it("rejects invalid metric extras (type / NaN / oversize / unknown)", () => {
     expect(
       parsePayload("metric", {
         title: "OA",
@@ -70,6 +74,12 @@ describe("dashboard payload CPF field relaxation", () => {
         title: "OA",
         value: 1,
         ytd: Number.NaN,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("metric", {
+        title: "OA",
+        value: DASHBOARD_AMOUNT_MAX + 1,
       }).success,
     ).toBe(false);
     expect(
@@ -126,6 +136,12 @@ describe("dashboard payload CPF field relaxation", () => {
     expect(
       parsePayload("progress", {
         title: "x",
+        progress: DASHBOARD_PROGRESS_MAX + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
         progress: 1,
         tiers: [{ key: "FRS", label: "FRS" }],
       }).success,
@@ -159,7 +175,14 @@ describe("dashboard payload CPF field relaxation", () => {
       parsePayload("progress", {
         title: "x",
         progress: 1,
-        next_tier_year: 1800,
+        next_tier_year: DASHBOARD_YEAR_MIN - 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("progress", {
+        title: "x",
+        progress: 1,
+        next_tier_year: DASHBOARD_YEAR_MAX + 1,
       }).success,
     ).toBe(false);
   });
@@ -188,7 +211,7 @@ describe("dashboard payload CPF field relaxation", () => {
     ).toBe(true);
   });
 
-  it("rejects invalid chart_series extras", () => {
+  it("rejects invalid chart_series extras / year-out-of-range times", () => {
     expect(
       parsePayload("chart_series", {
         series: [{ t: "2026-01", v: 1, phase: "forecast" }],
@@ -221,7 +244,10 @@ describe("dashboard payload CPF field relaxation", () => {
       parsePayload("chart_series", {
         series: Array.from(
           { length: DASHBOARD_CHART_POINTS_MAX + 1 },
-          (_, i) => ({ t: String(i), v: i }),
+          (_, i) => ({
+            t: `2000-${String((i % 12) + 1).padStart(2, "0")}`,
+            v: i,
+          }),
         ),
       }).success,
     ).toBe(false);
@@ -235,6 +261,23 @@ describe("dashboard payload CPF field relaxation", () => {
       parsePayload("chart_series", {
         series: [{ t: "2026-01", v: 1 }],
         all_from_year: 2016.5,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("chart_series", {
+        series: [{ t: "2026-01", v: 1 }],
+        all_from_year: DASHBOARD_YEAR_MIN - 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("chart_series", {
+        series: [{ t: String(DASHBOARD_YEAR_MIN - 1), v: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("chart_series", {
+        series: [{ t: "2026-01", v: 1 }],
+        events: [{ t: String(DASHBOARD_YEAR_MAX + 1), kind: "lump_sum" }],
       }).success,
     ).toBe(false);
     expect(
@@ -262,7 +305,7 @@ describe("dashboard payload CPF field relaxation", () => {
     ).toBe(true);
   });
 
-  it("rejects invalid list/text extras", () => {
+  it("rejects invalid list/text extras / out-of-range years", () => {
     expect(
       parsePayload("list", {
         items: [],
@@ -274,7 +317,7 @@ describe("dashboard payload CPF field relaxation", () => {
         text: "ok",
         missing_years: Array.from(
           { length: DASHBOARD_MISSING_YEARS_MAX + 1 },
-          (_, i) => String(2000 + i),
+          (_, i) => String(2000 + (i % 50)),
         ),
       }).success,
     ).toBe(false);
@@ -282,6 +325,18 @@ describe("dashboard payload CPF field relaxation", () => {
       parsePayload("text", {
         text: "ok",
         missing_years: [123],
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("text", {
+        text: "ok",
+        missing_years: [String(DASHBOARD_YEAR_MIN - 1)],
+      }).success,
+    ).toBe(false);
+    expect(
+      parsePayload("text", {
+        text: "ok",
+        missing_years: ["2020-01"],
       }).success,
     ).toBe(false);
   });

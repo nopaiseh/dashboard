@@ -9,6 +9,7 @@ import type {
   DashboardBlockPublic,
   DashboardBlockRow,
 } from "@/lib/dashboard/types";
+import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
   isPgConflict,
@@ -61,15 +62,12 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   if (containsSingaporeNricOrFin(body)) {
-    console.error("dashboard write rejected", {
-      reason: "forbidden_identifier",
-    });
-    return jsonError(400, "forbidden identifier");
+    return dashboardInvalidPayloadResponse();
   }
 
   const parsed = patchDashboardBlockSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    return dashboardInvalidPayloadResponse();
   }
 
   const { data: existing, error: loadError } = await supabase
@@ -93,7 +91,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     parsed.data.block_type !== block.block_type &&
     parsed.data.payload === undefined
   ) {
-    return jsonError(400, "invalid body");
+    return dashboardInvalidPayloadResponse();
   }
 
   let nextPayload: Record<string, unknown> | undefined;
@@ -102,7 +100,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       parsed.data.payload,
     );
     if (!payloadParsed.success) {
-      return jsonError(400, "invalid body");
+      return dashboardInvalidPayloadResponse();
     }
     nextPayload = payloadParsed.data as Record<string, unknown>;
   }

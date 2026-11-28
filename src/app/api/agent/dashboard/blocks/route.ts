@@ -11,6 +11,7 @@ import type {
   DashboardBlockRow,
   DashboardSectionRow,
 } from "@/lib/dashboard/types";
+import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
   isPgForbidden,
@@ -59,22 +60,19 @@ export async function POST(request: Request) {
   }
 
   if (containsSingaporeNricOrFin(body)) {
-    console.error("dashboard write rejected", {
-      reason: "forbidden_identifier",
-    });
-    return jsonError(400, "forbidden identifier");
+    return dashboardInvalidPayloadResponse();
   }
 
   const parsed = createDashboardBlockSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    return dashboardInvalidPayloadResponse();
   }
 
   const payloadParsed = dashboardPayloadSchemaFor(
     parsed.data.block_type,
   ).safeParse(parsed.data.payload);
   if (!payloadParsed.success) {
-    return jsonError(400, "invalid body");
+    return dashboardInvalidPayloadResponse();
   }
 
   const { data: section, error: sectionError } = await supabase
