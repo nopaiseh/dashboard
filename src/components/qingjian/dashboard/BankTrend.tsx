@@ -193,15 +193,14 @@ function TrendSvg({
 
   const months = [...new Set(points.map((p) => p.t))].sort();
   const values = points.map((p) => p.v);
-  const yMax = Math.max(1, ...values);
-  // nice top
-  const niceMax = niceCeil(yMax);
+  const { yMin, yMax } = computeTrendYDomain(values);
+  const ySpan = yMax - yMin || 1;
 
   const xAt = (i: number) =>
     months.length <= 1
       ? padL + innerW / 2
       : padL + (i / (months.length - 1)) * innerW;
-  const yAt = (v: number) => padT + innerH * (1 - v / niceMax);
+  const yAt = (v: number) => padT + innerH * (1 - (v - yMin) / ySpan);
 
   const actual = points.filter((p) => p.phase === "actual");
   const projected = points.filter((p) => p.phase === "projected");
@@ -223,17 +222,18 @@ function TrendSvg({
 
   const gridN = 4;
   const grid = Array.from({ length: gridN + 1 }, (_, i) => {
-    const v = (niceMax / gridN) * i;
+    const v = yMin + (ySpan / gridN) * i;
     return { v, y: yAt(v) };
   });
 
   const lastActual = actual[actual.length - 1];
   const xLabels = pickXLabels(months);
+  const showZero = yMin < 0 && yMax > 0;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${title}趋势`}>
       {grid.map((g) => (
-        <g key={g.v}>
+        <g key={`g-${g.v}`}>
           <line
             className={"gl"}
             x1={padL}
@@ -246,6 +246,18 @@ function TrendSvg({
           </text>
         </g>
       ))}
+      {showZero ? (
+        <line
+          className={"gl"}
+          x1={padL}
+          x2={W - padR}
+          y1={yAt(0)}
+          y2={yAt(0)}
+          stroke="#94a3b8"
+          strokeWidth={1.25}
+          data-zero-line="1"
+        />
+      ) : null}
       {xLabels.map((lab) => (
         <text
           key={lab.t}
@@ -289,10 +301,7 @@ function TrendSvg({
             y={yAt(lastActual.v) - 8}
             textAnchor="middle"
           >
-            {formatBankMoney(lastActual.v, lastActual.v % 1 === 0 ? 0 : 2).replace(
-              /^S\$/,
-              "",
-            )}
+            {formatTrendValueLabel(lastActual.v)}
           </text>
         </>
       ) : null}
@@ -300,19 +309,58 @@ function TrendSvg({
   );
 }
 
+/** 趋势点标签：去掉「S$」保留负号（−1234 而非 1,234）。 */
+export function formatTrendValueLabel(v: number): string {
+  return formatBankMoney(v, v % 1 === 0 ? 0 : 2).replace("S$", "");
+}
+
+/** Y 轴按数据最小/最大值定范围（含负余额），不强制从 0 起。 */
+export function computeTrendYDomain(values: number[]): {
+  yMin: number;
+  yMax: number;
+} {
+  if (values.length === 0) return { yMin: 0, yMax: 1 };
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  let yMin = niceFloor(rawMin);
+  let yMax = niceCeil(rawMax);
+  if (yMin === yMax) {
+    yMin = niceFloor(rawMin - 1);
+    yMax = niceCeil(rawMax + 1);
+  }
+  if (yMin >= yMax) {
+    yMax = yMin + 1;
+  }
+  return { yMin, yMax };
+}
+
 function niceCeil(n: number): number {
-  if (n <= 0) return 1;
+  if (n === 0) return 0;
+  if (n < 0) return -niceFloor(-n);
   const pow = 10 ** Math.floor(Math.log10(n));
   const m = n / pow;
   const nice = m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
   return nice * pow;
 }
 
+function niceFloor(n: number): number {
+  if (n === 0) return 0;
+  if (n < 0) return -niceCeil(-n);
+  const pow = 10 ** Math.floor(Math.log10(n));
+  const m = n / pow;
+  const nice =
+    m >= 5 ? 5 : m >= 2.5 ? 2.5 : m >= 2 ? 2 : m >= 1 ? 1 : m;
+  return nice * pow;
+}
+
 function formatAxis(v: number): string {
-  if (v >= 1000) {
-    return v.toLocaleString("en-SG", { maximumFractionDigits: 0 });
+  const rounded = Math.round(v);
+  const sign = rounded < 0 ? "−" : "";
+  const abs = Math.abs(rounded);
+  if (abs >= 1000) {
+    return `${sign}${abs.toLocaleString("en-SG", { maximumFractionDigits: 0 })}`;
   }
-  return String(Math.round(v));
+  return `${sign}${abs}`;
 }
 
 function pickXLabels(
