@@ -49,7 +49,6 @@ export type CpfAccountsData = {
   chgY: AccBalances;
   asOf: string;
   monthContribTotal?: number;
-  monthInterest?: number;
 };
 
 /** 三档状态文案由组件根据 reachedTier / 金额推导；此处只保留原始字段。 */

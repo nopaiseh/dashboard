@@ -96,7 +96,6 @@ export function CpfAccounts({
           totalChgM={totalChgM}
           chgY={chgY}
           monthContribTotal={data.monthContribTotal}
-          monthInterest={data.monthInterest}
         />
       </div>
     </>
@@ -108,19 +107,12 @@ function TotalCard({
   totalChgM,
   chgY,
   monthContribTotal,
-  monthInterest,
 }: {
   total: number;
   totalChgM: number;
   chgY: AccBalances;
   monthContribTotal?: number;
-  monthInterest?: number;
 }) {
-  const interestBit =
-    typeof monthInterest === "number" && monthInterest !== 0
-      ? ` · 利息 ${monthInterest.toLocaleString("en-SG")}`
-      : "";
-
   return (
     <div className={"num numEm"}>
       <div className={"lb"}>
@@ -133,7 +125,6 @@ function TotalCard({
       {monthContribTotal !== undefined ? (
         <span className={"k-yr"}>
           缴存 {monthContribTotal.toLocaleString("en-SG")}
-          {interestBit}
         </span>
       ) : null}
       <span className={"k-yr"}>
