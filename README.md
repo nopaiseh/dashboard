@@ -25,7 +25,7 @@ npm run build
 
 ### 字段加密（本地）
 
-`items` 的 `title` / `body` / `source_url` 经应用层 AES-256-GCM（AAD 绑定行/列）加密后入库；`content_hash` 为 HMAC-SHA256。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY` 与 `CONTENT_HASH_KEY`（均为 `openssl rand -base64 32`）。回填分 `--encrypt-only` / `--rehash-only`（默认 dry-run）。部署顺序见 [docs/architecture.md](docs/architecture.md#字段加密)。
+`items` 的 `title` / `body` / `source_url`，以及 `dashboard_blocks.payload`，经应用层 AES-256-GCM（AAD 绑定行/列）加密后入库；`content_hash` 为 HMAC-SHA256。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY` 与 `CONTENT_HASH_KEY`（均为 `openssl rand -base64 32`）。回填分 `--encrypt-only` / `--rehash-only`（默认 dry-run）。`goals` → progress 块：`npm run migrate-goals`（默认 dry-run）。部署顺序见 [docs/architecture.md](docs/architecture.md#字段加密)。
 
 ## 首次通行密钥登记（概要）
 

@@ -253,3 +253,162 @@ export const itemsQuerySchema = z
       .optional(),
   })
   .strict();
+
+/** Dashboard section / block API limits. */
+export const DASHBOARD_CATEGORY_MAX = 64;
+export const DASHBOARD_HEADLINE_MAX = 500;
+export const DASHBOARD_LIST_ITEMS_MAX = 50;
+export const DASHBOARD_LIST_ITEM_MAX = 500;
+export const DASHBOARD_CHART_POINTS_MAX = 366;
+
+export const dashboardBlockTypeSchema = z.enum([
+  "headline",
+  "metric",
+  "progress",
+  "list",
+  "text",
+  "chart_series",
+]);
+
+const headlinePayloadSchema = z
+  .object({
+    text: z.string().max(DASHBOARD_HEADLINE_MAX),
+  })
+  .strict();
+
+const textPayloadSchema = z
+  .object({
+    text: z.string().max(BODY_MAX),
+    title: z.string().max(TITLE_MAX).optional(),
+  })
+  .strict();
+
+const metricPayloadSchema = z
+  .object({
+    title: z.string().min(1).max(TITLE_MAX),
+    value: z.number().finite(),
+    unit: z.string().max(64).optional(),
+    label: z.string().max(TITLE_MAX).optional(),
+  })
+  .strict();
+
+const progressPayloadSchema = z
+  .object({
+    title: z.string().min(1).max(TITLE_MAX),
+    target: z.string().max(TITLE_MAX).optional(),
+    metric: z.string().max(TITLE_MAX).optional(),
+    progress: z.number().finite(),
+    due_at: z.string().datetime().nullable().optional(),
+    status: z.string().max(64).optional(),
+  })
+  .strict();
+
+const listPayloadSchema = z
+  .object({
+    title: z.string().max(TITLE_MAX).optional(),
+    items: z
+      .array(z.string().max(DASHBOARD_LIST_ITEM_MAX))
+      .max(DASHBOARD_LIST_ITEMS_MAX),
+  })
+  .strict();
+
+const chartSeriesPayloadSchema = z
+  .object({
+    title: z.string().max(TITLE_MAX).optional(),
+    series: z
+      .array(
+        z
+          .object({
+            t: z.string().min(1).max(64),
+            v: z.number().finite(),
+          })
+          .strict(),
+      )
+      .max(DASHBOARD_CHART_POINTS_MAX),
+  })
+  .strict();
+
+/** Payload must match block_type; API still accepts plaintext, DB stores ciphertext. */
+export function dashboardPayloadSchemaFor(
+  blockType: z.infer<typeof dashboardBlockTypeSchema>,
+) {
+  switch (blockType) {
+    case "headline":
+      return headlinePayloadSchema;
+    case "text":
+      return textPayloadSchema;
+    case "metric":
+      return metricPayloadSchema;
+    case "progress":
+      return progressPayloadSchema;
+    case "list":
+      return listPayloadSchema;
+    case "chart_series":
+      return chartSeriesPayloadSchema;
+    default: {
+      const _exhaustive: never = blockType;
+      return _exhaustive;
+    }
+  }
+}
+
+export const createDashboardSectionSchema = z
+  .object({
+    category: z.string().min(1).max(DASHBOARD_CATEGORY_MAX),
+    sort_order: z.number().int().min(0).max(1_000_000).optional(),
+  })
+  .strict();
+
+export const patchDashboardSectionSchema = z
+  .object({
+    category: z.string().min(1).max(DASHBOARD_CATEGORY_MAX).optional(),
+    sort_order: z.number().int().min(0).max(1_000_000).optional(),
+  })
+  .strict();
+
+export const createDashboardBlockSchema = z
+  .object({
+    section_id: z.string().uuid(),
+    block_type: dashboardBlockTypeSchema,
+    sort_order: z.number().int().min(0).max(1_000_000).optional(),
+    payload: z.record(z.string(), z.unknown()),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    const parsed = dashboardPayloadSchemaFor(val.block_type).safeParse(
+      val.payload,
+    );
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: "custom",
+        message: "invalid payload for block_type",
+        path: ["payload"],
+      });
+    }
+  });
+
+export const patchDashboardBlockSchema = z
+  .object({
+    block_type: dashboardBlockTypeSchema.optional(),
+    sort_order: z.number().int().min(0).max(1_000_000).optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    if (val.payload !== undefined && val.block_type === undefined) {
+      // payload without type: accept any of the known shapes loosely via object
+      return;
+    }
+    if (val.payload !== undefined && val.block_type !== undefined) {
+      const parsed = dashboardPayloadSchemaFor(val.block_type).safeParse(
+        val.payload,
+      );
+      if (!parsed.success) {
+        ctx.addIssue({
+          code: "custom",
+          message: "invalid payload for block_type",
+          path: ["payload"],
+        });
+      }
+    }
+  });

@@ -39,7 +39,11 @@ const ENVELOPE_RE = new RegExp(
   `^v(\\d+):(${B64_SEGMENT}):(${B64_SEGMENT}):(${B64_SEGMENT})$`,
 );
 
+/** Item sensitive columns (legacy union kept for typed reporters). */
 export type SensitiveColumn = "title" | "body" | "source_url";
+
+/** Any encrypted column name (items or dashboard_blocks.payload, etc.). */
+export type FieldColumn = SensitiveColumn | (string & {});
 
 export class FieldEncryptionError extends Error {
   /** Stable machine code for logs / UI (e.g. unknown_key_version). */
@@ -67,9 +71,16 @@ export interface SensitiveItemFields {
   source_url: string | null;
 }
 
+/**
+ * AAD binding context.
+ * - `itemId` is the row UUID (name kept for items callers).
+ * - `entity` defaults to `"items"` so existing ciphertext stays decryptable.
+ * - Dashboard blocks use `entity: "dashboard_blocks"` + `column: "payload"`.
+ */
 export interface FieldContext {
   itemId: string;
-  column: SensitiveColumn;
+  column: FieldColumn;
+  entity?: string;
 }
 
 type Keyring = {
@@ -243,10 +254,11 @@ function requireKeyring(): Keyring {
 
 export function buildFieldAad(
   itemId: string,
-  column: SensitiveColumn,
+  column: FieldColumn,
   version: number,
+  entity = "items",
 ): string {
-  return `items:${itemId}:${column}:v${version}`;
+  return `${entity}:${itemId}:${column}:v${version}`;
 }
 
 export type ParsedEnvelope = {
@@ -290,9 +302,10 @@ export function encryptField(plaintext: string, ctx: FieldContext): string {
       "current encryption key missing from keyring",
     );
   }
+  const entity = ctx.entity ?? "items";
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, iv);
-  const aad = buildFieldAad(ctx.itemId, ctx.column, version);
+  const aad = buildFieldAad(ctx.itemId, ctx.column, version, entity);
   cipher.setAAD(Buffer.from(aad, "utf8"));
   const ciphertext = Buffer.concat([
     cipher.update(plaintext, "utf8"),
@@ -331,7 +344,8 @@ export function decryptField(stored: string, ctx: FieldContext): string {
     );
   }
 
-  const aad = buildFieldAad(ctx.itemId, ctx.column, envelope.version);
+  const entity = ctx.entity ?? "items";
+  const aad = buildFieldAad(ctx.itemId, ctx.column, envelope.version, entity);
   try {
     const decipher = createDecipheriv(ALGORITHM, key, envelope.iv);
     decipher.setAAD(Buffer.from(aad, "utf8"));
@@ -385,7 +399,7 @@ const DECRYPT_PLACEHOLDER_TITLE = "[无法解密]";
 
 type DecryptFailureReporter = (info: {
   itemId: string;
-  column: SensitiveColumn | "item";
+  column: FieldColumn | "item";
   code: string;
 }) => void;
 
@@ -401,7 +415,7 @@ export function setFieldDecryptFailureReporter(
 /** Structured Vercel/runtime log — no plaintext, keys, or ciphertext. */
 export function reportFieldDecryptFailure(info: {
   itemId: string;
-  column: SensitiveColumn | "item";
+  column: FieldColumn | "item";
   code: string;
 }): void {
   console.error("[field-crypto] decrypt failed", {

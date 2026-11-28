@@ -142,13 +142,86 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 
 ---
 
+---
+
+## Dashboard 区块（目标页并入后的通用数据层）
+
+明文只允许：`category`、`block_type`、`sort_order`、拥有姐妹 `agent_id`、时间戳。  
+标题 / 数值 / 正文 / 一行标题 / 列表等内容一律进加密 `payload`（与 items 相同的 v1 AES-256-GCM 信封；AAD=`dashboard_blocks:{id}:payload:v{N}`）。  
+**无 DELETE**：只提供 POST/PATCH；变更写 `dashboard_block_events`（只增）。姐妹只能写 `agent_id` 为自己的分区/区块。
+
+### POST `/api/agent/dashboard/sections` — 新建分区
+
+```bash
+curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/sections' \
+  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"category":"cpf","sort_order":0}'
+```
+
+成功：`201`，body 含 `section`（`agent_id` 固定为令牌所属姐妹）。
+
+### PATCH `/api/agent/dashboard/sections/:id` — 更新分区
+
+仅可改自己名下分区的 `category` / `sort_order`。越权 → `403`。
+
+### POST `/api/agent/dashboard/blocks` — 新建区块
+
+`block_type`：`headline` | `metric` | `progress` | `list` | `text` | `chart_series`。  
+`payload` 按类型校验（接口收明文，入库前加密）。须落在自己拥有的 `section_id` 下。
+
+```bash
+curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
+  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "section_id": "SECTION_UUID",
+    "block_type": "headline",
+    "sort_order": 0,
+    "payload": { "text": "今天重点：把 CPF 投影对上。" }
+  }'
+```
+
+进度块示例：
+
+```bash
+curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
+  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "section_id": "SECTION_UUID",
+    "block_type": "progress",
+    "payload": {
+      "title": "OA 余额",
+      "target": "100k",
+      "metric": "SGD",
+      "progress": 0.55,
+      "due_at": null,
+      "status": "active"
+    }
+  }'
+```
+
+成功：`201`，body 含解密后的 `block`。
+
+### PATCH `/api/agent/dashboard/blocks/:id` — 更新区块
+
+仅可改自己名下区块。可传 `block_type` / `sort_order` / `payload`。无 DELETE。
+
+### 所有者读取
+
+登录后 `GET /api/dashboard`：返回 `headline`（无一行标题块时为 `""`，前端可回退默认文案）与 `sections[].blocks`（已解密）。  
+旧 `GET /api/goals` 仍可读一版只读 `goals` 表；写入已关闭，表将在验证后删除。
+
+---
+
 ## 错误码速查
 
 | 状态 | 含义 |
 |------|------|
 | 400 | 参数 / body 不合法 |
 | 401 | 缺令牌、无效或已吊销 |
-| 403 | 越权（如改他人事项） |
+| 403 | 越权（如改他人事项 / 他人 dashboard 区块） |
 | 404 | 资源不存在 |
 | 409 | 冲突（并发 / 条件不满足） |
 | 422 | 敏感字段解密失败 |
