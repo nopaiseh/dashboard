@@ -23,6 +23,10 @@ npm run build
 
 架构说明见 [docs/architecture.md](docs/architecture.md)。数据库迁移在 `supabase/migrations/`；种子在 `supabase/seed.sql`。
 
+### 破坏性迁移（emptiness guard）
+
+删表 / 删库对象前，把「表非空则拒绝」的 guard 写在迁移文件最顶部（任何 `DROP`/`ALTER` 之前）。已合并上 prod 的迁移不回改；用 `scripts/verify-drop-goals-guard.sh` 验证 0005 的非空拒绝与失败事务回滚（锁表/锁 RPC 仍在）。CI 会跑该脚本。
+
 ### 字段加密（本地）
 
 `items` 的 `title` / `body` / `source_url`，以及 `dashboard_blocks.payload`，经应用层 AES-256-GCM（AAD 绑定行/列）加密后入库；`content_hash` 为 HMAC-SHA256。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY` 与 `CONTENT_HASH_KEY`（均为 `openssl rand -base64 32`）。回填分 `--encrypt-only` / `--rehash-only`（默认 dry-run）。部署顺序见 [docs/architecture.md](docs/architecture.md#字段加密)。
