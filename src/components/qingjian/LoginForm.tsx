@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { LOCKOUT_MESSAGE } from "@/lib/ui/labels";
@@ -58,9 +57,6 @@ export function LoginForm({ siteName }: { siteName: string }) {
                 {error}
               </p>
             ) : null}
-            <Link href="/setup" className={"qj-setupEntry"}>
-              首次注册
-            </Link>
           </>
         )}
       </div>

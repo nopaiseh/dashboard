@@ -1,6 +1,5 @@
 import { hashAgentToken } from "@/lib/crypto";
 import { clientIp, jsonError, jsonOk } from "@/lib/http";
-import { hasValidSetupGrant } from "@/lib/setup-grant";
 import { getServiceClient } from "@/lib/supabase/server";
 import { registerOptionsSchema } from "@/lib/validation";
 import {
@@ -11,8 +10,7 @@ import { requireRequest } from "@/lib/require-request";
 
 /**
  * POST /api/auth/register/options
- * 首次登记：须持有有效 setup-grant cookie，且库中尚无凭据。
- * 新设备：须带 invite 一次性令牌（one_time）。
+ * 新设备：须带 invite 一次性令牌（one_time）。无公开 bootstrap。
  * 按 IP 数据库限流。
  */
 
@@ -57,29 +55,7 @@ export async function POST(request: Request) {
     return jsonError(500, "unavailable");
   }
 
-  const hasCredentials = (existing?.length ?? 0) > 0;
-  const rawToken = parsed.data.token;
-  const grantOk = await hasValidSetupGrant();
-
-  let mode: "bootstrap" | "one_time";
-  let tokenHash: string;
-
-  if (!hasCredentials && grantOk && !rawToken) {
-    mode = "bootstrap";
-    // RPC bootstrap 分支不校验 token_hash；占位即可
-    tokenHash = hashAgentToken("setup-grant");
-  } else if (rawToken) {
-    mode = "one_time";
-    tokenHash = hashAgentToken(rawToken);
-  } else {
-    return jsonError(403, "registration denied");
-  }
-
-  // 首次登记：有凭据则 fail closed（不走 bootstrap）
-  if (mode === "bootstrap" && hasCredentials) {
-    return jsonError(403, "registration denied");
-  }
-
+  const tokenHash = hashAgentToken(parsed.data.token);
   const options = await buildRegistrationOptions(
     (existing ?? []) as StoredCredential[],
   );
@@ -91,7 +67,7 @@ export async function POST(request: Request) {
       p_challenge: options.challenge,
       p_expires_at: expiresAt,
       p_token_hash: tokenHash,
-      p_mode: mode,
+      p_mode: "one_time",
     },
   );
 

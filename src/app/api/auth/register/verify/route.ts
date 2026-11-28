@@ -1,11 +1,4 @@
-import { NextResponse } from "next/server";
-import { jsonError } from "@/lib/http";
-import {
-  SETUP_GRANT_COOKIE_NAME,
-  clearedSetupGrantCookieOptions,
-  consumeSetupGrantJti,
-  readValidSetupGrantJti,
-} from "@/lib/setup-grant";
+import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
 import { registerVerifySchema } from "@/lib/validation";
 import {
@@ -17,7 +10,7 @@ import { requireRequest } from "@/lib/require-request";
 /**
  * POST /api/auth/register/verify
  * 校验 attestation 后由 RPC 在同一事务复查授权、写入凭据、关闭注册。
- * bootstrap（首次）挑战另须有效 setup-grant；成功后消费 jti 并清除 grant cookie。
+ * 仅接受 invite（one_time）挑战；无 bootstrap / setup-grant。
  */
 
 export async function POST(request: Request) {
@@ -48,13 +41,9 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid challenge");
   }
 
-  const isBootstrap = preview.registration_mode === "bootstrap";
-  let grantJti: string | null = null;
-  if (isBootstrap) {
-    grantJti = await readValidSetupGrantJti();
-    if (!grantJti) {
-      return jsonError(403, "registration denied");
-    }
+  // 拒绝遗留 bootstrap 挑战（首次登记路径已移除）
+  if (preview.registration_mode !== "invite") {
+    return jsonError(403, "registration denied");
   }
 
   let verification;
@@ -85,17 +74,8 @@ export async function POST(request: Request) {
     return jsonError(403, "registration denied");
   }
 
-  const response = NextResponse.json({
+  return jsonOk({
     ok: true,
     credential_id: credential.id,
   });
-  if (isBootstrap && grantJti) {
-    await consumeSetupGrantJti(grantJti);
-    response.cookies.set(
-      SETUP_GRANT_COOKIE_NAME,
-      "",
-      clearedSetupGrantCookieOptions(),
-    );
-  }
-  return response;
 }
