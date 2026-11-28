@@ -5,7 +5,19 @@ export function jsonError(
   error: string,
   extra?: Record<string, unknown>,
 ): NextResponse {
-  return NextResponse.json({ error, ...extra }, { status });
+  const init: ResponseInit = { status };
+  if (
+    status === 429 &&
+    typeof extra?.retryAfterSeconds === "number" &&
+    Number.isFinite(extra.retryAfterSeconds)
+  ) {
+    init.headers = {
+      "Retry-After": String(
+        Math.max(1, Math.ceil(extra.retryAfterSeconds)),
+      ),
+    };
+  }
+  return NextResponse.json({ error, ...extra }, init);
 }
 
 export function jsonOk<T>(data: T, init?: ResponseInit): NextResponse {

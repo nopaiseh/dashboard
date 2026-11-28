@@ -444,6 +444,78 @@ BEGIN
 END;
 $$;
 
+-- rate_limit_check：窗口内计数、超限拒绝、返回 remaining / retry_after_seconds；
+-- agent:invalid 与 per-hash 键各自独立；概率清理不得误伤当前窗。
+DELETE FROM public.rate_limit_buckets;
+DO $$
+DECLARE
+  v jsonb;
+  i int;
+  v_valid_count int;
+  v_invalid_count int;
+BEGIN
+  v := public.rate_limit_check('agent:smoke-hash', 3, 60);
+  IF NOT (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION 'first call should be allowed';
+  END IF;
+  IF (v->>'remaining')::int <> 2 THEN
+    RAISE EXCEPTION 'expected remaining 2, got %', v->>'remaining';
+  END IF;
+  IF (v->>'retry_after_seconds')::int < 1 THEN
+    RAISE EXCEPTION 'retry_after_seconds must be >= 1';
+  END IF;
+
+  FOR i IN 1..2 LOOP
+    v := public.rate_limit_check('agent:smoke-hash', 3, 60);
+  END LOOP;
+  IF NOT (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION '3rd call at limit should still be allowed';
+  END IF;
+  IF (v->>'remaining')::int <> 0 THEN
+    RAISE EXCEPTION 'expected remaining 0 at limit, got %', v->>'remaining';
+  END IF;
+
+  v := public.rate_limit_check('agent:smoke-hash', 3, 60);
+  IF (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION '4th call should be denied';
+  END IF;
+  IF (v->>'remaining')::int <> 0 THEN
+    RAISE EXCEPTION 'denied remaining must be 0';
+  END IF;
+
+  -- Shared invalid bucket is independent of a valid token hash key.
+  v := public.rate_limit_check('agent:invalid', 2, 60);
+  IF NOT (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION 'agent:invalid first call should be allowed';
+  END IF;
+  v := public.rate_limit_check('agent:invalid', 2, 60);
+  IF NOT (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION 'agent:invalid second call at limit should be allowed';
+  END IF;
+  v := public.rate_limit_check('agent:invalid', 2, 60);
+  IF (v->>'allowed')::boolean THEN
+    RAISE EXCEPTION 'agent:invalid third call should be denied';
+  END IF;
+
+  SELECT request_count INTO v_valid_count
+  FROM public.rate_limit_buckets
+  WHERE bucket_key = 'agent:smoke-hash'
+  ORDER BY window_start DESC
+  LIMIT 1;
+  SELECT request_count INTO v_invalid_count
+  FROM public.rate_limit_buckets
+  WHERE bucket_key = 'agent:invalid'
+  ORDER BY window_start DESC
+  LIMIT 1;
+  IF v_valid_count < 4 THEN
+    RAISE EXCEPTION 'expected valid key count >= 4, got %', v_valid_count;
+  END IF;
+  IF v_invalid_count < 3 THEN
+    RAISE EXCEPTION 'expected invalid key count >= 3, got %', v_invalid_count;
+  END IF;
+END;
+$$;
+
 ROLLBACK;
 
 \echo OK rpc_smoke
