@@ -1,6 +1,7 @@
 /**
- * Singapore NRIC / FIN (CPF account number equals NRIC).
- * Never log a matched value or parsed embedded JSON.
+ * Singapore NRIC / FIN (CPF account number equals NRIC) + shared dashboard
+ * privacy scans (card / passport / booking-keyword). Never log a matched
+ * value or parsed embedded JSON.
  */
 
 import { BANK_LEDGER_MONTH_JSON_MAX } from "@/lib/dashboard/bank-validation";
@@ -14,6 +15,12 @@ const SINGAPORE_NRIC_OR_FIN = /[STFGM]\d{7}[A-Z]/i;
  * so `S$1234` is not treated as an identifier.
  */
 const NRIC_SCAN_SEPARATORS = /[\s\-._,/\\]+/g;
+
+/**
+ * Passport scan strips hyphens / dots / etc. but NOT spaces — so
+ * `Salary 2026-11-29` does not fuse into letter+digit runs.
+ */
+const PASSPORT_SCAN_SEPARATORS = /[\-._,/\\]+/g;
 
 /**
  * Forbidden identifier key names (case-insensitive; camelCase / snake_case
@@ -65,10 +72,24 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
 const LONG_DIGIT_RUN = /\d{9,}/;
 
 /**
- * Passport-like: letter + 7–9 digits, optional trailing letter, after the
- * same separator strip as NRIC. Does not log the match.
+ * Passport-like: letter + 7–9 digits + mandatory trailing letter.
+ * Spaces are not joined (see PASSPORT_SCAN_SEPARATORS).
  */
-const PASSPORT_LIKE = /[A-Z]\d{7,9}[A-Z]?/i;
+const PASSPORT_LIKE = /[A-Z]\d{7,9}[A-Z]/i;
+
+/**
+ * Card number with space or hyphen separators (13–19 digits total), e.g.
+ * `4111 1111 1111 1111` / `4111-1111-1111-1111`. Raw 9+ digit runs are
+ * already covered by LONG_DIGIT_RUN.
+ */
+const SEPARATED_CARD_CHUNK = /\d(?:[\s\-]*\d){12,18}/g;
+
+/**
+ * Booking/ref keyword immediately followed by a 5–8 char alphanumeric token.
+ * Case-insensitive; optional colon / space / # / fullwidth colon between.
+ */
+const BOOKING_KEYWORD_REF =
+  /(?:\b(?:PNR|booking|ref|reference|confirmation)\b|订单号|确认码|预订号|订单)\s*[:#：]?\s*[A-Za-z0-9]{5,8}\b/i;
 
 /** Request ids / section ids are UUIDs and must not trip the digit-run check. */
 const UUID_STRING =
@@ -91,6 +112,24 @@ export const MAX_EMBEDDED_JSON_STRING_LENGTH = 10_000;
 export const MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH =
   BANK_LEDGER_MONTH_JSON_MAX;
 
+export type PrivacyScanOptions = {
+  /**
+   * When true, also reject entire-value booking-ref shapes (uppercase /
+   * lowercase / all-letter codes). Use only for travel category writes —
+   * labels like `OCBC360` / `GIRO2026` are legitimate in cpf/bank.
+   */
+  travel?: boolean;
+};
+
+/** Build privacy options from a dashboard section category. */
+export function privacyOptionsForCategory(
+  category: string,
+): PrivacyScanOptions {
+  return {
+    travel: category.trim().toLowerCase() === "travel",
+  };
+}
+
 /** Normalize object keys for forbidden-name comparison. */
 export function normalizeDashboardIdentifierKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -105,6 +144,11 @@ export function normalizeForNricScan(value: string): string {
   return value.replace(NRIC_SCAN_SEPARATORS, "");
 }
 
+/** Strip hyphen / dot / etc. but keep spaces (passport scan). */
+export function normalizeForPassportScan(value: string): string {
+  return value.replace(PASSPORT_SCAN_SEPARATORS, "");
+}
+
 export function stringContainsSingaporeNricOrFin(value: string): boolean {
   return SINGAPORE_NRIC_OR_FIN.test(normalizeForNricScan(value));
 }
@@ -114,9 +158,27 @@ export function stringContainsLongDigitRun(value: string): boolean {
   return LONG_DIGIT_RUN.test(value);
 }
 
-/** Passport-like after separator normalization (never log the match). */
+/** Passport-like (mandatory check letter; spaces not joined). Never log the match. */
 export function stringContainsPassportLike(value: string): boolean {
-  return PASSPORT_LIKE.test(normalizeForNricScan(value));
+  return PASSPORT_LIKE.test(normalizeForPassportScan(value));
+}
+
+/** 13–19 digits with space/hyphen separators (card-like). Never log the match. */
+export function stringContainsSeparatedCardNumber(value: string): boolean {
+  SEPARATED_CARD_CHUNK.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SEPARATED_CARD_CHUNK.exec(value)) !== null) {
+    const digits = match[0]!.replace(/[\s\-]/g, "");
+    if (digits.length >= 13 && digits.length <= 19) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Keyword + nearby alphanumeric token (PNR / 订单号 / …). Never log the match. */
+export function stringContainsBookingKeywordRef(value: string): boolean {
+  return BOOKING_KEYWORD_REF.test(value);
 }
 
 /** Flight/train-style service numbers (e.g. SQ321, AF1234) — not booking refs. */
@@ -124,17 +186,38 @@ const SERVICE_NUMBER_SHAPE = /^[A-Z]{2}\d{1,4}[A-Z]?$/i;
 
 /**
  * Entire trimmed value looks like a full booking / confirmation code.
- * Airline PNRs are uppercase alphanumeric; mixed-case notes like `1x32kg`
- * are not flagged. Short service numbers and `ref_tail` (≤2) are excluded.
+ * Travel-only. Rejects:
+ * - mixed letter+digit codes (any case), length 6–14
+ * - classic all-uppercase letter PNRs (exactly 6 letters)
+ * Does not reject ordinary words (`travel`, `flight`) or mixed-case notes
+ * like `1x32kg`. Short service numbers and `ref_tail` (≤2) are excluded.
  */
 export function stringIsFullBookingRef(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed.length < 6 || trimmed.length > 14) return false;
-  // Canonical booking refs are uppercase A–Z / 0–9 only.
-  if (!/^[A-Z0-9]+$/.test(trimmed)) return false;
-  if (!/[A-Z]/.test(trimmed) || !/\d/.test(trimmed)) return false;
+  if (!/^[A-Za-z0-9]+$/.test(trimmed)) return false;
   if (SERVICE_NUMBER_SHAPE.test(trimmed)) return false;
-  return true;
+  if (SERVICE_NUMBER_SHAPE.test(trimmed.toUpperCase())) return false;
+  // Classic all-letter PNR: exactly 6 uppercase letters.
+  if (/^[A-Z]+$/.test(trimmed)) {
+    return trimmed.length === 6;
+  }
+  // Lowercase or mixed-case all-letter words are ordinary language — skip.
+  if (/^[A-Za-z]+$/.test(trimmed)) {
+    return false;
+  }
+  // Mixed letter+digit codes:
+  // - all-uppercase (ABC12X) → reject
+  // - all-lowercase starting with a letter (abc12x) → reject (obfuscated PNR)
+  // - mixed case or digit-leading notes (1x32kg) → allow
+  if (/[A-Za-z]/.test(trimmed) && /\d/.test(trimmed)) {
+    if (trimmed === trimmed.toUpperCase()) return true;
+    if (trimmed === trimmed.toLowerCase() && /^[a-z]/.test(trimmed)) {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 export function looksLikeUuidString(value: string): boolean {
@@ -142,15 +225,20 @@ export function looksLikeUuidString(value: string): boolean {
 }
 
 /**
- * Privacy hit: NRIC/FIN, passport-like, full booking ref, and/or long digit run.
- * UUID-shaped strings are exempt from the digit-run check (section/block ids).
- * Error responses must not echo the matched substring.
+ * Privacy hit for a single string. Error responses must not echo the match.
+ * `travel: true` enables entire-value booking-ref rejection.
+ * UUID-shaped strings are exempt from digit-run / separated-card checks.
  */
-export function stringContainsBlockedIdentifier(value: string): boolean {
+export function stringContainsBlockedIdentifier(
+  value: string,
+  options?: PrivacyScanOptions,
+): boolean {
   if (stringContainsSingaporeNricOrFin(value)) return true;
   if (stringContainsPassportLike(value)) return true;
-  if (stringIsFullBookingRef(value)) return true;
+  if (stringContainsBookingKeywordRef(value)) return true;
+  if (options?.travel && stringIsFullBookingRef(value)) return true;
   if (looksLikeUuidString(value)) return false;
+  if (stringContainsSeparatedCardNumber(value)) return true;
   return stringContainsLongDigitRun(value);
 }
 
@@ -164,25 +252,25 @@ export function looksLikeJsonContainer(raw: string): boolean {
 
 /**
  * Privacy blocking for dashboard writes (CPF + bank + travel):
- * (a) reject forbidden object keys at any depth (nric, fin, accountno, cardno,
- *     passport, bookingref, pnr, password, …)
- * (b) regex-scan all string values for NRIC/FIN / passport-like (after
- *     separator normalization), full booking-ref values, and 9+ consecutive
- *     digits (raw string; card-like)
+ * (a) reject forbidden object keys at any depth
+ * (b) regex-scan string values for NRIC/FIN, passport-like (no space-join;
+ *     trailing letter required), separated card numbers, booking-keyword
+ *     refs, and 9+ consecutive digits
+ * (c) when `options.travel`, also reject entire-value booking-ref shapes
  *
- * Also rejects keys whose *name* itself matches the NRIC/FIN pattern or a
- * long digit run.
+ * Also rejects keys whose *name* itself matches blocked identifier patterns.
  *
  * String values that look like JSON (trimmed `{` / `[`) are JSON.parse'd and
- * walked recursively so banned keys inside list-item JSON strings are caught.
- * Depth / size over the caps → fail closed (treat as hit). Parse failure →
- * regex-only scan. Never log parsed content.
+ * walked recursively. Depth / size over the caps → fail closed. Never log
+ * parsed content.
  *
- * Safe for existing CPF fixtures: amounts stay numeric (not digit-scanned);
- * money within ±10_000_000 has ≤8 digits before the decimal.
- * Travel `ref_tail` (≤2) and short service numbers stay under booking-ref length.
+ * Safe for existing CPF/bank fixtures: date phrases like `Salary 2026-11-29`
+ * and labels like `OCBC360` / `GIRO2026` are not treated as passport / booking refs.
  */
-export function containsSingaporeNricOrFin(value: unknown): boolean {
+export function containsSingaporeNricOrFin(
+  value: unknown,
+  options?: PrivacyScanOptions,
+): boolean {
   const seen = new WeakSet<object>();
 
   function walk(
@@ -209,7 +297,7 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
           // Parse failed — fall back to regex-only on the raw string.
         }
       }
-      return stringContainsBlockedIdentifier(node);
+      return stringContainsBlockedIdentifier(node, options);
     }
     if (node === null || typeof node !== "object") {
       return false;
@@ -236,7 +324,7 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
 
     for (const [key, child] of Object.entries(record)) {
       if (isForbiddenDashboardIdentifierKey(key)) return true;
-      if (stringContainsBlockedIdentifier(key)) return true;
+      if (stringContainsBlockedIdentifier(key, options)) return true;
       if (walk(child, jsonDepth, childMaxJsonLength)) return true;
     }
     return false;

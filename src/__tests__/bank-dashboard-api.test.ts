@@ -537,6 +537,29 @@ describe("privacy guard bank extensions (CPF-safe)", () => {
       expect(containsSingaporeNricOrFin({ block_key: key })).toBe(false);
     }
   });
+
+  it("does not reject date phrases that used to trip passport-like (cpf/bank safe)", () => {
+    for (const text of [
+      "Salary 2026-11-29",
+      "Due 29/11/2026",
+      "FY 2026-01-01",
+    ]) {
+      expect(containsSingaporeNricOrFin({ text }), text).toBe(false);
+      expect(
+        containsSingaporeNricOrFin({ note: text }, { travel: false }),
+        text,
+      ).toBe(false);
+    }
+  });
+
+  it("does not reject cpf/bank labels that look like booking refs", () => {
+    for (const label of ["OCBC360", "GIRO2026", "SRS2026", "CPFOA1"]) {
+      expect(containsSingaporeNricOrFin({ label }), label).toBe(false);
+      expect(containsSingaporeNricOrFin({ title: label }), label).toBe(false);
+      // Travel mode would flag entire-value codes — must not apply to bank.
+      expect(containsSingaporeNricOrFin({ label })).toBe(false);
+    }
+  });
 });
 
 describe("upsert by block_key", () => {

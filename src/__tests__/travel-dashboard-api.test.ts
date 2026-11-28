@@ -10,7 +10,9 @@ import { isBlockKeyAllowedForCategory } from "@/lib/dashboard/block-key-policy";
 import {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  stringContainsBookingKeywordRef,
   stringContainsPassportLike,
+  stringContainsSeparatedCardNumber,
   stringIsFullBookingRef,
   stringContainsLongDigitRun,
 } from "@/lib/dashboard/nric-guard";
@@ -223,7 +225,7 @@ describe("travel strict schemas (FAKE)", () => {
     ).toBe(false);
   });
 
-  it("rejects datetime without offset and invalid IANA tz", () => {
+  it("rejects datetime without offset, invalid calendar, bad offset, invalid IANA tz", () => {
     const badTime = {
       ...FAKE_TRANSPORT,
       legs: [
@@ -237,6 +239,32 @@ describe("travel strict schemas (FAKE)", () => {
       parseTravelBlockPayload("list", badTime, "travel_transport").ok,
     ).toBe(false);
 
+    const badCalendar = {
+      ...FAKE_TRANSPORT,
+      legs: [
+        {
+          ...FAKE_TRANSPORT.legs[0]!,
+          depart_at: "2027-13-45T25:61+08:00",
+        },
+      ],
+    };
+    expect(
+      parseTravelBlockPayload("list", badCalendar, "travel_transport").ok,
+    ).toBe(false);
+
+    const badOffset = {
+      ...FAKE_TRANSPORT,
+      legs: [
+        {
+          ...FAKE_TRANSPORT.legs[0]!,
+          depart_at: "2027-01-10T08:30+99:99",
+        },
+      ],
+    };
+    expect(
+      parseTravelBlockPayload("list", badOffset, "travel_transport").ok,
+    ).toBe(false);
+
     const badTz = {
       ...FAKE_TRANSPORT,
       legs: [
@@ -248,6 +276,59 @@ describe("travel strict schemas (FAKE)", () => {
     };
     expect(
       parseTravelBlockPayload("list", badTz, "travel_transport").ok,
+    ).toBe(false);
+  });
+
+  it("rejects negative budget/candidate prices and url/javascript sources", () => {
+    expect(
+      parseTravelBlockPayload(
+        "text",
+        {
+          block_key: "travel_budget",
+          estimate: -1,
+          currency: "MYR",
+        },
+        "travel_budget",
+      ).ok,
+    ).toBe(false);
+
+    expect(
+      parseTravelBlockPayload(
+        "list",
+        {
+          block_key: "travel_candidates",
+          flights: [
+            {
+              label: "FAKE",
+              price: 10,
+              currency: "SGD",
+              source: "javascript:alert(1)",
+            },
+          ],
+          hotels: [],
+        },
+        "travel_candidates",
+      ).ok,
+    ).toBe(false);
+
+    expect(
+      parseTravelBlockPayload(
+        "list",
+        {
+          block_key: "travel_candidates",
+          flights: [
+            {
+              label: "FAKE",
+              price: 10,
+              currency: "SGD",
+              source: "fake-ota",
+              notes: "https://example.com/deal",
+            },
+          ],
+          hotels: [],
+        },
+        "travel_candidates",
+      ).ok,
     ).toBe(false);
   });
 
@@ -444,27 +525,71 @@ describe("travel privacy guard", () => {
 
   it("rejects full booking ref / passport-like / card-like values", () => {
     expect(stringIsFullBookingRef("ABC12X")).toBe(true);
+    expect(stringIsFullBookingRef("abc12x")).toBe(true);
+    expect(stringIsFullBookingRef("ABCDEF")).toBe(true);
+    expect(stringIsFullBookingRef("travel")).toBe(false);
+    expect(stringIsFullBookingRef("1x32kg")).toBe(false);
     expect(stringIsFullBookingRef("SQ321")).toBe(false);
     expect(stringIsFullBookingRef("7K")).toBe(false);
-    expect(stringContainsPassportLike("E12345678")).toBe(true);
-    expect(stringContainsPassportLike("E-1234567-8")).toBe(true);
+    expect(stringContainsPassportLike("E1234567A")).toBe(true);
+    expect(stringContainsPassportLike("E-1234567-A")).toBe(true);
+    expect(stringContainsPassportLike("E12345678")).toBe(false);
     expect(stringContainsLongDigitRun("4111111111111111")).toBe(true);
+    expect(stringContainsSeparatedCardNumber("4111 1111 1111 1111")).toBe(
+      true,
+    );
+    expect(stringContainsSeparatedCardNumber("4111-1111-1111-1111")).toBe(
+      true,
+    );
 
-    expect(containsSingaporeNricOrFin({ note: "ABC12X" })).toBe(true);
-    expect(containsSingaporeNricOrFin({ note: "E12345678" })).toBe(true);
+    // Entire-value booking ref is travel-only.
+    expect(containsSingaporeNricOrFin({ note: "ABC12X" })).toBe(false);
+    expect(
+      containsSingaporeNricOrFin({ note: "ABC12X" }, { travel: true }),
+    ).toBe(true);
+    expect(
+      containsSingaporeNricOrFin({ note: "E1234567A" }, { travel: true }),
+    ).toBe(true);
     expect(containsSingaporeNricOrFin({ note: "4111111111111111" })).toBe(
       true,
     );
+    expect(
+      containsSingaporeNricOrFin({ note: "4111 1111 1111 1111" }),
+    ).toBe(true);
     expect(
       containsSingaporeNricOrFin({ booking_ref: "SECRET1" }),
     ).toBe(true);
   });
 
+  it("rejects booking refs embedded after keywords (FAKE tokens only)", () => {
+    for (const note of [
+      "PNR ABC123",
+      "pnr: XYZ99A",
+      "booking #AB12CD",
+      "ref ABC12X",
+      "reference: QWERTY1",
+      "confirmation AB12CD",
+      "订单号 ABC123",
+      "订单 ABC12X",
+      "确认码 XYZ99A",
+      "预订号 AB12CD",
+    ]) {
+      expect(stringContainsBookingKeywordRef(note), note).toBe(true);
+      expect(containsSingaporeNricOrFin({ note }), note).toBe(true);
+    }
+  });
+
   it("allows FAKE travel payloads through privacy walk", () => {
-    expect(containsSingaporeNricOrFin(FAKE_OVERVIEW)).toBe(false);
-    expect(containsSingaporeNricOrFin(FAKE_TRANSPORT)).toBe(false);
+    expect(
+      containsSingaporeNricOrFin(FAKE_OVERVIEW, { travel: true }),
+    ).toBe(false);
+    expect(
+      containsSingaporeNricOrFin(FAKE_TRANSPORT, { travel: true }),
+    ).toBe(false);
     for (const key of TRAVEL_BLOCK_KEYS) {
-      expect(containsSingaporeNricOrFin({ block_key: key })).toBe(false);
+      expect(
+        containsSingaporeNricOrFin({ block_key: key }, { travel: true }),
+      ).toBe(false);
     }
     for (const key of [...BANK_BLOCK_KEYS, ...CPF_BLOCK_KEYS]) {
       expect(containsSingaporeNricOrFin({ block_key: key })).toBe(false);
@@ -480,6 +605,56 @@ describe("travel writers gate", () => {
         { category: "travel", agent_id: AGENT_B },
       ]),
     ).toEqual([]);
+  });
+
+  it("travel-only writer cannot write to bank (403)", async () => {
+    vi.resetModules();
+    setEnv();
+    vi.doMock("@/lib/require-request", () => ({
+      requireRequest: async () => undefined,
+    }));
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: { agentId: AGENT_A, tokenHash: "hash" },
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ travel: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return {
+              insert: () => ({
+                select: () => ({
+                  single: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "bank",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          throw new Error(table);
+        },
+      }),
+    }));
+    const { POST } = await import("@/app/api/agent/dashboard/sections/route");
+    const res = await POST(
+      new Request("http://localhost/api/agent/dashboard/sections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ category: "bank" }),
+      }),
+    );
+    expect(res.status).toBe(403);
   });
 
   it("writer may create travel section; empty list → 403", async () => {
@@ -595,7 +770,7 @@ describe("travel writers gate", () => {
             block_type: "text",
             payload: {
               ...FAKE_OVERVIEW,
-              note: "E12345678",
+              note: "E1234567A",
             },
           }),
         },

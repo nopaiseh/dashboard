@@ -8,7 +8,10 @@ import {
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
 import { planPatchBlock } from "@/lib/dashboard/logic";
-import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import {
+  containsSingaporeNricOrFin,
+  privacyOptionsForCategory,
+} from "@/lib/dashboard/nric-guard";
 import {
   earlyValidateDashboardPayload,
   parseDashboardBlockPayload,
@@ -118,6 +121,14 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const sectionRow = section as DashboardSectionRow;
+
+  const travelPrivacy = privacyOptionsForCategory(sectionRow.category);
+  if (
+    travelPrivacy.travel &&
+    containsSingaporeNricOrFin(body, travelPrivacy)
+  ) {
+    return dashboardInvalidPayloadResponse();
+  }
 
   const writer = await assertAgentIsCategoryWriter(
     supabase,

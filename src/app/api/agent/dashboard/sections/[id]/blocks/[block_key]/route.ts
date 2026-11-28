@@ -6,7 +6,10 @@ import {
   decryptBlockPayload,
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
-import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import {
+  containsSingaporeNricOrFin,
+  privacyOptionsForCategory,
+} from "@/lib/dashboard/nric-guard";
 import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
 import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import type {
@@ -102,6 +105,14 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   const sectionRow = section as DashboardSectionRow;
+
+  const travelPrivacy = privacyOptionsForCategory(sectionRow.category);
+  if (
+    travelPrivacy.travel &&
+    containsSingaporeNricOrFin(body, travelPrivacy)
+  ) {
+    return dashboardInvalidPayloadResponse();
+  }
 
   const writer = await assertAgentIsCategoryWriter(
     supabase,

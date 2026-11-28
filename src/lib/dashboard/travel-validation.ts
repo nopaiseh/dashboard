@@ -15,7 +15,6 @@ import {
 import {
   BODY_MAX,
   DASHBOARD_AMOUNT_MAX,
-  DASHBOARD_AMOUNT_MIN,
   DASHBOARD_EMPTY_TEXT_MAX,
   DASHBOARD_YEAR_MAX,
   DASHBOARD_YEAR_MIN,
@@ -53,11 +52,81 @@ const IANA_TIME_ZONES: ReadonlySet<string> = new Set(
 export const TRAVEL_ISO_OFFSET_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})$/;
 
+/** Budget / candidate amounts are non-negative only. */
 const travelAmount = z
   .number()
   .finite()
-  .min(DASHBOARD_AMOUNT_MIN)
+  .min(0)
   .max(DASHBOARD_AMOUNT_MAX);
+
+/**
+ * Reject `javascript:` and URL-looking strings in free-text candidate fields.
+ * Never logs the matched value.
+ */
+export function travelTextLooksLikeUrlOrScript(value: string): boolean {
+  const trimmed = value.trim();
+  if (/^javascript\s*:/i.test(trimmed)) return true;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return true;
+  if (/https?:\/\//i.test(trimmed)) return true;
+  if (/www\./i.test(trimmed)) return true;
+  return false;
+}
+
+const travelSafeText = (max: number, min = 0) =>
+  z
+    .string()
+    .min(min)
+    .max(max)
+    .refine((s) => !travelTextLooksLikeUrlOrScript(s), {
+      message: "urls and javascript: not allowed",
+    });
+
+/**
+ * Validate ISO offset datetime: calendar components, Date.parse, and
+ * offset in [-12:00, +14:00] (Z = 0).
+ */
+export function isValidTravelIsoOffsetDateTime(raw: string): boolean {
+  if (!TRAVEL_ISO_OFFSET_RE.test(raw)) return false;
+  const y = Number(raw.slice(0, 4));
+  const mo = Number(raw.slice(5, 7));
+  const d = Number(raw.slice(8, 10));
+  const hh = Number(raw.slice(11, 13));
+  const mm = Number(raw.slice(14, 16));
+  if (y < DASHBOARD_YEAR_MIN || y > DASHBOARD_YEAR_MAX) return false;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  if (hh > 23 || mm > 59) return false;
+  let ss = 0;
+  let offsetIndex = 16;
+  if (raw[16] === ":") {
+    ss = Number(raw.slice(17, 19));
+    if (ss > 59) return false;
+    offsetIndex = 19;
+  }
+  const offsetPart = raw.slice(offsetIndex);
+  if (offsetPart !== "Z") {
+    const sign = offsetPart[0] === "-" ? -1 : 1;
+    const oh = Number(offsetPart.slice(1, 3));
+    const om = Number(offsetPart.slice(4, 6));
+    if (om > 59) return false;
+    const totalMin = sign * (oh * 60 + om);
+    if (totalMin < -12 * 60 || totalMin > 14 * 60) return false;
+  }
+  // Reconstruct a UTC-comparable instant; reject if Date.parse fails or
+  // calendar day does not round-trip (e.g. Feb 30).
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return false;
+  const asUtc = new Date(
+    Date.UTC(y, mo - 1, d, hh, mm, ss),
+  );
+  if (
+    asUtc.getUTCFullYear() !== y ||
+    asUtc.getUTCMonth() !== mo - 1 ||
+    asUtc.getUTCDate() !== d
+  ) {
+    return false;
+  }
+  return true;
+}
 
 const travelBlockKeySchema = z.string().refine(isTravelBlockKey, {
   message: "invalid travel block_key",
@@ -97,10 +166,8 @@ const travelIsoOffsetDateTime = z
   .string()
   .min(1)
   .max(40)
-  .regex(TRAVEL_ISO_OFFSET_RE)
-  .refine((t) => {
-    const y = Number(t.slice(0, 4));
-    return y >= DASHBOARD_YEAR_MIN && y <= DASHBOARD_YEAR_MAX;
+  .refine(isValidTravelIsoOffsetDateTime, {
+    message: "invalid ISO datetime with offset",
   });
 
 const travelIanaTz = z
@@ -360,8 +427,8 @@ const candidateItemSchema = z
     label: z.string().min(1).max(TITLE_MAX),
     price: travelAmount,
     currency: travelCurrency,
-    notes: z.string().max(TRAVEL_NOTE_MAX).optional(),
-    source: z.string().min(1).max(TRAVEL_SOURCE_MAX),
+    notes: travelSafeText(TRAVEL_NOTE_MAX).optional(),
+    source: travelSafeText(TRAVEL_SOURCE_MAX, 1),
   })
   .strict();
 
@@ -371,7 +438,7 @@ const travelCandidatesSchema = z
     title: z.string().max(TITLE_MAX).optional(),
     flights: z.array(candidateItemSchema).max(TRAVEL_CANDIDATES_MAX),
     hotels: z.array(candidateItemSchema).max(TRAVEL_CANDIDATES_MAX),
-    note: z.string().max(BODY_MAX).optional(),
+    note: travelSafeText(BODY_MAX).optional(),
     empty_text: z.string().max(DASHBOARD_EMPTY_TEXT_MAX).optional(),
   })
   .strict();

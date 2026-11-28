@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planCreateSection } from "@/lib/dashboard/logic";
-import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import {
+  containsSingaporeNricOrFin,
+  privacyOptionsForCategory,
+} from "@/lib/dashboard/nric-guard";
 import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
@@ -29,13 +32,18 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid json");
   }
 
-  if (containsSingaporeNricOrFin(body)) {
-    return dashboardInvalidPayloadResponse();
-  }
-
   const parsed = createDashboardSectionSchema.safeParse(body);
   if (!parsed.success) {
     return dashboardInvalidPayloadResponse(parsed.error);
+  }
+
+  if (
+    containsSingaporeNricOrFin(
+      body,
+      privacyOptionsForCategory(parsed.data.category),
+    )
+  ) {
+    return dashboardInvalidPayloadResponse();
   }
 
   const writer = await assertAgentIsCategoryWriter(

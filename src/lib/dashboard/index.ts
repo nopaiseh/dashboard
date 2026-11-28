@@ -22,6 +22,7 @@ export {
 export {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  privacyOptionsForCategory,
   stringContainsLongDigitRun,
 } from "@/lib/dashboard/nric-guard";
 export {

@@ -120,6 +120,44 @@ describe("NRIC separator bypass", () => {
     ).toBe(false);
   });
 
+  it("passport-like requires trailing letter and does not join across spaces", async () => {
+    const { stringContainsPassportLike } = await import(
+      "@/lib/dashboard/nric-guard"
+    );
+    expect(stringContainsPassportLike("E1234567A")).toBe(true);
+    expect(stringContainsPassportLike("E-1234567-A")).toBe(true);
+    expect(stringContainsPassportLike("E12345678")).toBe(false);
+    for (const text of [
+      "Salary 2026-11-29",
+      "Due 29/11/2026",
+      "FY 2026-01-01",
+    ]) {
+      expect(stringContainsPassportLike(text), text).toBe(false);
+      expect(containsSingaporeNricOrFin({ text }), text).toBe(false);
+    }
+  });
+
+  it("cpf/bank product labels are not entire-value booking refs under shared scan", () => {
+    for (const label of ["OCBC360", "GIRO2026", "SRS2026", "CPFOA1"]) {
+      expect(containsSingaporeNricOrFin({ label }), label).toBe(false);
+    }
+  });
+
+  it("rejects separated card numbers without echoing values", async () => {
+    const { stringContainsSeparatedCardNumber } = await import(
+      "@/lib/dashboard/nric-guard"
+    );
+    expect(stringContainsSeparatedCardNumber("4111 1111 1111 1111")).toBe(
+      true,
+    );
+    expect(stringContainsSeparatedCardNumber("4111-1111-1111-1111")).toBe(
+      true,
+    );
+    expect(containsSingaporeNricOrFin({ note: "4111 1111 1111 1111" })).toBe(
+      true,
+    );
+  });
+
   it("rejects 9+ consecutive digits in strings (not numbers)", async () => {
     const { stringContainsLongDigitRun } = await import(
       "@/lib/dashboard/nric-guard"

@@ -9,7 +9,7 @@
 -- Do NOT wrap in BEGIN/COMMIT (Supabase already wraps each migration).
 
 COMMENT ON TABLE public.dashboard_writers IS
-  'Owner-assigned writer agents per dashboard category (many-to-many). Empty list → all agent writes denied. Sensitive categories cpf/bank/travel are owner-assigned only (travel is never auto-seeded).';
+  'Owner-assigned writer agents per dashboard category (many-to-many). Empty list → all agent writes denied. cpf/bank were backfilled once when exactly one cpf section owner existed; travel has no backfill and is owner-assigned only.';
 
 COMMENT ON COLUMN public.dashboard_blocks.block_key IS
   'Optional plaintext slot key for uniqueness / upsert. Mirrored inside encrypted payload when set. Never a personal identifier. Travel uses travel_<slot> or travel_<trip>_<slot>.';
