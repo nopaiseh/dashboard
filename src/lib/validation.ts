@@ -172,6 +172,43 @@ export const stepUpOptionsSchema = z.union([
       action: z.literal("create_agent"),
     })
     .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("migrate_goals_plan"),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("migrate_goals_execute"),
+    })
+    .strict(),
+]);
+
+export const migrateGoalsWebSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("plan"),
+      assertion: webauthnCredentialPayloadSchema,
+      challenge_id: z.string().uuid(),
+      binding: z.string().min(1).max(4096),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("execute"),
+      assertion: webauthnCredentialPayloadSchema,
+      challenge_id: z.string().uuid(),
+      binding: z.string().min(1).max(4096),
+      /** Anti-forgery token from a prior dry-run response. */
+      csrf_token: z.string().min(1).max(4096),
+      /** Must be exactly true — server validates the 「确认迁移」 checkbox. */
+      confirm: z.literal(true),
+      /** Challenge id from the dry-run that issued csrf_token. */
+      plan_challenge_id: z.string().uuid(),
+    })
+    .strict(),
 ]);
 
 const agentSlugSchema = z

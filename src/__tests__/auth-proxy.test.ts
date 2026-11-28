@@ -43,6 +43,29 @@ describe("unauthenticated access / proxy hardening", () => {
     expect(res.headers.get("location")).toBe("http://localhost/login");
   });
 
+  it("returns 404 (not redirect) for /admin/migrate-goals without session", async () => {
+    const { proxy } = await import("@/proxy");
+    const pageReq = {
+      nextUrl: new URL("http://localhost/admin/migrate-goals"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/admin/migrate-goals",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const pageRes = await proxy(pageReq);
+    expect(pageRes.status).toBe(404);
+    expect(pageRes.headers.get("Cache-Control")).toBe("no-store");
+
+    const apiReq = {
+      nextUrl: new URL("http://localhost/api/admin/migrate-goals"),
+      cookies: { get: () => undefined },
+      url: "http://localhost/api/admin/migrate-goals",
+      headers: new Headers(),
+    } as unknown as import("next/server").NextRequest;
+    const apiRes = await proxy(apiReq);
+    expect(apiRes.status).toBe(404);
+    expect(apiRes.headers.get("Cache-Control")).toBe("no-store");
+  });
+
   it("rejects when SESSION_SECRET is missing or too short", async () => {
     const token = await createSessionToken();
     delete process.env.SESSION_SECRET;
