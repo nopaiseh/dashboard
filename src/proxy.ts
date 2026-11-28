@@ -16,20 +16,29 @@ import { isSessionSecretConfigured } from "@/lib/env";
 
 const PUBLIC_PATHS = new Set([
   "/login",
-  "/setup",
-  "/setup/confirm",
   "/robots.txt",
   "/favicon.ico",
 ]);
+
+/** 已移除的首次登记路径：一律 404（勿重定向到 /login）。 */
+const REMOVED_PATHS = new Set(["/setup", "/setup/confirm"]);
 
 const PUBLIC_API_PREFIXES = [
   "/api/auth/options",
   "/api/auth/verify",
   // 尾斜杠：避免 /api/auth/registerX 被 startsWith 误放行
   "/api/auth/register/",
-  "/api/auth/setup/",
   "/api/agent/",
 ];
+
+function isRemovedRegistrationPath(pathname: string): boolean {
+  if (REMOVED_PATHS.has(pathname)) {
+    return true;
+  }
+  return (
+    pathname === "/api/auth/setup" || pathname.startsWith("/api/auth/setup/")
+  );
+}
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) {
@@ -86,6 +95,14 @@ export async function proxy(request: NextRequest) {
 
   if (isPublicStaticAsset(pathname)) {
     return withSecurity(request, nextWithNonce(request, nonce), nonce);
+  }
+
+  if (isRemovedRegistrationPath(pathname)) {
+    return withSecurity(
+      request,
+      new NextResponse(null, { status: 404 }),
+      nonce,
+    );
   }
 
   if (isPublic(pathname)) {

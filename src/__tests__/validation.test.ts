@@ -93,8 +93,8 @@ describe("input validation", () => {
     ).toBe(true);
   });
 
-  it("allows empty register options body; token optional for invite", () => {
-    expect(registerOptionsSchema.safeParse({}).success).toBe(true);
+  it("requires invite token on register options", () => {
+    expect(registerOptionsSchema.safeParse({}).success).toBe(false);
     expect(
       registerOptionsSchema.safeParse({ token: "x" }).success,
     ).toBe(true);

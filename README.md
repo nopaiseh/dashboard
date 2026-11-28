@@ -27,13 +27,6 @@ npm run build
 
 `items` 的 `title` / `body` / `source_url`，以及 `dashboard_blocks.payload`，经应用层 AES-256-GCM（AAD 绑定行/列）加密后入库；`content_hash` 为 HMAC-SHA256。本地在 `.env.local` 设置 `FIELD_ENCRYPTION_KEY` 与 `CONTENT_HASH_KEY`（均为 `openssl rand -base64 32`）。回填分 `--encrypt-only` / `--rehash-only`（默认 dry-run）。`goals` → progress 块：先把 `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `FIELD_ENCRYPTION_KEY` 载入进程环境（如 `set -a && source .env.local && set +a`；脚本不读文件、不打印密钥），再 `npm run migrate-goals`（默认 dry-run；`--execute` 后校验行数并试解密）。部署顺序见 [docs/architecture.md](docs/architecture.md#字段加密)。
 
-## 首次通行密钥登记（概要）
+## 通行密钥
 
-1. 配置 `OWNER_EMAIL`、`SESSION_SECRET`、`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`（anon 仅服务器 Auth OTP）。
-2. 在 Supabase Auth 仪表盘：开启 Email、**关闭**公开注册、Site URL / Redirect 为 `https://desk.nopaiseh.com`，Magic Link 模板使用 `token_hash` 链到 `/setup/confirm`；预先创建与 `OWNER_EMAIL` 相同的用户。
-3. 打开 `/setup` → 输入邮箱 → 邮件内链接 → **点击确认** → 登记 passkey（算法仅 ES256/RS256）。
-
-### 邮件与过期
-
-- **SMTP**：当前用 Supabase **内置邮件**（每小时额度较低，仅够主人自用）；自定义 SMTP（如 Resend）留待后续。
-- **OTP / 魔法链接过期**：计划在 Auth 仪表盘设为 **15 分钟**；setup-grant cookie 约 10 分钟。详见 [docs/architecture.md](docs/architecture.md)。
+首次登记（魔法链接 / `/setup`）已关闭。登录走 `/login` 通行密钥。新设备登记走已登录 + passkey 签发的 invite 一次性令牌（`POST /api/auth/register/invite`）；目前无专用 UI，见 [docs/architecture.md](docs/architecture.md)。

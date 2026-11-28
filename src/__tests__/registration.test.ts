@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hashAgentToken } from "@/lib/crypto";
 
 /**
- * 接口级：首次登记须 setup-grant；无 grant 拒绝；有凭据后 bootstrap 失效。
+ * 接口级：须 invite 一次性令牌；无 token / 无效 token 拒绝；无公开 bootstrap。
  */
 describe("registration API rules", () => {
   beforeEach(() => {
@@ -13,17 +13,13 @@ describe("registration API rules", () => {
     process.env.WEBAUTHN_ORIGIN = "https://desk.nopaiseh.com";
   });
 
-  it("rejects register options without setup grant or invite token", async () => {
+  it("rejects register options without invite token", async () => {
     const rpc = vi.fn().mockImplementation((name: string) => {
       if (name === "rate_limit_register_options") {
         return Promise.resolve({ data: true, error: null });
       }
       return Promise.resolve({ data: null, error: null });
     });
-
-    vi.doMock("@/lib/setup-grant", () => ({
-      hasValidSetupGrant: async () => false,
-    }));
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
@@ -50,17 +46,13 @@ describe("registration API rules", () => {
       }),
     );
     expect(res.status).toBe(403);
-    expect(rpc).toHaveBeenCalledWith(
-      "rate_limit_register_options",
-      expect.anything(),
-    );
     expect(rpc).not.toHaveBeenCalledWith(
       "authorize_and_create_registration_challenge",
       expect.anything(),
     );
   });
 
-  it("authorizes bootstrap via setup grant when no credentials", async () => {
+  it("authorizes one_time via invite token", async () => {
     const rpc = vi.fn().mockImplementation((name: string) => {
       if (name === "rate_limit_register_options") {
         return Promise.resolve({ data: true, error: null });
@@ -70,10 +62,6 @@ describe("registration API rules", () => {
         error: null,
       });
     });
-
-    vi.doMock("@/lib/setup-grant", () => ({
-      hasValidSetupGrant: async () => true,
-    }));
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
@@ -86,7 +74,7 @@ describe("registration API rules", () => {
 
     vi.doMock("@/lib/webauthn", () => ({
       buildRegistrationOptions: async () => ({
-        challenge: "chal-bootstrap",
+        challenge: "chal-invite",
         rp: { name: "x", id: "desk.nopaiseh.com" },
       }),
     }));
@@ -95,7 +83,7 @@ describe("registration API rules", () => {
     const res = await POST(
       new Request("http://localhost/api/auth/register/options", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ token: "invite-raw-token" }),
         headers: { "content-type": "application/json" },
       }),
     );
@@ -103,24 +91,23 @@ describe("registration API rules", () => {
     expect(rpc).toHaveBeenCalledWith(
       "authorize_and_create_registration_challenge",
       expect.objectContaining({
-        p_mode: "bootstrap",
-        p_token_hash: hashAgentToken("setup-grant"),
-        p_challenge: "chal-bootstrap",
+        p_mode: "one_time",
+        p_token_hash: hashAgentToken("invite-raw-token"),
+        p_challenge: "chal-invite",
       }),
     );
   });
 
-  it("rejects bootstrap grant path when any credential already exists", async () => {
+  it("rejects when invite RPC denies the token", async () => {
     const rpc = vi.fn().mockImplementation((name: string) => {
       if (name === "rate_limit_register_options") {
         return Promise.resolve({ data: true, error: null });
       }
-      return Promise.resolve({ data: null, error: null });
+      return Promise.resolve({
+        data: null,
+        error: { code: "XJ403", message: "invalid one-time token" },
+      });
     });
-
-    vi.doMock("@/lib/setup-grant", () => ({
-      hasValidSetupGrant: async () => true,
-    }));
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
@@ -144,7 +131,7 @@ describe("registration API rules", () => {
 
     vi.doMock("@/lib/webauthn", () => ({
       buildRegistrationOptions: async () => ({
-        challenge: "chal-existing",
+        challenge: "chal-bad",
         rp: { name: "x", id: "desk.nopaiseh.com" },
       }),
     }));
@@ -153,14 +140,10 @@ describe("registration API rules", () => {
     const res = await POST(
       new Request("http://localhost/api/auth/register/options", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ token: "bad-token" }),
         headers: { "content-type": "application/json" },
       }),
     );
     expect(res.status).toBe(403);
-    expect(rpc).not.toHaveBeenCalledWith(
-      "authorize_and_create_registration_challenge",
-      expect.anything(),
-    );
   });
 });

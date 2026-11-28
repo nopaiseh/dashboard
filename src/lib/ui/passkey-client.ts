@@ -60,14 +60,13 @@ export async function loginWithPasskey(): Promise<void> {
 }
 
 /**
- * 首次登记：依赖 httpOnly setup-grant cookie → options → startRegistration → verify。
- * 新设备 invite 可传入一次性 token。
+ * 新设备登记：须带 invite 一次性 token → options → startRegistration → verify。
  */
-export async function registerWithPasskey(token?: string): Promise<void> {
+export async function registerWithPasskey(token: string): Promise<void> {
   const optRes = await fetch("/api/auth/register/options", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(token ? { token } : {}),
+    body: JSON.stringify({ token }),
   });
   if (!optRes.ok) {
     throw new PasskeyError(await readError(optRes), optRes.status);

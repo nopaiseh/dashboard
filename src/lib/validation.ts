@@ -122,10 +122,10 @@ export const decisionSchema = z
   })
   .strict();
 
-/** 首次登记可无 token（靠 setup-grant cookie）；新设备 invite 须带 token。 */
+/** 新设备 invite：须带一次性登记令牌（无公开 bootstrap）。 */
 export const registerOptionsSchema = z
   .object({
-    token: z.string().min(1).max(512).optional(),
+    token: z.string().min(1).max(512),
   })
   .strict();
 
@@ -133,19 +133,6 @@ export const registerVerifySchema = z
   .object({
     challenge_id: z.string().uuid(),
     attestation: webauthnCredentialPayloadSchema,
-  })
-  .strict();
-
-export const setupRequestSchema = z
-  .object({
-    email: z.string().email().max(320),
-  })
-  .strict();
-
-export const setupConfirmSchema = z
-  .object({
-    token_hash: z.string().min(1).max(2048),
-    type: z.literal("email"),
   })
   .strict();
 
