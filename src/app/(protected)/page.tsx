@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
-import { DashboardView } from "@/components/qingjian/DashboardView";
+import { DashboardOverview } from "@/components/qingjian/DashboardOverview";
 import { loadDashboard } from "@/lib/read";
 import { loadShellData, withUiReadGuard } from "@/lib/ui/page-helpers";
 
@@ -15,7 +15,7 @@ export default async function HomePage() {
 
     return (
       <AppShell active="today" counts={counts} siteName={siteName}>
-        <DashboardView data={dashboard} />
+        <DashboardOverview sections={dashboard.sections} />
       </AppShell>
     );
   });
