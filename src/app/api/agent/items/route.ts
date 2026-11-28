@@ -7,7 +7,10 @@ import { clientIp, jsonError, jsonOk } from "@/lib/http";
 import { buildNewItemFields } from "@/lib/items-logic";
 import { getServiceClient } from "@/lib/supabase/server";
 import type { ItemRow } from "@/lib/types";
-import { createItemSchema } from "@/lib/validation";
+import {
+  createItemSchema,
+  kindValidationErrorMessage,
+} from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 export async function POST(request: Request) {
@@ -33,7 +36,10 @@ export async function POST(request: Request) {
 
   const parsed = createItemSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(400, "invalid body", { details: parsed.error.flatten() });
+    const kindError = kindValidationErrorMessage(parsed.error);
+    return jsonError(400, kindError ?? "invalid body", {
+      details: parsed.error.flatten(),
+    });
   }
 
   const nowIso = new Date().toISOString();

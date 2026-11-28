@@ -95,6 +95,35 @@ describe("agent PATCH API / concurrency", () => {
     }
   });
 
+  it("status-only patch keeps stale content_hash after kind migration", () => {
+    // 模拟迁移后：kind 已是 todo，但 content_hash 仍按旧 question_to_user 计算
+    const staleHash = computeContentHash({
+      kind: "question_to_user",
+      title: "t",
+      body: "b",
+      options: [],
+      source_url: null,
+      due_at: null,
+    });
+    const migrated = item({
+      kind: "todo",
+      title: "t",
+      body: "b",
+      content_hash: staleHash,
+      status: "open",
+    });
+    const planned = planAgentPatch(migrated.agent_id, migrated, {
+      status: "done",
+    });
+    expect(planned.ok).toBe(true);
+    if (planned.ok) {
+      expect(planned.plan.contentReopened).toBe(false);
+      expect(planned.plan.setStatus).toBe(true);
+      expect(planned.plan.newStatus).toBe("done");
+      expect(planned.plan.newContentHash).toBe(staleHash);
+    }
+  });
+
   it("returns 422 when item sensitive fields cannot be decrypted", async () => {
     const existing = item({ status: "open" });
     const otherId = "22222222-2222-4222-8222-222222222222";

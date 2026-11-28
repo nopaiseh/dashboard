@@ -39,8 +39,6 @@ export function TodayView({
       <div className={"qj-counts"} role="list" aria-label="各栏件数">
         <CountLink href="/pending" n={counts.approval} label="待批" />
         <CountLink href="/todo" n={counts.todo} label="待办" />
-        <CountLink href="/qa-in" n={counts.question_to_user} label="问你的" />
-        <CountLink href="/qa-out" n={counts.question_from_user} label="你问的" />
         <CountLink href="/waiting" n={counts.waiting} label="等别人" />
         <CountLink
           href="/held"

@@ -5,7 +5,7 @@ function isBottomOn(id: string, active: NavTabId): boolean {
   if (id === "today") return active === "today";
   if (id === "pending") return active === "pending";
   if (id === "todo") return active === "todo";
-  if (id === "qa") return active === "qa-in" || active === "qa-out";
+  if (id === "waiting") return active === "waiting";
   return false;
 }
 

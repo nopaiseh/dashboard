@@ -43,13 +43,9 @@ export default async function ItemDetailPage({ params }: PageProps) {
         ? "pending"
         : item.kind === "todo"
           ? "todo"
-          : item.kind === "question_to_user"
-            ? "qa-in"
-            : item.kind === "question_from_user"
-              ? "qa-out"
-              : item.kind === "waiting"
-                ? "waiting"
-                : "today";
+          : item.kind === "waiting"
+            ? "waiting"
+            : "today";
 
     return (
       <AppShell active={activeTab} counts={counts} siteName={siteName}>

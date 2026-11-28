@@ -23,8 +23,6 @@ describe("ui labels", () => {
       "today",
       "pending",
       "todo",
-      "qa-in",
-      "qa-out",
       "waiting",
       "held",
       "sisters",

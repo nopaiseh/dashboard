@@ -25,7 +25,7 @@ Authorization: Bearer xjg_at_…
 
 | 字段 | 说明 |
 |------|------|
-| `kind` | `approval`（待批）/ `todo`（待办）/ `question_to_user`（问你的）/ `question_from_user`（你问的）/ `waiting`（等别人） |
+| `kind` | `approval`（待批）/ `todo`（待办）/ `waiting`（等别人）。已移除的 `question_to_user` / `question_from_user` 会返回 `400` |
 | `title` | 必填，≤200 |
 | `body` | 可选，≤10000 |
 | `project` | 可选，≤200 |
@@ -72,16 +72,9 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items' \
   }'
 ```
 
-问答（问阁主）/ 等别人：
+等别人：
 
 ```bash
-# question_to_user — 问阁主
-curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items' \
-  -H 'Authorization: Bearer '"$SISTER_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"kind":"question_to_user","title":"行程是否改期？","body":"原定周五"}'
-
-# waiting — 等别人
 curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items' \
   -H 'Authorization: Bearer '"$SISTER_TOKEN" \
   -H 'Content-Type: application/json' \

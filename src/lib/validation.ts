@@ -48,15 +48,47 @@ export const itemOptionsSchema = z
     }
   });
 
+/** 仍支持的条目类型。 */
+export const ITEM_KINDS = ["approval", "todo", "waiting"] as const;
+
+/** 已移除；API 收到时返回明确 400。 */
+export const REMOVED_ITEM_KINDS = [
+  "question_to_user",
+  "question_from_user",
+] as const;
+
+/**
+ * kind 校验：对已移除类型给出清晰错误，其余仅允许 approval / todo / waiting。
+ */
+export const itemKindSchema = z.string().superRefine((val, ctx) => {
+  if ((REMOVED_ITEM_KINDS as readonly string[]).includes(val)) {
+    ctx.addIssue({
+      code: "custom",
+      message: `kind '${val}' has been removed; use approval, todo, or waiting`,
+    });
+    return;
+  }
+  if (!(ITEM_KINDS as readonly string[]).includes(val)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "kind must be approval, todo, or waiting",
+    });
+  }
+}).transform((val) => val as (typeof ITEM_KINDS)[number]);
+
+/** 从 zod 错误中取出 kind 相关的明确文案（已移除或非法）。 */
+export function kindValidationErrorMessage(
+  error: z.ZodError,
+): string | undefined {
+  const issue = error.issues.find(
+    (i) => i.path.length === 1 && i.path[0] === "kind",
+  );
+  return issue?.message;
+}
+
 export const createItemSchema = z
   .object({
-    kind: z.enum([
-      "approval",
-      "todo",
-      "question_to_user",
-      "question_from_user",
-      "waiting",
-    ]),
+    kind: itemKindSchema,
     project: z.string().max(PROJECT_MAX).optional(),
     title: z.string().min(1).max(TITLE_MAX),
     body: z.string().max(BODY_MAX).optional(),
@@ -75,15 +107,7 @@ export const patchItemSchema = z
     due_at: z.string().datetime().nullable().optional(),
     source_url: httpsUrl.nullable().optional(),
     status: z.enum(["done", "withdrawn"]).optional(),
-    kind: z
-      .enum([
-        "approval",
-        "todo",
-        "question_to_user",
-        "question_from_user",
-        "waiting",
-      ])
-      .optional(),
+    kind: itemKindSchema.optional(),
   })
   .strict();
 
@@ -215,15 +239,7 @@ export const inboxQuerySchema = z
 
 export const itemsQuerySchema = z
   .object({
-    kind: z
-      .enum([
-        "approval",
-        "todo",
-        "question_to_user",
-        "question_from_user",
-        "waiting",
-      ])
-      .optional(),
+    kind: itemKindSchema.optional(),
     agent: z.string().uuid().optional(),
     status: z
       .enum([
