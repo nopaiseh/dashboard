@@ -9,6 +9,8 @@ import {
   parseCpfModel,
   reachedFrsFromTier,
 } from "@/components/qingjian/dashboard/parseCpfModel";
+import { parseMissingYears, parseTextPayload } from "@/components/qingjian/dashboard/parse";
+import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
 import {
   C2_BAL,
   C2_EXCEED_FRS,
@@ -52,13 +54,31 @@ describe("dashboard section ordering", () => {
 });
 
 describe("reached_tier → 已达 FRS", () => {
-  it("treats FRS and ERS as reached FRS; BRS and empty as not", () => {
-    expect(reachedFrsFromTier("FRS")).toBe(true);
-    expect(reachedFrsFromTier("ERS")).toBe(true);
-    expect(reachedFrsFromTier("frs")).toBe(true);
-    expect(reachedFrsFromTier("BRS")).toBe(false);
-    expect(reachedFrsFromTier(undefined)).toBe(false);
-    expect(reachedFrsFromTier("")).toBe(false);
+  const retirementTiers = [
+    { key: "BRS", amount: 110_000 },
+    { key: "FRS", amount: 220_000 },
+    { key: "ERS", amount: 440_000 },
+  ];
+
+  it("BRS→未达、FRS/frs→已达、ERS→已达、空/未知→未达（对照 tiers 顺序）", () => {
+    expect(reachedFrsFromTier("BRS", retirementTiers)).toBe(false);
+    expect(reachedFrsFromTier("FRS", retirementTiers)).toBe(true);
+    expect(reachedFrsFromTier("frs", retirementTiers)).toBe(true);
+    expect(reachedFrsFromTier("ERS", retirementTiers)).toBe(true);
+    expect(reachedFrsFromTier(undefined, retirementTiers)).toBe(false);
+    expect(reachedFrsFromTier("", retirementTiers)).toBe(false);
+    expect(reachedFrsFromTier("UNKNOWN", retirementTiers)).toBe(false);
+    expect(reachedFrsFromTier("BHS", retirementTiers)).toBe(false);
+  });
+
+  it("ranks by amount when tiers order differs from amount", () => {
+    const reversed = [
+      { key: "ERS", amount: 440_000 },
+      { key: "FRS", amount: 220_000 },
+      { key: "BRS", amount: 110_000 },
+    ];
+    expect(reachedFrsFromTier("BRS", reversed)).toBe(false);
+    expect(reachedFrsFromTier("ERS", reversed)).toBe(true);
   });
 
   it("parseCpfModel sets reachedFrs from progress.reached_tier only", () => {
@@ -138,6 +158,60 @@ describe("reached_tier → 已达 FRS", () => {
       ),
     };
     expect(parseCpfModel(withBrsOnly, "").conclusion?.reachedFrs).toBe(false);
+
+    const withErs = {
+      ...withFrs,
+      blocks: withFrs.blocks.map((b) =>
+        b.id === "p1"
+          ? {
+              ...b,
+              payload: { ...b.payload, reached_tier: "ERS", overshoot: 0 },
+            }
+          : b,
+      ),
+    };
+    expect(parseCpfModel(withErs, "").conclusion?.reachedFrs).toBe(true);
+
+    const withUnknown = {
+      ...withFrs,
+      blocks: withFrs.blocks.map((b) =>
+        b.id === "p1"
+          ? {
+              ...b,
+              payload: { ...b.payload, reached_tier: "XYZ" },
+            }
+          : b,
+      ),
+    };
+    expect(parseCpfModel(withUnknown, "").conclusion?.reachedFrs).toBe(false);
+  });
+});
+
+describe("missing_years (#24 number[])", () => {
+  it("accepts number years and string years; ignores junk", () => {
+    expect(parseMissingYears([2022, 2023])).toEqual(["2022", "2023"]);
+    expect(parseMissingYears(["2021", "2024"])).toEqual(["2021", "2024"]);
+    expect(parseMissingYears([2020, "2019", "nope", 1.5, null])).toEqual([
+      "2020",
+      "2019",
+    ]);
+    expect(parseMissingYears(undefined)).toEqual([]);
+  });
+
+  it("parseTextPayload keeps numeric missing_years for MissingYearStripe", () => {
+    const view = parseTextPayload({
+      title: "估算说明",
+      text: "正文",
+      missing_years: [2021, 2023],
+    });
+    expect(view).not.toBeNull();
+    expect(view!.missingYears).toEqual(["2021", "2023"]);
+    const html = renderToStaticMarkup(
+      createElement(MissingYearStripe, { years: view!.missingYears }),
+    );
+    expect(html).toContain("2021");
+    expect(html).toContain("2023");
+    expect(html).toContain("该年暂无结算单");
   });
 });
 

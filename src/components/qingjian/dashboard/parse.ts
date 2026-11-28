@@ -28,6 +28,26 @@ function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+/**
+ * #24 `missing_years` is `number[]` (calendar years).
+ * Also accept string years for lenient parse; normalize to display strings.
+ */
+export function parseMissingYears(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw) {
+    if (typeof x === "number" && Number.isFinite(x) && Number.isInteger(x)) {
+      out.push(String(x));
+      continue;
+    }
+    if (typeof x === "string") {
+      const t = x.trim();
+      if (/^\d{4}$/.test(t)) out.push(t);
+    }
+  }
+  return out;
+}
+
 function asEmptyText(payload: Record<string, unknown>): string | undefined {
   if (payload.empty === true || payload.status === "empty") {
     return asString(payload.empty_text) ?? asString(payload.empty) ?? BLOCK_EMPTY_DEFAULT;
@@ -160,11 +180,9 @@ export function parseTextPayload(
   const p = asRecord(payload);
   const text = asString(p.text);
   const emptyText = asEmptyText(p);
-  const missingYears = Array.isArray(p.missing_years)
-    ? p.missing_years.filter((x): x is string => typeof x === "string")
-    : Array.isArray(p.missingYears)
-      ? p.missingYears.filter((x): x is string => typeof x === "string")
-      : [];
+  const missingYears = parseMissingYears(
+    p.missing_years ?? p.missingYears,
+  );
   if (emptyText && (text === undefined || !text.trim())) {
     return {
       title: asString(p.title),

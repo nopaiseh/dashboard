@@ -26,12 +26,8 @@ import {
   type CpfViewModel,
 } from "./cpfModel";
 
-/** 退休档相对 FRS 的高低（用于「已达 FRS」）。 */
-const TIER_RANK: Record<string, number> = {
-  BRS: 1,
-  FRS: 2,
-  ERS: 3,
-};
+/** 默认退休档顺序（无 tiers 时回退）：BRS < FRS < ERS。 */
+const DEFAULT_RETIREMENT_TIER_ORDER = ["BRS", "FRS", "ERS"] as const;
 
 function clean(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -54,11 +50,49 @@ function bool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
 
-/** `reached_tier` 为 FRS 或更高（ERS）→ 已达 FRS。 */
-export function reachedFrsFromTier(reachedTier: string | undefined): boolean {
-  if (!reachedTier) return false;
-  const rank = TIER_RANK[reachedTier.trim().toUpperCase()];
-  return rank !== undefined && rank >= TIER_RANK.FRS;
+/**
+ * 由 progress.`reached_tier` 判断是否已达 FRS（含更高档如 ERS）。
+ * 大小写规范化后，与该块 `tiers[].key` 比较档位高低（按 tiers 数组顺序；
+ * 若带 amount 则按 amount 升序覆盖顺序）。未知档 / 空值 → 未达。
+ */
+export function reachedFrsFromTier(
+  reachedTier: string | undefined,
+  tiers?: Array<{ key: string; amount?: number }>,
+): boolean {
+  const key = reachedTier?.trim().toUpperCase();
+  if (!key) return false;
+
+  const orderedKeys = orderedTierKeys(tiers);
+  const frsIdx = orderedKeys.indexOf("FRS");
+  if (frsIdx < 0) return false;
+  const reachedIdx = orderedKeys.indexOf(key);
+  if (reachedIdx < 0) return false;
+  return reachedIdx >= frsIdx;
+}
+
+function orderedTierKeys(
+  tiers?: Array<{ key: string; amount?: number }>,
+): string[] {
+  if (!tiers || tiers.length === 0) {
+    return [...DEFAULT_RETIREMENT_TIER_ORDER];
+  }
+  const normalized = tiers
+    .map((t) => ({
+      key: t.key.trim().toUpperCase(),
+      amount: typeof t.amount === "number" && Number.isFinite(t.amount)
+        ? t.amount
+        : undefined,
+    }))
+    .filter((t) => t.key.length > 0);
+  if (normalized.length === 0) return [...DEFAULT_RETIREMENT_TIER_ORDER];
+
+  const allHaveAmount = normalized.every((t) => t.amount !== undefined);
+  if (allHaveAmount) {
+    return [...normalized]
+      .sort((a, b) => (a.amount as number) - (b.amount as number))
+      .map((t) => t.key);
+  }
+  return normalized.map((t) => t.key);
 }
 
 function blocksOfType(
@@ -202,8 +236,10 @@ function parseProgress(blocks: DashboardBlockPublic[]): {
 
   let reachedFrs = false;
   for (const b of progresses) {
-    const rt = str(clean(b.payload).reached_tier);
-    if (reachedFrsFromTier(rt)) reachedFrs = true;
+    const p = clean(b.payload);
+    const rt = str(p.reached_tier);
+    const blockTiers = parseTiers(p.tiers);
+    if (reachedFrsFromTier(rt, blockTiers)) reachedFrs = true;
   }
 
   if (!oaSaBlk && !maBlk) return { data: null, reachedFrs };
