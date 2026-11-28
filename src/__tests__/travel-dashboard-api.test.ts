@@ -897,3 +897,96 @@ describe("travel writers gate", () => {
     expect(body.block.payload).toMatchObject(FAKE_OVERVIEW);
   });
 });
+
+describe("travel write 400 issues (zod, no value echo)", () => {
+  it("travel_overview with extra field → 400 issues path + unrecognized_keys", async () => {
+    vi.resetModules();
+    setEnv();
+    vi.doMock("@/lib/require-request", () => ({
+      requireRequest: async () => undefined,
+    }));
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: { agentId: AGENT_A, tokenHash: "hash" },
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ travel: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "travel",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          throw new Error("should not reach blocks");
+        },
+      }),
+    }));
+
+    const SECRET_EXTRA = "TRAVEL_EXTRA_SECRET_VALUE";
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/travel_overview`,
+        {
+          method: "PUT",
+          headers: {
+            authorization: "Bearer xjg_at_test",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            block_type: "text",
+            payload: {
+              ...FAKE_OVERVIEW,
+              secret_note: SECRET_EXTRA,
+            },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "travel_overview",
+        }),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const raw = await res.text();
+    expect(raw).not.toContain(SECRET_EXTRA);
+    const body = JSON.parse(raw) as {
+      error: string;
+      issues: Array<{ path: string; code: string; message: string }>;
+    };
+    expect(body.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(Array.isArray(body.issues)).toBe(true);
+    expect(
+      body.issues.some(
+        (i) =>
+          i.path === "secret_note" &&
+          i.code === "unrecognized_keys" &&
+          i.message === "多余字段",
+      ),
+    ).toBe(true);
+  });
+});
