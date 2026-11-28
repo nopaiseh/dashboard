@@ -7,17 +7,18 @@
 const SINGAPORE_NRIC_OR_FIN = /[STFGM]\d{7}[A-Z]/i;
 
 /**
- * Separators removed before the NRIC regex so values like `S-1234567-A`
- * and `S 1234567 A` still match. `$` is intentionally kept so `S$1234`
- * is not treated as an identifier.
+ * Separators removed before the NRIC regex so values like `S-1234567-A`,
+ * `S 1234567 A`, and `S,1234567,A` still match. `$` is intentionally kept
+ * so `S$1234` is not treated as an identifier.
  */
-const NRIC_SCAN_SEPARATORS = /[\s\-._/\\]+/g;
+const NRIC_SCAN_SEPARATORS = /[\s\-._,/\\]+/g;
 
 /**
  * Forbidden identifier key names (case-insensitive; camelCase / snake_case
- * normalized by stripping non-alphanumerics).
+ * normalized by stripping non-alphanumerics). Exact match after normalize —
+ * so `final` / `fine` are not caught by `fin`.
  * Covers: nric, fin, cpf_account, account_no, cpfAccount, accountNo,
- * cpf_account_no, etc.
+ * cpf_account_no, account_number, nric_number, etc.
  */
 const FORBIDDEN_IDENTIFIER_KEYS = new Set([
   "nric",
@@ -25,6 +26,8 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
   "cpfaccount",
   "accountno",
   "cpfaccountno",
+  "accountnumber",
+  "nricnumber",
 ]);
 
 /** Normalize object keys for forbidden-name comparison. */
@@ -36,7 +39,7 @@ export function isForbiddenDashboardIdentifierKey(key: string): boolean {
   return FORBIDDEN_IDENTIFIER_KEYS.has(normalizeDashboardIdentifierKey(key));
 }
 
-/** Strip whitespace / hyphen / dot / underscore / slash before NRIC scan. */
+/** Strip whitespace / hyphen / dot / underscore / comma / slash before NRIC scan. */
 export function normalizeForNricScan(value: string): string {
   return value.replace(NRIC_SCAN_SEPARATORS, "");
 }
