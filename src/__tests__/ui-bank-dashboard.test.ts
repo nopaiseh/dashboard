@@ -18,6 +18,7 @@ import {
   BANK_EMPTY,
   BANK_NO_COMPARE,
   BANK_NOT_STARTED,
+  BANK_UNITS,
   asBankNumber,
   bankCompareTone,
   bankProgressFill,
@@ -30,6 +31,7 @@ import {
   formatBankProgressValue,
   isBankNetNegative,
   isBankProgressOver,
+  isBankUnit,
   splitBankConclusionText,
   splitBankConclusionTitle,
 } from "@/components/qingjian/dashboard/bankFormat";
@@ -117,6 +119,16 @@ describe("bank display rules (bankFormat)", () => {
     expect(urgent).toBe("优先补足总闸户");
     const parts = splitBankConclusionTitle("净额 −S$5,000：不足");
     expect(parts.some((p) => p.danger && p.text.includes("5,000"))).toBe(true);
+  });
+
+  it("BANK_UNITS / BankUnit 与后端 #40 导出名与取值一致", () => {
+    // 对齐 https://github.com/nopaiseh/dashboard/pull/40 的
+    // export const BANK_UNITS = ["S$", "月"] as const
+    expect(BANK_UNITS).toEqual(["S$", "月"]);
+    expect(isBankUnit("S$")).toBe(true);
+    expect(isBankUnit("月")).toBe(true);
+    expect(isBankUnit("个月")).toBe(false);
+    expect(isBankUnit("USD")).toBe(false);
   });
 
   it("formatBankProgressValue: S$ 保持金额格式", () => {

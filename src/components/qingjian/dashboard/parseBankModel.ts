@@ -16,7 +16,11 @@ import type {
   DashboardBlockPublic,
   DashboardSectionPublic,
 } from "@/lib/dashboard/types";
-import { asBankNumber, splitBankConclusionText } from "./bankFormat";
+import {
+  asBankNumber,
+  isBankUnit,
+  splitBankConclusionText,
+} from "./bankFormat";
 import {
   emptyBankViewModel,
   type BankAccountGroup,
@@ -214,11 +218,16 @@ function parseProgressItem(
   });
 
   const monthlyNeeded = asBankNumber(p.monthly_needed) ?? undefined;
-  // 优先读 payload.unit；缺省时 streak →「月」，其余 → S$
+  // 优先读 payload.unit：白名单内规范化；白名单外原样保留（展示层数字兜底）；
+  // 缺省时 streak →「月」，其余 → S$（与 BANK_UNITS 一致）
   const rawUnit = str(p.unit)?.trim();
-  const unit =
-    rawUnit ||
-    (kind === "streak" ? ("月" as const) : ("S$" as const));
+  const unit = isBankUnit(rawUnit)
+    ? rawUnit
+    : rawUnit
+      ? rawUnit
+      : kind === "streak"
+        ? ("月" as const)
+        : ("S$" as const);
 
   return {
     key,

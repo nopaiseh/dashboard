@@ -99,6 +99,21 @@ export function formatBankOvershootLabel(progress: unknown): string | null {
 }
 
 /**
+ * 银行 `unit` 白名单：取值与拼写对齐后端 #40 `bank-validation.ts` 的
+ * `BANK_UNITS` / `BankUnit`（["S$", "月"]）。
+ * 本分支不改 bank-validation；#40 合并后可改为直接引用其导出。
+ */
+export const BANK_UNITS = ["S$", "月"] as const;
+export type BankUnit = (typeof BANK_UNITS)[number];
+
+export function isBankUnit(unit: unknown): unit is BankUnit {
+  return (
+    typeof unit === "string" &&
+    (BANK_UNITS as readonly string[]).includes(unit)
+  );
+}
+
+/**
  * 进度主数值 / 里程碑金额共用：按 unit 格式化。
  * - "S$" → 现有金额格式（S$1,000.00）
  * - "月" →「N 个月」
