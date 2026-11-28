@@ -12,7 +12,7 @@ const SAMPLE_FIN = "G7654321B";
 const IDENTICAL_ERROR_BODY = { error: DASHBOARD_INVALID_PAYLOAD_ERROR };
 
 describe("forbidden identifier key names", () => {
-  it("blocks nric / fin / cpf_account / account_no variants at any depth", () => {
+  it("blocks nric / fin / cpf_account / account_no / account_number / nric_number variants at any depth", () => {
     for (const key of [
       "nric",
       "NRIC",
@@ -25,6 +25,12 @@ describe("forbidden identifier key names", () => {
       "accountNo",
       "cpf_account_no",
       "cpfAccountNo",
+      "account_number",
+      "accountNumber",
+      "ACCOUNT_NUMBER",
+      "nric_number",
+      "nricNumber",
+      "NRIC_NUMBER",
     ]) {
       expect(isForbiddenDashboardIdentifierKey(key)).toBe(true);
       expect(containsSingaporeNricOrFin({ [key]: "x" })).toBe(true);
@@ -34,20 +40,30 @@ describe("forbidden identifier key names", () => {
     }
   });
 
-  it("allows unrelated keys", () => {
+  it("allows unrelated keys including final / fine (exact match after normalize)", () => {
     expect(isForbiddenDashboardIdentifierKey("title")).toBe(false);
     expect(isForbiddenDashboardIdentifierKey("account_name")).toBe(false);
+    expect(isForbiddenDashboardIdentifierKey("final")).toBe(false);
+    expect(isForbiddenDashboardIdentifierKey("fine")).toBe(false);
+    expect(isForbiddenDashboardIdentifierKey("Final")).toBe(false);
+    expect(isForbiddenDashboardIdentifierKey("FINE")).toBe(false);
     expect(containsSingaporeNricOrFin({ title: "OA", value: 1 })).toBe(false);
+    expect(
+      containsSingaporeNricOrFin({
+        payload: { nested: { final: true, fine: 0.5 } },
+      }),
+    ).toBe(false);
   });
 });
 
 describe("NRIC separator bypass", () => {
-  it("normalizes whitespace / hyphen / dot / underscore / slash away", () => {
+  it("normalizes whitespace / hyphen / dot / underscore / comma / slash away", () => {
     expect(normalizeForNricScan("S-1234567-A")).toBe("S1234567A");
     expect(normalizeForNricScan("S 1234567 A")).toBe("S1234567A");
     expect(normalizeForNricScan("S_1234567_A")).toBe("S1234567A");
     expect(normalizeForNricScan("S.1234567.A")).toBe("S1234567A");
     expect(normalizeForNricScan("S/1234567/A")).toBe("S1234567A");
+    expect(normalizeForNricScan("S,1234567,A")).toBe("S1234567A");
   });
 
   it("rejects NRIC with separators", () => {
@@ -55,8 +71,12 @@ describe("NRIC separator bypass", () => {
     expect(stringContainsSingaporeNricOrFin("S 1234567 A")).toBe(true);
     expect(stringContainsSingaporeNricOrFin("G_7654321_B")).toBe(true);
     expect(stringContainsSingaporeNricOrFin("id: S.1234567.A")).toBe(true);
+    expect(stringContainsSingaporeNricOrFin("S,1234567,A")).toBe(true);
     expect(
       containsSingaporeNricOrFin({ text: `acct ${SAMPLE_NRIC.slice(0, 1)}-${SAMPLE_NRIC.slice(1, 8)}-${SAMPLE_NRIC.slice(8)}` }),
+    ).toBe(true);
+    expect(
+      containsSingaporeNricOrFin({ text: "S,1234567,A" }),
     ).toBe(true);
   });
 
@@ -260,5 +280,64 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual(IDENTICAL_ERROR_BODY);
+  });
+
+  it("rejects account_number / nric_number keys and comma-separated NRIC with the same body", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockAgentAuth();
+
+    const { POST: postBlock } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+    const accountNumberRes = await postBlock(
+      new Request("http://localhost/api/agent/dashboard/blocks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          section_id: SECTION_ID,
+          block_type: "metric",
+          payload: { title: "OA", value: 1, accountNumber: "x" },
+        }),
+      }),
+    );
+
+    vi.resetModules();
+    mockAgentAuth();
+    const { POST: postBlock2 } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+    const nricNumberRes = await postBlock2(
+      new Request("http://localhost/api/agent/dashboard/blocks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          section_id: SECTION_ID,
+          block_type: "text",
+          payload: { nested: { nric_number: "x" } },
+        }),
+      }),
+    );
+
+    vi.resetModules();
+    mockAgentAuth();
+    const { POST: postBlock3 } = await import(
+      "@/app/api/agent/dashboard/blocks/route"
+    );
+    const commaNricRes = await postBlock3(
+      new Request("http://localhost/api/agent/dashboard/blocks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          section_id: SECTION_ID,
+          block_type: "text",
+          payload: { text: "S,1234567,A" },
+        }),
+      }),
+    );
+
+    for (const res of [accountNumberRes, nricNumberRes, commaNricRes]) {
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(IDENTICAL_ERROR_BODY);
+    }
   });
 });
