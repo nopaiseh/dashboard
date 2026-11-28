@@ -1,0 +1,483 @@
+"use client";
+
+import { useId, useState, type KeyboardEvent } from "react";
+import { EmptyBlock } from "./EmptyBlock";
+import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
+import { CPF_COLORS } from "./cpfTheme";
+import { formatMoney } from "./format";
+import type { ChartRangeMode } from "./types";
+
+export function StackedTrendChart({
+  data,
+  sampleMode = false,
+  initialRange,
+}: {
+  data: CpfTrendData | null;
+  sampleMode?: boolean;
+  initialRange?: ChartRangeMode;
+}) {
+  const baseId = useId();
+  const [range, setRange] = useState<ChartRangeMode>(
+    initialRange ?? data?.defaultRange ?? "12m",
+  );
+  const [hover, setHover] = useState<string | null>(null);
+
+  if (!data || (data.points12.length === 0 && data.pointsAll.length === 0)) {
+    return (
+      <section id="c2-trend">
+        <div className={"k-sec"}>
+          <h2>
+            余额走势
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+            <span className={"chip chipEst"}>估算</span>
+          </h2>
+        </div>
+        <EmptyBlock message="暂无走势数据" />
+      </section>
+    );
+  }
+
+  const points = range === "12m" ? data.points12 : data.pointsAll;
+  const hovered = points.find((p) => p.t === hover) ?? null;
+
+  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    setRange(e.key === "ArrowLeft" ? "12m" : "all");
+  };
+
+  return (
+    <section id="c2-trend">
+      <div className={"k-sec"}>
+        <h2>
+          余额走势
+          {sampleMode ? (
+            <span className={"chip chipSample"}>示例数据</span>
+          ) : null}
+          <span className={"chip chipEst"}>估算</span>
+        </h2>
+        <div className={"k-tools"}>
+          <div
+            className={"k-seg"}
+            role="tablist"
+            aria-label="走势图时间范围"
+            onKeyDown={onTabKey}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={range === "12m"}
+              className={range === "12m" ? "opt on" : "opt"}
+              onClick={() => setRange("12m")}
+            >
+              近 12 个月
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={range === "all"}
+              className={range === "all" ? "opt on" : "opt"}
+              onClick={() => setRange("all")}
+            >
+              全部（2016 年起）
+            </button>
+          </div>
+          <span className={"r"}>实线为实际，虚线为估算</span>
+        </div>
+      </div>
+
+      <div className={"card"}>
+        <div className={"k-ph"}>
+          {range === "12m" ? "近 12 个月 · 实际" : "全部 · 实际 + 估算"}
+          <span className={"k-yr"}>
+            {range === "12m"
+              ? data.subtitle12 ?? "月底数为主；虚线为推算"
+              : data.subtitleAll ?? "年底数 / 月底数 · 虚线为推算"}
+          </span>
+        </div>
+
+        <TrendSvg
+          points={points}
+          mode={range}
+          baseId={baseId}
+          data={data}
+          onHover={setHover}
+        />
+
+        <p className={"qj-dashChartTooltip"} aria-live="polite">
+          {hovered
+            ? tipText(hovered)
+            : "悬停或聚焦数据点可查看明细（年底数 / 月底数）；左右方向键切换范围"}
+        </p>
+
+        <div className={"legend"}>
+          <span>
+            <span className={"k-sw k-sw-oa"} aria-hidden="true" />
+            OA
+          </span>
+          <span>
+            <span className={"k-sw k-sw-sa"} aria-hidden="true" />
+            SA
+          </span>
+          <span>
+            <span className={"k-sw k-sw-ma"} aria-hidden="true" />
+            MA
+          </span>
+          <span>
+            <i className={"leg-solid"} aria-hidden="true" />
+            实际（含 1 月利息台阶）
+          </span>
+          <span>
+            <i className={"leg-dash"} aria-hidden="true" />
+            估算（按月复利）
+          </span>
+          {range === "all" ? (
+            <>
+              <span>
+                <i className={"leg-year"} aria-hidden="true" />
+                年底数
+              </span>
+              <span>
+                <i className={"leg-month"} aria-hidden="true" />
+                月底数
+              </span>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function tipText(p: CpfTrendPoint): string {
+  const grain = p.grain === "year" ? "年底数" : "月底数";
+  const phase = p.phase === "projected" ? "（推算）" : "";
+  const tot = p.balances.OA + p.balances.SA + p.balances.MA;
+  return `${p.t} ${grain}${phase}：OA ${formatMoney(p.balances.OA)} · SA ${formatMoney(p.balances.SA)} · MA ${formatMoney(p.balances.MA)} · 合计 ${formatMoney(tot)}`;
+}
+
+function TrendSvg({
+  points,
+  mode,
+  baseId,
+  data,
+  onHover,
+}: {
+  points: CpfTrendPoint[];
+  mode: ChartRangeMode;
+  baseId: string;
+  data: CpfTrendData;
+  onHover: (t: string | null) => void;
+}) {
+  const W = mode === "all" ? 900 : 640;
+  const H = 320;
+  const PAD = { top: 24, right: 16, bottom: 36, left: 48 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+
+  const totals = points.map(
+    (p) => p.balances.OA + p.balances.SA + p.balances.MA,
+  );
+  const guideMax = data.guides.reduce((m, g) => Math.max(m, g.amount), 0);
+  const maxV = Math.max(...totals, guideMax * 0.3, 1) * 1.08;
+  const n = Math.max(1, points.length - 1);
+
+  const xy = (i: number, v: number) => ({
+    x: PAD.left + (i / n) * innerW,
+    y: PAD.top + (1 - v / maxV) * innerH,
+  });
+
+  const stackLayers = (
+    phase: "actual" | "projected",
+    key: keyof AccBalances,
+    baseline: (p: CpfTrendPoint) => number,
+  ) => {
+    const idxs = points
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.phase === phase);
+    if (idxs.length === 0) return "";
+    let seq = idxs;
+    if (phase === "projected") {
+      const lastActual = [...points.entries()]
+        .reverse()
+        .find(([, p]) => p.phase === "actual");
+      if (lastActual) {
+        seq = [{ p: lastActual[1], i: lastActual[0] }, ...idxs];
+      }
+    }
+    const top = seq.map(({ p, i }) => {
+      const v = baseline(p) + p.balances[key];
+      return xy(i, v);
+    });
+    const bot = [...seq]
+      .reverse()
+      .map(({ p, i }) => xy(i, baseline(p)));
+    return [...top, ...bot]
+      .map((pt, j) => `${j === 0 ? "M" : "L"}${pt.x},${pt.y}`)
+      .join(" ");
+  };
+
+  const topLine = (phase: "actual" | "projected") => {
+    let seq = points
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.phase === phase);
+    if (phase === "projected") {
+      const lastActual = [...points.entries()]
+        .reverse()
+        .find(([, p]) => p.phase === "actual");
+      if (lastActual) seq = [{ p: lastActual[1], i: lastActual[0] }, ...seq];
+    }
+    return seq
+      .map(({ p, i }, j) => {
+        const tot = p.balances.OA + p.balances.SA + p.balances.MA;
+        const { x, y } = xy(i, tot);
+        return `${j === 0 ? "M" : "L"}${x},${y}`;
+      })
+      .join(" ");
+  };
+
+  const gridVals =
+    mode === "all"
+      ? [100_000, 200_000, 300_000, 400_000]
+      : [100_000, 200_000, 300_000];
+
+  const xLabels =
+    mode === "12m"
+      ? [
+          { i: 0, label: "11月" },
+          { i: 2, label: "1月" },
+          { i: 5, label: "4月" },
+          { i: 8, label: "7月" },
+          { i: 11, label: "10月" },
+        ].filter((x) => x.i < points.length)
+      : [
+          { i: points.findIndex((p) => p.t === "2016"), label: "2016" },
+          { i: points.findIndex((p) => p.t === "2018"), label: "2018" },
+          { i: points.findIndex((p) => p.t === "2020"), label: "2020" },
+          { i: points.findIndex((p) => p.t === "2022"), label: "2022" },
+          { i: points.findIndex((p) => p.t === "2024"), label: "2024" },
+          { i: points.findIndex((p) => p.t === "2026-01"), label: "2026" },
+        ].filter((x) => x.i >= 0);
+
+  const janIdx = data.janInterestAt
+    ? points.findIndex((p) => p.t === data.janInterestAt)
+    : -1;
+
+  const employer = data.events.filter((e) => e.kind === "employer_change");
+  const transfers = data.events.filter((e) => e.kind === "lump_sum");
+
+  return (
+    <svg
+      className={"qj-dashChartSvg k-trendSvg"}
+      viewBox={`0 0 ${W} ${H}`}
+      role="img"
+      aria-labelledby={`${baseId}-sum`}
+    >
+      <title id={`${baseId}-sum`}>
+        {`三户口堆叠走势，共 ${points.length} 个点`}
+      </title>
+
+      {gridVals.map((v) => {
+        const y = xy(0, v).y;
+        if (y < PAD.top || y > PAD.top + innerH) return null;
+        return (
+          <g key={v}>
+            <line
+              x1={PAD.left}
+              x2={W - PAD.right}
+              y1={y}
+              y2={y}
+              className={"qj-dashChartGrid"}
+            />
+            <text
+              x={PAD.left - 6}
+              y={y + 4}
+              textAnchor="end"
+              className={"k-axisText"}
+            >
+              {`${v / 10000}万`}
+            </text>
+          </g>
+        );
+      })}
+
+      <path
+        d={stackLayers("actual", "OA", () => 0)}
+        fill={CPF_COLORS.oa}
+        opacity={0.95}
+      />
+      <path
+        d={stackLayers("actual", "SA", (p) => p.balances.OA)}
+        fill={CPF_COLORS.sa}
+        opacity={0.92}
+      />
+      <path
+        d={stackLayers("actual", "MA", (p) => p.balances.OA + p.balances.SA)}
+        fill={CPF_COLORS.ma}
+        opacity={0.9}
+      />
+      <path
+        d={stackLayers("projected", "OA", () => 0)}
+        fill={CPF_COLORS.oa}
+        opacity={0.35}
+      />
+      <path
+        d={stackLayers("projected", "SA", (p) => p.balances.OA)}
+        fill={CPF_COLORS.sa}
+        opacity={0.3}
+      />
+      <path
+        d={stackLayers(
+          "projected",
+          "MA",
+          (p) => p.balances.OA + p.balances.SA,
+        )}
+        fill={CPF_COLORS.ma}
+        opacity={0.28}
+      />
+
+      <path d={topLine("actual")} className={"k-topActual"} fill="none" />
+      <path d={topLine("projected")} className={"k-topProjected"} fill="none" />
+
+      {janIdx >= 0 && data.janInterestTotal != null ? (
+        <text
+          x={xy(janIdx, totals[janIdx] ?? 0).x}
+          y={xy(janIdx, totals[janIdx] ?? 0).y - 10}
+          textAnchor="middle"
+          className={"k-stepLabel"}
+        >
+          {`1 月利息 +${formatMoney(data.janInterestTotal)}`}
+        </text>
+      ) : null}
+
+      {mode === "all"
+        ? data.guides.map((g) => (
+            <g key={g.key}>
+              <line
+                x1={PAD.left}
+                x2={W - PAD.right}
+                y1={xy(0, g.amount).y}
+                y2={xy(0, g.amount).y}
+                className={"k-guideLine"}
+              />
+              <text
+                x={W - PAD.right}
+                y={xy(0, g.amount).y - 4}
+                textAnchor="end"
+                className={"k-guideLabel"}
+              >
+                {g.label}
+              </text>
+            </g>
+          ))
+        : null}
+
+      {points.map((p, i) => {
+        if (p.phase === "projected") return null;
+        const tot = p.balances.OA + p.balances.SA + p.balances.MA;
+        const { x, y } = xy(i, tot);
+        const r = p.grain === "year" ? 4.5 : 2.2;
+        return (
+          <g key={`${p.t}-${i}`}>
+            <circle
+              cx={x}
+              cy={y}
+              r={r}
+              className={p.grain === "year" ? "k-dotYear" : "k-dotMonth"}
+            />
+            <circle
+              cx={x}
+              cy={y}
+              r={10}
+              className={"qj-dashChartHit"}
+              tabIndex={0}
+              role="button"
+              aria-label={tipText(p)}
+              onFocus={() => onHover(p.t)}
+              onBlur={() => onHover(null)}
+              onMouseEnter={() => onHover(p.t)}
+              onMouseLeave={() => onHover(null)}
+            />
+          </g>
+        );
+      })}
+
+      {employer.map((ev) => {
+        const i = nearestIndex(points, ev.t);
+        if (i < 0) return null;
+        const { x } = xy(i, 0);
+        return (
+          <g key={`emp-${ev.t}`}>
+            <rect
+              x={x - 22}
+              y={H - 28}
+              width={44}
+              height={16}
+              rx={4}
+              className={"k-empBadge"}
+            />
+            <text x={x} y={H - 16} textAnchor="middle" className={"k-empText"}>
+              换雇主
+            </text>
+          </g>
+        );
+      })}
+      {transfers.map((tr) => {
+        const i = nearestIndex(points, tr.t);
+        if (i < 0) return null;
+        const tot =
+          points[i].balances.OA +
+          points[i].balances.SA +
+          points[i].balances.MA;
+        const { x, y } = xy(i, tot);
+        return (
+          <g key={`flag-${tr.t}-${tr.short ?? tr.label}`}>
+            <line
+              x1={x}
+              x2={x}
+              y1={y - 8}
+              y2={y - 28}
+              className={"qj-dashChartFlagPole"}
+            />
+            <path
+              d={`M${x} ${y - 28} l12 5 l-12 5 z`}
+              className={"qj-dashChartFlag"}
+            />
+            <title>{tr.label}</title>
+            <text x={x + 14} y={y - 22} className={"k-flagLabel"}>
+              {tr.short ?? tr.label}
+            </text>
+          </g>
+        );
+      })}
+
+      {xLabels.map((xl) => {
+        const { x } = xy(xl.i, 0);
+        return (
+          <text
+            key={xl.label}
+            x={x}
+            y={H - 8}
+            textAnchor="middle"
+            className={"k-axisText"}
+          >
+            {xl.label}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
+function nearestIndex(points: CpfTrendPoint[], t: string): number {
+  let i = points.findIndex((p) => p.t === t || p.t.startsWith(t));
+  if (i >= 0) return i;
+  if (/^\d{4}$/.test(t)) {
+    i = points.findIndex((p) => p.t === t || p.t.startsWith(`${t}-`));
+    return i;
+  }
+  const y = t.slice(0, 4);
+  return points.findIndex((p) => p.t === y);
+}
