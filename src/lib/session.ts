@@ -6,7 +6,7 @@ export const SESSION_COOKIE_NAME = "xjg_session";
 export const SESSION_IDLE_MS = 12 * 60 * 60 * 1000; // 12 hours idle
 /** 会话绝对上限：自首次签发（iat）起 7 天，滑动续期不延长。 */
 export const SESSION_ABSOLUTE_MAX = 7 * 24 * 60 * 60 * 1000;
-/** 会话 JWT claim；与 step-up / setup-grant 等其它令牌区分。 */
+/** 会话 JWT claim；与 step-up 绑定等其它令牌区分。 */
 export const SESSION_TYP = "session";
 
 function secretKey(): Uint8Array {
@@ -52,7 +52,7 @@ export async function verifySessionToken(
     if ((payload as { typ?: unknown }).typ !== SESSION_TYP) {
       return null;
     }
-    // 拒收带 aud / purpose 的令牌（step-up / setup-grant 等）
+    // 拒收带 aud / purpose 的令牌（step-up 绑定等）
     if (payload.aud !== undefined && payload.aud !== null) {
       return null;
     }

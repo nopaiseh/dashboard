@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * 同一 bootstrap 令牌开出两个挑战时，第二次 complete 必须失败。
+ * 同一 invite 开出两个挑战时，第二次 complete 必须失败。
  * （SQL 层实跑见 sql-functions.test.ts；此处覆盖 API 对 RPC 冲突的映射。）
  */
 describe("register verify dual challenge", () => {
@@ -13,10 +13,13 @@ describe("register verify dual challenge", () => {
     process.env.WEBAUTHN_ORIGIN = "https://desk.nopaiseh.com";
   });
 
-  it("maps second bootstrap complete conflict to 403", async () => {
+  it("maps second invite complete conflict to 403", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: null,
-      error: { code: "XJ409", message: "bootstrap disabled: credentials already exist" },
+      error: {
+        code: "XJ403",
+        message: "invalid or unauthorized registration challenge",
+      },
     });
     const maybeSingle = vi.fn().mockResolvedValue({
       data: {
@@ -24,18 +27,11 @@ describe("register verify dual challenge", () => {
         challenge: "chal-b",
         purpose: "register",
         authorized: true,
-        registration_mode: "bootstrap",
+        registration_mode: "invite",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
       },
       error: null,
     });
-
-    vi.doMock("@/lib/setup-grant", () => ({
-      readValidSetupGrantJti: async () => "grant-jti-dual",
-      consumeSetupGrantJti: vi.fn(),
-      SETUP_GRANT_COOKIE_NAME: "xjg_setup_grant",
-      clearedSetupGrantCookieOptions: () => ({ maxAge: 0 }),
-    }));
 
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
