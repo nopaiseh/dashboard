@@ -35,8 +35,11 @@ REVOKE ALL ON TABLE public.dashboard_writers FROM PUBLIC;
 REVOKE ALL ON TABLE public.dashboard_writers FROM anon, authenticated;
 -- service_role bypasses RLS; owner/agent APIs use the service client only.
 
--- Backfill: every agent that owns a section of a category becomes a writer.
--- No agent ids hardcoded.
+-- Backfill (no agent ids hardcoded):
+-- - Ordinary categories: every section owner becomes a writer.
+-- - cpf / bank: at most one writer. Only when exactly one agent owns a
+--   cpf section → that agent is writer for both cpf and bank.
+--   Otherwise leave both empty (deny writes until owner assigns).
 INSERT INTO public.dashboard_writers (category, agent_id)
 SELECT DISTINCT
   lower(trim(s.category)) AS category,
@@ -44,13 +47,21 @@ SELECT DISTINCT
 FROM public.dashboard_sections s
 WHERE s.agent_id IS NOT NULL
   AND char_length(trim(s.category)) > 0
+  AND lower(trim(s.category)) NOT IN ('cpf', 'bank')
 ON CONFLICT (category, agent_id) DO NOTHING;
 
--- bank writers = cpf writers (CPF sister(s) also write bank).
-INSERT INTO public.dashboard_writers (category, agent_id, created_at)
-SELECT 'bank', w.agent_id, now()
-FROM public.dashboard_writers w
-WHERE w.category = 'cpf'
+INSERT INTO public.dashboard_writers (category, agent_id)
+SELECT cats.category, u.agent_id
+FROM (
+  SELECT (array_agg(DISTINCT s.agent_id))[1] AS agent_id
+  FROM public.dashboard_sections s
+  WHERE s.agent_id IS NOT NULL
+    AND lower(trim(s.category)) = 'cpf'
+  HAVING count(DISTINCT s.agent_id) = 1
+) u
+CROSS JOIN (
+  VALUES ('cpf'::text), ('bank'::text)
+) AS cats(category)
 ON CONFLICT (category, agent_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------

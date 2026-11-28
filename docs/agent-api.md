@@ -277,4 +277,6 @@ curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_
 - `GET /api/owner/dashboard/writers?category=`：列出写入人（可选按分类过滤；须登录会话）。
 - `POST /api/owner/dashboard/writers`：添加写入人；body 含 `category`、`agent_id` + 通行密钥 step-up（`action=add_dashboard_writer`）。
 - `DELETE /api/owner/dashboard/writers`：移除写入人；同上 body + step-up（`action=remove_dashboard_writer`）。
-- 迁移回填：每个分类把**所有**已拥有该分类分区的 agent 都加为写入人；`bank` 再并入 `cpf` 的写入人集合。不硬编码任何 agent id。
+- 迁移回填（不硬编码 agent id）：
+  - **普通分类**：把所有已拥有该分类分区的 agent 都加为写入人。
+  - **`cpf` / `bank`**：只能回填一位——仅当恰好一个 agent 拥有 `cpf` 分区时，把它加为 `cpf` 与 `bank` 的写入人；否则两者都不回填（留空即拒写，须 owner 手工指定）。

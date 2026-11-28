@@ -158,8 +158,9 @@ export async function removeDashboardWriter(
 
 /**
  * Pure backfill helper (mirrors migration; no agent ids hardcoded).
- * - Every section owner of a category becomes a writer
- * - bank writers = union of existing bank owners + all cpf writers
+ * - Ordinary categories: every section owner becomes a writer
+ * - cpf / bank: only when exactly one agent owns a cpf section → that
+ *   agent is the sole writer for both; otherwise neither is backfilled
  */
 export function backfillDashboardWriters(
   sections: ReadonlyArray<{ category: string; agent_id: string | null }>,
@@ -174,20 +175,29 @@ export function backfillDashboardWriters(
     byCat.set(cat, set);
   }
 
-  const cpfWriters = byCat.get("cpf") ?? new Set<string>();
-  if (cpfWriters.size > 0) {
-    const bank = byCat.get("bank") ?? new Set<string>();
-    for (const id of cpfWriters) bank.add(id);
-    byCat.set("bank", bank);
-  }
-
   const out: Array<{ category: string; agent_id: string }> = [];
+
   for (const [category, agents] of [...byCat.entries()].sort((a, b) =>
     a[0].localeCompare(b[0]),
   )) {
+    if (category === "cpf" || category === "bank") continue;
     for (const agent_id of [...agents].sort()) {
       out.push({ category, agent_id });
     }
   }
-  return out;
+
+  const cpfOwners = byCat.get("cpf") ?? new Set<string>();
+  if (cpfOwners.size === 1) {
+    const [agent_id] = cpfOwners;
+    if (agent_id) {
+      out.push({ category: "bank", agent_id });
+      out.push({ category: "cpf", agent_id });
+    }
+  }
+
+  return out.sort(
+    (a, b) =>
+      a.category.localeCompare(b.category) ||
+      a.agent_id.localeCompare(b.agent_id),
+  );
 }

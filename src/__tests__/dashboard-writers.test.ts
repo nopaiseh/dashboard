@@ -26,21 +26,29 @@ afterEach(() => {
 });
 
 describe("backfillDashboardWriters (many-to-many)", () => {
-  it("adds every section owner; bank inherits all cpf writers", () => {
+  it("ordinary cats: all owners; unique cpf owner → cpf+bank only", () => {
     expect(
       backfillDashboardWriters([
         { category: "CPF", agent_id: AGENT_A },
-        { category: "cpf", agent_id: AGENT_B },
         { category: "travel", agent_id: AGENT_B },
         { category: "bank", agent_id: AGENT_B },
       ]),
     ).toEqual([
       { category: "bank", agent_id: AGENT_A },
-      { category: "bank", agent_id: AGENT_B },
       { category: "cpf", agent_id: AGENT_A },
-      { category: "cpf", agent_id: AGENT_B },
       { category: "travel", agent_id: AGENT_B },
     ]);
+  });
+
+  it("multi cpf owners → skip cpf and bank entirely", () => {
+    expect(
+      backfillDashboardWriters([
+        { category: "cpf", agent_id: AGENT_A },
+        { category: "cpf", agent_id: AGENT_B },
+        { category: "bank", agent_id: AGENT_A },
+        { category: "travel", agent_id: AGENT_B },
+      ]),
+    ).toEqual([{ category: "travel", agent_id: AGENT_B }]);
   });
 });
 

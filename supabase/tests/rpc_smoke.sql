@@ -524,7 +524,7 @@ DECLARE
   v_result jsonb;
   v_count int;
 BEGIN
-  -- Every section owner becomes a writer; bank inherits cpf writers.
+  -- Ordinary categories: all owners. cpf/bank: only unique cpf owner.
   INSERT INTO public.dashboard_writers (category, agent_id)
   SELECT DISTINCT
     lower(trim(s.category)),
@@ -532,12 +532,19 @@ BEGIN
   FROM public.dashboard_sections s
   WHERE s.agent_id IS NOT NULL
     AND char_length(trim(s.category)) > 0
+    AND lower(trim(s.category)) NOT IN ('cpf', 'bank')
   ON CONFLICT (category, agent_id) DO NOTHING;
 
-  INSERT INTO public.dashboard_writers (category, agent_id, created_at)
-  SELECT 'bank', w.agent_id, now()
-  FROM public.dashboard_writers w
-  WHERE w.category = 'cpf'
+  INSERT INTO public.dashboard_writers (category, agent_id)
+  SELECT cats.category, u.agent_id
+  FROM (
+    SELECT (array_agg(DISTINCT s.agent_id))[1] AS agent_id
+    FROM public.dashboard_sections s
+    WHERE s.agent_id IS NOT NULL
+      AND lower(trim(s.category)) = 'cpf'
+    HAVING count(DISTINCT s.agent_id) = 1
+  ) u
+  CROSS JOIN (VALUES ('cpf'::text), ('bank'::text)) AS cats(category)
   ON CONFLICT (category, agent_id) DO NOTHING;
 
   SELECT agent_id INTO v_writer
@@ -545,7 +552,7 @@ BEGIN
   WHERE category = 'cpf'
   LIMIT 1;
   IF v_writer IS DISTINCT FROM 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' THEN
-    RAISE EXCEPTION 'cpf writer should be section owner, got %', v_writer;
+    RAISE EXCEPTION 'cpf writer should be unique section owner, got %', v_writer;
   END IF;
 
   SELECT agent_id INTO v_bank_writer
@@ -553,7 +560,7 @@ BEGIN
   WHERE category = 'bank'
     AND agent_id = v_writer;
   IF v_bank_writer IS NULL THEN
-    RAISE EXCEPTION 'bank should include cpf writer';
+    RAISE EXCEPTION 'bank should include unique cpf writer';
   END IF;
 
   -- Upsert by block_key: insert then replace
