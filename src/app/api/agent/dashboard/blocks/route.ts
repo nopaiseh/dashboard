@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import {
+  readPayloadBlockKey,
+  sectionHasBlockKeyConflict,
+} from "@/lib/dashboard/block-key";
+import {
   decryptBlockPayload,
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
@@ -11,7 +15,10 @@ import type {
   DashboardBlockRow,
   DashboardSectionRow,
 } from "@/lib/dashboard/types";
-import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
+import {
+  dashboardBlockKeyConflictResponse,
+  dashboardInvalidPayloadResponse,
+} from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
   isPgForbidden,
@@ -75,6 +82,8 @@ export async function POST(request: Request) {
     return dashboardInvalidPayloadResponse();
   }
 
+  const validatedPayload = payloadParsed.data as Record<string, unknown>;
+
   const { data: section, error: sectionError } = await supabase
     .from("dashboard_sections")
     .select("*")
@@ -95,11 +104,33 @@ export async function POST(request: Request) {
       section_id: parsed.data.section_id,
       block_type: parsed.data.block_type,
       sort_order: parsed.data.sort_order,
-      payload: payloadParsed.data as Record<string, unknown>,
+      payload: validatedPayload,
     },
   );
   if (!planned.ok) {
     return jsonError(planned.status, planned.error);
+  }
+
+  const blockKey = readPayloadBlockKey(validatedPayload);
+  if (blockKey !== undefined) {
+    // Race window: concurrent writers can both pass before either commits
+    // (acceptable for a single-writer agent; key is encrypted, not a DB column).
+    const { data: siblings, error: siblingsError } = await supabase
+      .from("dashboard_blocks")
+      .select("id, payload")
+      .eq("section_id", parsed.data.section_id);
+
+    if (siblingsError) {
+      return jsonError(500, "failed to load section blocks");
+    }
+    if (
+      sectionHasBlockKeyConflict(
+        (siblings ?? []) as Array<{ id: string; payload: string }>,
+        blockKey,
+      )
+    ) {
+      return dashboardBlockKeyConflictResponse();
+    }
   }
 
   const id = randomUUID();

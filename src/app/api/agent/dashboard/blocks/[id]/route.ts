@@ -1,5 +1,9 @@
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import {
+  readPayloadBlockKey,
+  sectionHasBlockKeyConflict,
+} from "@/lib/dashboard/block-key";
+import {
   decryptBlockPayload,
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
@@ -9,7 +13,10 @@ import type {
   DashboardBlockPublic,
   DashboardBlockRow,
 } from "@/lib/dashboard/types";
-import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
+import {
+  dashboardBlockKeyConflictResponse,
+  dashboardInvalidPayloadResponse,
+} from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
   isPgConflict,
@@ -112,6 +119,31 @@ export async function PATCH(request: Request, context: RouteContext) {
   });
   if (!planned.ok) {
     return jsonError(planned.status, planned.error);
+  }
+
+  if (nextPayload !== undefined) {
+    const blockKey = readPayloadBlockKey(nextPayload);
+    if (blockKey !== undefined) {
+      // Race window: concurrent writers can both pass before either commits
+      // (acceptable for a single-writer agent; key is encrypted, not a DB column).
+      const { data: siblings, error: siblingsError } = await supabase
+        .from("dashboard_blocks")
+        .select("id, payload")
+        .eq("section_id", block.section_id);
+
+      if (siblingsError) {
+        return jsonError(500, "failed to load section blocks");
+      }
+      if (
+        sectionHasBlockKeyConflict(
+          (siblings ?? []) as Array<{ id: string; payload: string }>,
+          blockKey,
+          id,
+        )
+      ) {
+        return dashboardBlockKeyConflictResponse();
+      }
+    }
   }
 
   const touchPayload = planned.plan.payload !== undefined;

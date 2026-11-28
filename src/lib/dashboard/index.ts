@@ -24,7 +24,13 @@ export {
   isForbiddenDashboardIdentifierKey,
 } from "@/lib/dashboard/nric-guard";
 export {
+  readPayloadBlockKey,
+  sectionHasBlockKeyConflict,
+} from "@/lib/dashboard/block-key";
+export {
+  DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
   DASHBOARD_INVALID_PAYLOAD_ERROR,
+  dashboardBlockKeyConflictResponse,
   dashboardInvalidPayloadResponse,
 } from "@/lib/dashboard/write-errors";
 export {
