@@ -27,12 +27,24 @@ describe("dashboard block PATCH ownership (route)", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_B, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
+        agent: { agentId: AGENT_B, tokenHash: "hash" },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_blocks") {
             return {
               select: () => ({

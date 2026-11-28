@@ -82,7 +82,6 @@ export async function POST(request: Request, context: RouteContext) {
   const issued = await issueAgentToken(supabase, {
     agentId,
     revokePrevious: parsed.data.revoke_previous,
-    allowedCategories: parsed.data.allowed_categories,
   });
   if (!issued.ok) {
     return jsonError(issued.status, issued.error);
@@ -103,7 +102,6 @@ export async function POST(request: Request, context: RouteContext) {
       id_suffix: agentTokenIdSuffix(issued.tokenId),
       created_at: issued.createdAt,
       agent_slug: issued.agentSlug,
-      allowed_categories: issued.allowedCategories,
     },
     {
       status: 201,

@@ -12,7 +12,6 @@ export {
 } from "@/lib/dashboard/compute";
 export {
   assertBlockOwnedByAgent,
-  assertCategoryAllowedForToken,
   assertSectionOwnedByAgent,
   extractHeadline,
   planCreateBlock,
@@ -30,13 +29,15 @@ export {
   sectionHasBlockKeyConflict,
 } from "@/lib/dashboard/block-key";
 export {
-  isCategoryAllowedForToken,
   normalizeDashboardCategory,
   normalizeDashboardCategories,
-  SENSITIVE_DASHBOARD_CATEGORIES,
-  isSensitiveDashboardCategory,
-  sensitiveCategoriesIn,
 } from "@/lib/dashboard/category";
+export {
+  assertAgentIsCategoryWriter,
+  backfillDashboardWriters,
+  listDashboardWriters,
+  upsertDashboardWriter,
+} from "@/lib/dashboard/writers";
 export {
   isBlockKeyAllowedForCategory,
   allowedBlockKeysForCategory,

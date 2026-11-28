@@ -1,13 +1,7 @@
 /**
- * Dashboard section category helpers (normalize + token allow-list checks).
- * Categories are plaintext on dashboard_sections; always compare normalized.
+ * Dashboard section category helpers. Categories are plaintext on
+ * dashboard_sections; always compare normalized (trim + lowercase).
  */
-
-export {
-  SENSITIVE_DASHBOARD_CATEGORIES,
-  isSensitiveDashboardCategory,
-  sensitiveCategoriesIn,
-} from "@/lib/dashboard/sensitive-categories";
 
 /** Trim + lowercase; empty input stays empty. */
 export function normalizeDashboardCategory(category: string): string {
@@ -27,20 +21,4 @@ export function normalizeDashboardCategories(
     out.push(n);
   }
   return out;
-}
-
-/**
- * True when the token may write the given section category.
- * Empty `allowedCategories` → no writes (fail closed; migration backfill default).
- */
-export function isCategoryAllowedForToken(
-  allowedCategories: readonly string[],
-  category: string,
-): boolean {
-  if (allowedCategories.length === 0) return false;
-  const needle = normalizeDashboardCategory(category);
-  if (!needle) return false;
-  return allowedCategories.some(
-    (c) => normalizeDashboardCategory(c) === needle,
-  );
 }

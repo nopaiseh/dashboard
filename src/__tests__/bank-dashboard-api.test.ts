@@ -7,10 +7,7 @@ import { BANK_BLOCK_KEYS } from "@/lib/bank-block-keys";
 import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
 import { parseBankBlockPayload } from "@/lib/dashboard/bank-validation";
 import { isBlockKeyAllowedForCategory } from "@/lib/dashboard/block-key-policy";
-import {
-  isCategoryAllowedForToken,
-  normalizeDashboardCategories,
-} from "@/lib/dashboard/category";
+import { normalizeDashboardCategories } from "@/lib/dashboard/category";
 import {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
@@ -21,31 +18,14 @@ import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
 import { DASHBOARD_INVALID_PAYLOAD_ERROR } from "@/lib/dashboard/write-errors";
 import { encryptBlockPayload } from "@/lib/dashboard/crypto";
 import { resetFieldKeyringCache } from "@/lib/crypto/fields-core";
-import {
-  SENSITIVE_DASHBOARD_CATEGORIES,
-  isSensitiveDashboardCategory,
-} from "@/lib/dashboard/sensitive-categories";
-import { issueAgentTokenSchema } from "@/lib/validation";
+import { backfillDashboardWriters } from "@/lib/dashboard/writers";
+import { mockDashboardWritersFrom } from "./helpers/dashboard-writer-mock";
 
 const KEY_V1 = Buffer.alloc(32, 1).toString("base64");
 const SECTION_ID = "11111111-1111-4111-8111-111111111111";
 const BLOCK_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AGENT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-
-/**
- * Mirror migration backfill (no agent ids): section cats ∪ {'bank'} when the
- * agent owns a cpf section; otherwise only section cats.
- */
-function backfillAllowedCategories(
-  agentSectionCategories: string[],
-): string[] {
-  const base = normalizeDashboardCategories(agentSectionCategories);
-  if (base.includes("cpf") && !base.includes("bank")) {
-    return normalizeDashboardCategories([...base, "bank"]);
-  }
-  return base;
-}
 
 /** FAKE bank balance card — not a real account. */
 const FAKE_BANK_ACC_PAYLOAD = {
@@ -119,96 +99,39 @@ describe("bank block_key whitelist (28 keys + cross category)", () => {
   });
 });
 
-describe("token allowed_categories + sensitive exclusivity", () => {
-  it("marks cpf and bank as the only sensitive categories", () => {
-    expect(SENSITIVE_DASHBOARD_CATEGORIES).toEqual(["cpf", "bank"]);
-    expect(isSensitiveDashboardCategory("CPF")).toBe(true);
-    expect(isSensitiveDashboardCategory("bank")).toBe(true);
-    expect(isSensitiveDashboardCategory("travel")).toBe(false);
-  });
-
-  it("backfill: cpf-section owner gets ∪ bank; others only their sections", () => {
-    expect(backfillAllowedCategories(["cpf"])).toEqual(["cpf", "bank"]);
-    expect(backfillAllowedCategories(["CPF", "travel"])).toEqual([
-      "cpf",
-      "travel",
-      "bank",
-    ]);
-    expect(backfillAllowedCategories(["travel"])).toEqual(["travel"]);
-    expect(backfillAllowedCategories([])).toEqual([]);
-  });
-
-  it("empty allow-list denies all; listed category allows", () => {
-    expect(isCategoryAllowedForToken([], "bank")).toBe(false);
-    expect(isCategoryAllowedForToken(["cpf"], "bank")).toBe(false);
-    expect(isCategoryAllowedForToken(["Bank"], "bank")).toBe(true);
-    expect(normalizeDashboardCategories([" CPF ", "bank", "cpf"])).toEqual([
-      "cpf",
-      "bank",
+describe("dashboard writers", () => {
+  it("backfill: unique section owner becomes writer; bank inherits cpf", () => {
+    expect(
+      backfillDashboardWriters([
+        { category: "cpf", agent_id: AGENT_A },
+        { category: "travel", agent_id: AGENT_B },
+      ]),
+    ).toEqual([
+      { category: "bank", writer_agent_id: AGENT_A },
+      { category: "cpf", writer_agent_id: AGENT_A },
+      { category: "travel", writer_agent_id: AGENT_B },
     ]);
   });
 
-  it("issue schema requires non-empty allowed_categories", () => {
+  it("backfill: multi-owner category omitted; bank still inherits cpf", () => {
     expect(
-      issueAgentTokenSchema.safeParse({
-        assertion: { id: "x" },
-        challenge_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        binding: "b".repeat(20),
-        allowed_categories: [],
-      }).success,
-    ).toBe(false);
-    expect(
-      issueAgentTokenSchema.safeParse({
-        assertion: { id: "x" },
-        challenge_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        binding: "b".repeat(20),
-        allowed_categories: ["Bank", "cpf"],
-      }).success,
-    ).toBe(true);
+      backfillDashboardWriters([
+        { category: "cpf", agent_id: AGENT_A },
+        { category: "travel", agent_id: AGENT_A },
+        { category: "travel", agent_id: AGENT_B },
+      ]),
+    ).toEqual([
+      { category: "bank", writer_agent_id: AGENT_A },
+      { category: "cpf", writer_agent_id: AGENT_A },
+    ]);
   });
 
-  it("POST section returns 403 when category not allowed for token", async () => {
-    vi.doMock("@/lib/require-request", () => ({
-      requireRequest: async () => undefined,
-    }));
-    vi.doMock("@/lib/agent-service", () => ({
-      resolveAgentFromRequest: async () => ({
-        ok: true,
-        agent: {
-          agentId: AGENT_A,
-          tokenHash: "hash",
-          allowedCategories: ["cpf"],
-        },
-      }),
-    }));
-    vi.doMock("@/lib/supabase/server", () => ({
-      getServiceClient: () => ({
-        from: () => {
-          throw new Error("should not reach db");
-        },
-      }),
-    }));
-
-    const { POST } = await import("@/app/api/agent/dashboard/sections/route");
-    const res = await POST(
-      new Request("http://localhost/api/agent/dashboard/sections", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ category: "bank" }),
-      }),
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it("backfilled CPF agent token may write cpf and bank", () => {
-    const cats = backfillAllowedCategories(["cpf"]);
-    expect(cats).toEqual(["cpf", "bank"]);
-    expect(isCategoryAllowedForToken(cats, "cpf")).toBe(true);
-    expect(isCategoryAllowedForToken(cats, "bank")).toBe(true);
-  });
-
-  it("other agent token writing cpf/bank returns 403", async () => {
-    for (const category of ["cpf", "bank"] as const) {
+  it("writer may create section; non-writer and unset category → 403", async () => {
+    for (const [agentId, writers, category, expected] of [
+      [AGENT_A, { bank: AGENT_A }, "bank", 201],
+      [AGENT_B, { bank: AGENT_A }, "bank", 403],
+      [AGENT_A, {}, "bank", 403],
+    ] as const) {
       vi.resetModules();
       setEnv();
       vi.doMock("@/lib/require-request", () => ({
@@ -217,24 +140,37 @@ describe("token allowed_categories + sensitive exclusivity", () => {
       vi.doMock("@/lib/agent-service", () => ({
         resolveAgentFromRequest: async () => ({
           ok: true,
-          agent: {
-            agentId: AGENT_B,
-            tokenHash: "hash",
-            allowedCategories: ["travel"],
-          },
+          agent: { agentId, tokenHash: "hash" },
         }),
       }));
       vi.doMock("@/lib/supabase/server", () => ({
         getServiceClient: () => ({
-          from: () => {
-            throw new Error("should not reach db");
+          from: (table: string) => {
+            if (table === "dashboard_writers") {
+              return mockDashboardWritersFrom(writers);
+            }
+            if (table === "dashboard_sections") {
+              return {
+                insert: () => ({
+                  select: () => ({
+                    single: async () => ({
+                      data: {
+                        id: SECTION_ID,
+                        category,
+                        sort_order: 0,
+                        agent_id: agentId,
+                      },
+                      error: null,
+                    }),
+                  }),
+                }),
+              };
+            }
+            throw new Error(table);
           },
         }),
       }));
-
-      const { POST } = await import(
-        "@/app/api/agent/dashboard/sections/route"
-      );
+      const { POST } = await import("@/app/api/agent/dashboard/sections/route");
       const res = await POST(
         new Request("http://localhost/api/agent/dashboard/sections", {
           method: "POST",
@@ -242,182 +178,11 @@ describe("token allowed_categories + sensitive exclusivity", () => {
           body: JSON.stringify({ category }),
         }),
       );
-      expect(res.status, category).toBe(403);
+      expect(res.status, `${agentId}:${category}`).toBe(expected);
     }
   });
 
-  it("granting cpf/bank to another agent token returns 409", async () => {
-    vi.resetModules();
-    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
-    const { assertSensitiveCategoriesGrantable } = await import(
-      "@/lib/dashboard/sensitive-exclusivity"
-    );
-
-    const supabase = {
-      from: (table: string) => {
-        if (table === "agent_tokens") {
-          return {
-            select: () => ({
-              is: () =>
-                Promise.resolve({
-                  data: [
-                    {
-                      id: "tok-cpf",
-                      agent_id: AGENT_A,
-                      allowed_categories: ["cpf", "bank"],
-                      revoked_at: null,
-                    },
-                  ],
-                  error: null,
-                }),
-            }),
-          };
-        }
-        if (table === "dashboard_sections") {
-          return {
-            select: () =>
-              Promise.resolve({
-                data: [
-                  {
-                    id: SECTION_ID,
-                    agent_id: AGENT_A,
-                    category: "cpf",
-                  },
-                ],
-                error: null,
-              }),
-          };
-        }
-        throw new Error(table);
-      },
-    };
-
-    const denied = await assertSensitiveCategoriesGrantable(
-      supabase as never,
-      AGENT_B,
-      ["bank"],
-    );
-    expect(denied).toEqual({ ok: false, status: 409, error: "conflict" });
-
-    const allowedSameAgent = await assertSensitiveCategoriesGrantable(
-      supabase as never,
-      AGENT_A,
-      ["cpf", "bank"],
-    );
-    expect(allowedSameAgent).toEqual({ ok: true });
-  });
-
-  it("creating sensitive section owned by another agent returns 403", async () => {
-    vi.resetModules();
-    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
-    const { assertSensitiveSectionCreatable } = await import(
-      "@/lib/dashboard/sensitive-exclusivity"
-    );
-    const supabase = {
-      from: () => ({
-        select: () =>
-          Promise.resolve({
-            data: [
-              {
-                id: SECTION_ID,
-                agent_id: AGENT_A,
-                category: "cpf",
-              },
-            ],
-            error: null,
-          }),
-      }),
-    };
-    const denied = await assertSensitiveSectionCreatable(
-      supabase as never,
-      AGENT_B,
-      "cpf",
-    );
-    expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
-  });
-
-  it("write-time: non-owner denied even when known section lists them out", async () => {
-    vi.resetModules();
-    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
-    const { assertSensitiveCategoryWritable } = await import(
-      "@/lib/dashboard/sensitive-exclusivity"
-    );
-    const denied = await assertSensitiveCategoryWritable(
-      {} as never,
-      AGENT_B,
-      "bank",
-      { knownSectionAgentId: AGENT_A },
-    );
-    expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
-
-    const allowed = await assertSensitiveCategoryWritable(
-      {} as never,
-      AGENT_A,
-      "bank",
-      { knownSectionAgentId: AGENT_A },
-    );
-    expect(allowed).toEqual({ ok: true });
-  });
-
-  it("write-time: no section → non-unique token holder denied", async () => {
-    vi.resetModules();
-    vi.doUnmock("@/lib/dashboard/sensitive-exclusivity");
-    const { assertSensitiveCategoryWritable } = await import(
-      "@/lib/dashboard/sensitive-exclusivity"
-    );
-    const supabase = {
-      from: (table: string) => {
-        if (table === "dashboard_sections") {
-          return {
-            select: () => Promise.resolve({ data: [], error: null }),
-          };
-        }
-        if (table === "agent_tokens") {
-          return {
-            select: () => ({
-              is: () =>
-                Promise.resolve({
-                  data: [
-                    {
-                      agent_id: AGENT_A,
-                      allowed_categories: ["cpf", "bank"],
-                    },
-                    {
-                      agent_id: AGENT_B,
-                      allowed_categories: ["bank"],
-                    },
-                  ],
-                  error: null,
-                }),
-            }),
-          };
-        }
-        throw new Error(table);
-      },
-    };
-
-    const denied = await assertSensitiveCategoryWritable(
-      supabase as never,
-      AGENT_B,
-      "bank",
-    );
-    expect(denied).toEqual({ ok: false, status: 403, error: "forbidden" });
-
-    const allowedOwner = await assertSensitiveCategoryWritable(
-      supabase as never,
-      AGENT_A,
-      "bank",
-    );
-    // A is also not unique → denied too when no section
-    expect(allowedOwner).toEqual({
-      ok: false,
-      status: 403,
-      error: "forbidden",
-    });
-  });
-
-  it("poisoned allowed_categories=['bank'] write bank → 403", async () => {
-    // Simulate direct DB tamper: other agent token lists bank, but A owns bank.
+  it("non-writer block write → 403 even if they own the section row", async () => {
     vi.resetModules();
     setEnv();
     vi.doMock("@/lib/require-request", () => ({
@@ -426,89 +191,38 @@ describe("token allowed_categories + sensitive exclusivity", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: {
-          agentId: AGENT_B,
-          tokenHash: "hash",
-          // Tampered allow-list — would pass assertCategoryAllowedForToken alone.
-          allowedCategories: ["bank"],
-        },
+        agent: { agentId: AGENT_B, tokenHash: "hash" },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
-          if (table === "dashboard_sections") {
-            return {
-              select: () =>
-                Promise.resolve({
-                  data: [
-                    {
-                      id: SECTION_ID,
-                      agent_id: AGENT_A,
-                      category: "bank",
-                    },
-                  ],
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A });
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: SECTION_ID,
+                    category: "bank",
+                    sort_order: 0,
+                    agent_id: AGENT_B,
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
                   error: null,
                 }),
-            };
-          }
-          throw new Error(`unexpected table ${table}`);
-        },
-      }),
-    }));
-
-    const { POST } = await import("@/app/api/agent/dashboard/sections/route");
-    const res = await POST(
-      new Request("http://localhost/api/agent/dashboard/sections", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ category: "bank" }),
-      }),
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it("poisoned token writing block into bank section → 403", async () => {
-    vi.resetModules();
-    setEnv();
-    vi.doMock("@/lib/require-request", () => ({
-      requireRequest: async () => undefined,
-    }));
-    vi.doMock("@/lib/agent-service", () => ({
-      resolveAgentFromRequest: async () => ({
-        ok: true,
-        agent: {
-          agentId: AGENT_B,
-          tokenHash: "hash",
-          allowedCategories: ["bank"],
-        },
-      }),
-    }));
-    vi.doMock("@/lib/supabase/server", () => ({
-      getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: SECTION_ID,
-                  category: "bank",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
               }),
             }),
-          }),
-        }),
+          };
+        },
         rpc: async () => {
-          throw new Error("rpc should not be called");
+          throw new Error("rpc should not run");
         },
       }),
     }));
-
     const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
     const res = await POST(
       new Request("http://localhost/api/agent/dashboard/blocks", {
@@ -724,7 +438,7 @@ describe("privacy guard bank extensions (CPF-safe)", () => {
 });
 
 describe("upsert by block_key", () => {
-  function mockAuth(categories: string[] = ["bank", "cpf"]) {
+  function mockAuth() {
     vi.doMock("@/lib/require-request", () => ({
       requireRequest: async () => undefined,
     }));
@@ -734,7 +448,6 @@ describe("upsert by block_key", () => {
         agent: {
           agentId: AGENT_A,
           tokenHash: "hash",
-          allowedCategories: categories,
         },
       }),
     }));
@@ -752,6 +465,9 @@ describe("upsert by block_key", () => {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -848,6 +564,9 @@ describe("upsert by block_key", () => {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -929,23 +648,28 @@ describe("upsert by block_key", () => {
     mockAuth();
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: {
-                  id: SECTION_ID,
-                  category: "bank",
-                  sort_order: 0,
-                  agent_id: AGENT_A,
-                  created_at: "2026-01-01T00:00:00.000Z",
-                  updated_at: "2026-01-01T00:00:00.000Z",
-                },
-                error: null,
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: SECTION_ID,
+                    category: "bank",
+                    sort_order: 0,
+                    agent_id: AGENT_A,
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
               }),
             }),
-          }),
-        }),
+          };
+        },
       }),
     }));
 
@@ -987,13 +711,15 @@ describe("agent write logging hygiene", () => {
         agent: {
           agentId: AGENT_A,
           tokenHash: "deadbeef".repeat(8),
-          allowedCategories: ["cpf"],
         },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({

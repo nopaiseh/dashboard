@@ -160,6 +160,10 @@ export async function POST(request: Request) {
       "agent_id" in parsed.data ? parsed.data.agent_id : undefined,
     tokenId:
       "token_id" in parsed.data ? parsed.data.token_id : undefined,
+    category:
+      "category" in parsed.data
+        ? String(parsed.data.category).trim().toLowerCase()
+        : undefined,
   });
 
   return jsonOk({

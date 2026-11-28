@@ -5,13 +5,9 @@ import {
   decryptBlockPayload,
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
-import {
-  assertCategoryAllowedForToken,
-  assertSectionOwnedByAgent,
-} from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
-import { assertSensitiveCategoryWritable } from "@/lib/dashboard/sensitive-exclusivity";
+import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -101,27 +97,13 @@ export async function PUT(request: Request, context: RouteContext) {
 
   const sectionRow = section as DashboardSectionRow;
 
-  const owned = assertSectionOwnedByAgent(auth.agent.agentId, sectionRow);
-  if (!owned.ok) {
-    return jsonError(owned.status, owned.error);
-  }
-
-  const catAllowed = assertCategoryAllowedForToken(
-    auth.agent.allowedCategories,
-    sectionRow.category,
-  );
-  if (!catAllowed.ok) {
-    return jsonError(catAllowed.status, catAllowed.error);
-  }
-
-  const writable = await assertSensitiveCategoryWritable(
+  const writer = await assertAgentIsCategoryWriter(
     supabase,
     auth.agent.agentId,
     sectionRow.category,
-    { knownSectionAgentId: sectionRow.agent_id },
   );
-  if (!writable.ok) {
-    return jsonError(writable.status, writable.error);
+  if (!writer.ok) {
+    return jsonError(writer.status, writer.error);
   }
 
   if (!isBlockKeyAllowedForCategory(sectionRow.category, blockKey)) {

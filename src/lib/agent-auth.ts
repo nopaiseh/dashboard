@@ -9,15 +9,11 @@ export interface TokenRecord {
   agent_id: string;
   token_hash: string;
   revoked_at: string | null;
-  /** Normalized lowercase category allow-list; empty → no dashboard writes. */
-  allowed_categories?: string[] | null;
 }
 
 export interface AuthenticatedAgent {
   agentId: string;
   tokenHash: string;
-  /** Normalized lowercase; empty array denies all dashboard category writes. */
-  allowedCategories: string[];
 }
 
 export function extractBearerToken(
@@ -34,22 +30,6 @@ export function extractBearerToken(
   return token && token.length > 0 ? token : null;
 }
 
-function normalizeAllowedCategories(
-  raw: string[] | null | undefined,
-): string[] {
-  if (!raw || raw.length === 0) return [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const c of raw) {
-    if (typeof c !== "string") continue;
-    const n = c.trim().toLowerCase();
-    if (!n || seen.has(n)) continue;
-    seen.add(n);
-    out.push(n);
-  }
-  return out;
-}
-
 export function authenticateAgentToken(
   rawToken: string,
   records: TokenRecord[],
@@ -60,13 +40,7 @@ export function authenticateAgentToken(
       continue;
     }
     if (verifyAgentToken(rawToken, record.token_hash)) {
-      return {
-        agentId: record.agent_id,
-        tokenHash: presentedHash,
-        allowedCategories: normalizeAllowedCategories(
-          record.allowed_categories,
-        ),
-      };
+      return { agentId: record.agent_id, tokenHash: presentedHash };
     }
   }
   return null;

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BANK_BLOCK_KEYS } from "@/lib/bank-block-keys";
 import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
-import { normalizeDashboardCategories } from "@/lib/dashboard/category";
+import { normalizeDashboardCategory } from "@/lib/dashboard/category";
 
 export const TITLE_MAX = 200;
 export const BODY_MAX = 10_000;
@@ -178,9 +178,9 @@ export const stepUpOptionsSchema = z.union([
   z
     .object({
       purpose: z.literal("step_up"),
-      action: z.literal("update_agent_token_categories"),
+      action: z.literal("set_dashboard_writer"),
+      category: z.string().min(1).max(64),
       agent_id: z.string().uuid(),
-      token_id: z.string().uuid(),
     })
     .strict(),
 ]);
@@ -211,24 +211,8 @@ export const issueAgentTokenSchema = z
     challenge_id: z.string().uuid(),
     binding: z.string().min(1).max(4096),
     revoke_previous: z.boolean().optional().default(true),
-    /** Required non-empty; stored normalized lowercase. Never defaults to all. */
-    allowed_categories: z.array(z.string().min(1).max(64)).min(1).max(32),
   })
-  .strict()
-  .superRefine((val, ctx) => {
-    const normalized = normalizeDashboardCategories(val.allowed_categories);
-    if (normalized.length === 0) {
-      ctx.addIssue({
-        code: "custom",
-        message: "allowed_categories must be non-empty",
-        path: ["allowed_categories"],
-      });
-    }
-  })
-  .transform((val) => ({
-    ...val,
-    allowed_categories: normalizeDashboardCategories(val.allowed_categories),
-  }));
+  .strict();
 
 export const revokeAgentTokenSchema = z
   .object({
@@ -238,18 +222,19 @@ export const revokeAgentTokenSchema = z
   })
   .strict();
 
-export const updateAgentTokenCategoriesSchema = z
+/** Owner sets / changes the designated writer for a dashboard category. */
+export const setDashboardWriterSchema = z
   .object({
     assertion: webauthnCredentialPayloadSchema,
     challenge_id: z.string().uuid(),
     binding: z.string().min(1).max(4096),
-    /** Empty array locks the token out of all dashboard categories. */
-    allowed_categories: z.array(z.string().min(1).max(64)).max(32),
+    category: z.string().min(1).max(64),
+    writer_agent_id: z.string().uuid(),
   })
   .strict()
   .transform((val) => ({
     ...val,
-    allowed_categories: normalizeDashboardCategories(val.allowed_categories),
+    category: normalizeDashboardCategory(val.category),
   }));
 
 export const inviteSchema = z

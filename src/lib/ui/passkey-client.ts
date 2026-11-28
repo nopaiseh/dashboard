@@ -202,18 +202,12 @@ export async function createAgentWithPasskey(input: {
 export async function issueAgentTokenWithPasskey(input: {
   agentId: string;
   revokePrevious: boolean;
-  /**
-   * Required by the owner API (non-empty). Optional here so existing panel
-   * compiles until the category-picker UI lands; omitting → API 400.
-   */
-  allowedCategories?: string[];
 }): Promise<{
   token: string;
   token_id: string;
   id_suffix: string;
   created_at: string;
   agent_slug: string;
-  allowed_categories?: string[];
 }> {
   const step = await assertWithBoundStepUp({
     purpose: "step_up",
@@ -228,9 +222,6 @@ export async function issueAgentTokenWithPasskey(input: {
       challenge_id: step.challenge_id,
       binding: step.binding,
       revoke_previous: input.revokePrevious,
-      ...(input.allowedCategories !== undefined
-        ? { allowed_categories: input.allowedCategories }
-        : {}),
     }),
   });
   if (!res.ok) {
@@ -242,7 +233,6 @@ export async function issueAgentTokenWithPasskey(input: {
     id_suffix: string;
     created_at: string;
     agent_slug: string;
-    allowed_categories?: string[];
   };
 }
 
@@ -271,4 +261,44 @@ export async function revokeAgentTokenWithPasskey(input: {
   if (!res.ok) {
     throw new PasskeyError(await readError(res), res.status);
   }
+}
+
+/** Owner assigns / changes the designated writer for a dashboard category. */
+export async function setDashboardWriterWithPasskey(input: {
+  category: string;
+  writerAgentId: string;
+}): Promise<{
+  writer: {
+    category: string;
+    writer_agent_id: string;
+    updated_at: string;
+  };
+}> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "set_dashboard_writer",
+    category: input.category,
+    agent_id: input.writerAgentId,
+  });
+  const res = await fetch("/api/owner/dashboard/writers", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+      category: input.category,
+      writer_agent_id: input.writerAgentId,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
+  return (await res.json()) as {
+    writer: {
+      category: string;
+      writer_agent_id: string;
+      updated_at: string;
+    };
+  };
 }

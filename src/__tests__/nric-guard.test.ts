@@ -261,7 +261,7 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
+        agent: { agentId: AGENT_A, tokenHash: "hash" },
       }),
     }));
     vi.doMock("@/lib/supabase/server", () => ({

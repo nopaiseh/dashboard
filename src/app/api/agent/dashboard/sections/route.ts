@@ -1,14 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
-import {
-  assertCategoryAllowedForToken,
-  planCreateSection,
-} from "@/lib/dashboard/logic";
+import { planCreateSection } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
-import {
-  assertSensitiveCategoryWritable,
-  assertSensitiveSectionCreatable,
-} from "@/lib/dashboard/sensitive-exclusivity";
+import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import { dashboardInvalidPayloadResponse } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
@@ -44,32 +38,13 @@ export async function POST(request: Request) {
     return dashboardInvalidPayloadResponse();
   }
 
-  const catAllowed = assertCategoryAllowedForToken(
-    auth.agent.allowedCategories,
-    parsed.data.category,
-  );
-  if (!catAllowed.ok) {
-    return jsonError(catAllowed.status, catAllowed.error);
-  }
-
-  // Independent of token allow-list: sensitive categories require ownership /
-  // unique-holder even if allowed_categories was tampered.
-  const writable = await assertSensitiveCategoryWritable(
+  const writer = await assertAgentIsCategoryWriter(
     supabase,
     auth.agent.agentId,
     parsed.data.category,
   );
-  if (!writable.ok) {
-    return jsonError(writable.status, writable.error);
-  }
-
-  const exclusive = await assertSensitiveSectionCreatable(
-    supabase,
-    auth.agent.agentId,
-    parsed.data.category,
-  );
-  if (!exclusive.ok) {
-    return jsonError(exclusive.status, exclusive.error);
+  if (!writer.ok) {
+    return jsonError(writer.status, writer.error);
   }
 
   const planned = planCreateSection(auth.agent.agentId, parsed.data);
@@ -92,15 +67,7 @@ export async function POST(request: Request) {
 
   if (error || !section) {
     if ((error as { code?: string } | null)?.code === "23505") {
-      // Same agent duplicate category, or sensitive-category unique index.
       return jsonError(409, "conflict");
-    }
-    if (
-      (error as { message?: string } | null)?.message?.includes(
-        "sensitive category",
-      )
-    ) {
-      return jsonError(403, "forbidden");
     }
     return jsonError(500, "failed to create section");
   }

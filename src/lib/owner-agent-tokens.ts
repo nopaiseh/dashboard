@@ -6,7 +6,6 @@ import {
   generateAgentBearerToken,
 } from "@/lib/crypto/agent-token";
 import { hashAgentToken } from "@/lib/crypto";
-import { assertSensitiveCategoriesGrantable } from "@/lib/dashboard/sensitive-exclusivity";
 import type {
   AgentTokenListItem,
   AgentWithTokens,
@@ -15,13 +14,12 @@ import type {
 export type { AgentTokenListItem, AgentWithTokens };
 
 export function auditOwnerAgentToken(event: {
-  action: "issue" | "revoke" | "create_agent" | "update_token_categories";
+  action: "issue" | "revoke" | "create_agent";
   agent_slug: string;
   token_id?: string;
   credential_id: string;
   at?: string;
 }): void {
-  // Never log allowed_categories contents beyond counts, tokens, or hashes.
   console.info(
     JSON.stringify({
       audit: "owner_agent_token",
@@ -47,7 +45,7 @@ export async function listAgentsWithTokens(
 
   const { data: tokens, error: tokensError } = await supabase
     .from("agent_tokens")
-    .select("id, agent_id, created_at, revoked_at, allowed_categories")
+    .select("id, agent_id, created_at, revoked_at")
     .order("created_at", { ascending: false });
   if (tokensError) {
     throw new Error("failed to load agent tokens");
@@ -56,15 +54,11 @@ export async function listAgentsWithTokens(
   const byAgent = new Map<string, AgentTokenListItem[]>();
   for (const row of tokens ?? []) {
     const list = byAgent.get(row.agent_id) ?? [];
-    const cats = Array.isArray(row.allowed_categories)
-      ? (row.allowed_categories as string[])
-      : [];
     list.push({
       id: row.id,
       id_suffix: agentTokenIdSuffix(row.id),
       created_at: row.created_at,
       revoked_at: row.revoked_at,
-      allowed_categories: cats,
     });
     byAgent.set(row.agent_id, list);
   }
@@ -131,8 +125,6 @@ export async function issueAgentToken(
   input: {
     agentId: string;
     revokePrevious: boolean;
-    /** Required non-empty normalized lowercase categories. Never defaults to all. */
-    allowedCategories: string[];
   },
 ): Promise<
   | {
@@ -141,14 +133,9 @@ export async function issueAgentToken(
       tokenId: string;
       createdAt: string;
       agentSlug: string;
-      allowedCategories: string[];
     }
   | { ok: false; status: number; error: string }
 > {
-  if (input.allowedCategories.length === 0) {
-    return { ok: false, status: 400, error: "allowed_categories required" };
-  }
-
   const { data: agent, error: agentError } = await supabase
     .from("agents")
     .select("id, slug")
@@ -161,8 +148,6 @@ export async function issueAgentToken(
     return { ok: false, status: 404, error: "agent not found" };
   }
 
-  // Revoke this agent's previous tokens first so exclusivity checks see the
-  // post-revoke world (same agent may re-issue with the same sensitive cats).
   if (input.revokePrevious) {
     const now = new Date().toISOString();
     const { error: revokeError } = await supabase
@@ -175,15 +160,6 @@ export async function issueAgentToken(
     }
   }
 
-  const exclusive = await assertSensitiveCategoriesGrantable(
-    supabase,
-    input.agentId,
-    input.allowedCategories,
-  );
-  if (!exclusive.ok) {
-    return exclusive;
-  }
-
   const raw = generateAgentBearerToken();
   const tokenHash = hashAgentToken(raw);
   const { data: row, error: insertError } = await supabase
@@ -191,24 +167,11 @@ export async function issueAgentToken(
     .insert({
       agent_id: input.agentId,
       token_hash: tokenHash,
-      allowed_categories: input.allowedCategories,
     })
-    .select("id, created_at, allowed_categories")
+    .select("id, created_at")
     .single();
 
   if (insertError || !row) {
-    // Unique / trigger rejection for sensitive exclusivity → 409
-    if ((insertError as { code?: string } | null)?.code === "23505") {
-      return { ok: false, status: 409, error: "conflict" };
-    }
-    if (
-      (insertError as { code?: string } | null)?.code === "P0001" ||
-      (insertError as { message?: string } | null)?.message?.includes(
-        "sensitive category",
-      )
-    ) {
-      return { ok: false, status: 409, error: "conflict" };
-    }
     return { ok: false, status: 500, error: "failed to issue token" };
   }
 
@@ -218,99 +181,6 @@ export async function issueAgentToken(
     tokenId: row.id,
     createdAt: row.created_at,
     agentSlug: agent.slug,
-    allowedCategories: Array.isArray(row.allowed_categories)
-      ? (row.allowed_categories as string[])
-      : input.allowedCategories,
-  };
-}
-
-export async function updateAgentTokenCategories(
-  supabase: SupabaseClient,
-  input: {
-    agentId: string;
-    tokenId: string;
-    allowedCategories: string[];
-  },
-): Promise<
-  | {
-      ok: true;
-      tokenId: string;
-      agentSlug: string;
-      allowedCategories: string[];
-      updatedAt: string;
-    }
-  | { ok: false; status: number; error: string }
-> {
-  const { data: agent, error: agentError } = await supabase
-    .from("agents")
-    .select("id, slug")
-    .eq("id", input.agentId)
-    .maybeSingle();
-  if (agentError) {
-    return { ok: false, status: 500, error: "failed to load agent" };
-  }
-  if (!agent) {
-    return { ok: false, status: 404, error: "agent not found" };
-  }
-
-  const { data: existing, error: loadError } = await supabase
-    .from("agent_tokens")
-    .select("id, agent_id, revoked_at")
-    .eq("id", input.tokenId)
-    .maybeSingle();
-  if (loadError) {
-    return { ok: false, status: 500, error: "failed to load token" };
-  }
-  if (!existing || existing.agent_id !== input.agentId) {
-    return { ok: false, status: 404, error: "token not found" };
-  }
-  if (existing.revoked_at) {
-    return { ok: false, status: 409, error: "token already revoked" };
-  }
-
-  const exclusive = await assertSensitiveCategoriesGrantable(
-    supabase,
-    input.agentId,
-    input.allowedCategories,
-    { excludeTokenId: input.tokenId },
-  );
-  if (!exclusive.ok) {
-    return exclusive;
-  }
-
-  const { data: updated, error: updateError } = await supabase
-    .from("agent_tokens")
-    .update({ allowed_categories: input.allowedCategories })
-    .eq("id", input.tokenId)
-    .eq("agent_id", input.agentId)
-    .is("revoked_at", null)
-    .select("id, allowed_categories")
-    .maybeSingle();
-
-  if (updateError) {
-    if ((updateError as { code?: string }).code === "23505") {
-      return { ok: false, status: 409, error: "conflict" };
-    }
-    if (
-      (updateError as { code?: string }).code === "P0001" ||
-      updateError.message?.includes("sensitive category")
-    ) {
-      return { ok: false, status: 409, error: "conflict" };
-    }
-    return { ok: false, status: 500, error: "failed to update token categories" };
-  }
-  if (!updated) {
-    return { ok: false, status: 409, error: "token already revoked" };
-  }
-
-  return {
-    ok: true,
-    tokenId: updated.id,
-    agentSlug: agent.slug,
-    allowedCategories: Array.isArray(updated.allowed_categories)
-      ? (updated.allowed_categories as string[])
-      : input.allowedCategories,
-    updatedAt: new Date().toISOString(),
   };
 }
 

@@ -145,7 +145,7 @@ describe("agent PATCH API / concurrency", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: existing.agent_id, tokenHash: "h", allowedCategories: ["cpf", "bank"] },
+        agent: { agentId: existing.agent_id, tokenHash: "h" },
       }),
     }));
 
@@ -197,7 +197,7 @@ describe("agent PATCH API / concurrency", () => {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: existing.agent_id, tokenHash: "h", allowedCategories: ["cpf", "bank"] },
+        agent: { agentId: existing.agent_id, tokenHash: "h" },
       }),
     }));
 

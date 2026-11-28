@@ -1,4 +1,3 @@
-import { isCategoryAllowedForToken } from "@/lib/dashboard/category";
 import type {
   DashboardBlockRow,
   DashboardSectionRow,
@@ -8,17 +7,6 @@ export type PlanResult<T> =
   | { ok: true; plan: T }
   | { ok: false; status: number; error: string };
 
-/** Token must list the target category (normalized) or writes are forbidden. */
-export function assertCategoryAllowedForToken(
-  allowedCategories: readonly string[],
-  category: string,
-): PlanResult<true> {
-  if (!isCategoryAllowedForToken(allowedCategories, category)) {
-    return { ok: false, status: 403, error: "forbidden" };
-  }
-  return { ok: true, plan: true };
-}
-
 function ownsRow(
   agentId: string,
   rowAgentId: string | null,
@@ -26,7 +14,10 @@ function ownsRow(
   return rowAgentId !== null && rowAgentId === agentId;
 }
 
-/** Sisters may only mutate sections whose agent_id is themselves. */
+/**
+ * Row-level ownership helper (audit / legacy). Write authorization for
+ * dashboard categories is `assertAgentIsCategoryWriter`, not this check.
+ */
 export function assertSectionOwnedByAgent(
   agentId: string,
   section: Pick<DashboardSectionRow, "agent_id">,
@@ -37,7 +28,7 @@ export function assertSectionOwnedByAgent(
   return { ok: true, plan: true };
 }
 
-/** Sisters may only mutate blocks whose agent_id is themselves. */
+/** Sisters may only mutate blocks whose agent_id is themselves (legacy helper). */
 export function assertBlockOwnedByAgent(
   agentId: string,
   block: Pick<DashboardBlockRow, "agent_id">,
@@ -73,13 +64,14 @@ export type PatchSectionPlan = {
   sort_order?: number;
 };
 
+/**
+ * Category-writer gate is enforced at the route. Planning only validates body.
+ */
 export function planPatchSection(
-  agentId: string,
-  section: DashboardSectionRow,
+  _agentId: string,
+  _section: DashboardSectionRow,
   input: { category?: string; sort_order?: number },
 ): PlanResult<PatchSectionPlan> {
-  const owned = assertSectionOwnedByAgent(agentId, section);
-  if (!owned.ok) return owned;
   if (input.category === undefined && input.sort_order === undefined) {
     return { ok: false, status: 400, error: "invalid body" };
   }
@@ -100,6 +92,9 @@ export type CreateBlockPlan = {
   payload: Record<string, unknown>;
 };
 
+/**
+ * Category-writer gate is enforced at the route / RPC. Planning checks section id.
+ */
 export function planCreateBlock(
   agentId: string,
   section: DashboardSectionRow,
@@ -110,8 +105,6 @@ export function planCreateBlock(
     payload: Record<string, unknown>;
   },
 ): PlanResult<CreateBlockPlan> {
-  const owned = assertSectionOwnedByAgent(agentId, section);
-  if (!owned.ok) return owned;
   if (section.id !== input.section_id) {
     return { ok: false, status: 400, error: "invalid body" };
   }
@@ -134,7 +127,7 @@ export type PatchBlockPlan = {
 };
 
 export function planPatchBlock(
-  agentId: string,
+  _agentId: string,
   block: DashboardBlockRow,
   input: {
     block_type?: DashboardBlockRow["block_type"];
@@ -142,8 +135,6 @@ export function planPatchBlock(
     payload?: Record<string, unknown>;
   },
 ): PlanResult<PatchBlockPlan> {
-  const owned = assertBlockOwnedByAgent(agentId, block);
-  if (!owned.ok) return owned;
   if (
     input.block_type === undefined &&
     input.sort_order === undefined &&

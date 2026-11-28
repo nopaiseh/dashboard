@@ -162,7 +162,7 @@ function cpfSection() {
     vi.doMock("@/lib/agent-service", () => ({
       resolveAgentFromRequest: async () => ({
         ok: true,
-        agent: { agentId: AGENT_A, tokenHash: "hash", allowedCategories: ["cpf", "bank"] },
+        agent: { agentId: AGENT_A, tokenHash: "hash" },
       }),
     }));
   }
@@ -246,6 +246,18 @@ function cpfSection() {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: (_c: string, category: string) => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -316,6 +328,18 @@ function cpfSection() {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: (_c: string, category: string) => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -394,6 +418,18 @@ function cpfSection() {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: (_c: string, category: string) => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -484,6 +520,18 @@ function cpfSection() {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: (_c: string, category: string) => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -586,6 +634,18 @@ function cpfSection() {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: (_c: string, category: string) => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({
@@ -673,6 +733,18 @@ function cpfSection() {
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return {
+              select: () => ({
+                eq: (_c: string, category: string) => ({
+                  maybeSingle: async () => ({
+                    data: { writer_agent_id: AGENT_A },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
           if (table === "dashboard_sections") {
             return {
               select: () => ({

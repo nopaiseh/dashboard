@@ -8,16 +8,13 @@ import {
   decryptBlockPayload,
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
-import {
-  assertCategoryAllowedForToken,
-  planCreateBlock,
-} from "@/lib/dashboard/logic";
+import { planCreateBlock } from "@/lib/dashboard/logic";
 import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
 import {
   earlyValidateDashboardPayload,
   parseDashboardBlockPayload,
 } from "@/lib/dashboard/parse-payload";
-import { assertSensitiveCategoryWritable } from "@/lib/dashboard/sensitive-exclusivity";
+import { assertAgentIsCategoryWriter } from "@/lib/dashboard/writers";
 import type {
   DashboardBlockPublic,
   DashboardBlockRow,
@@ -104,22 +101,13 @@ export async function POST(request: Request) {
 
   const sectionRow = section as DashboardSectionRow;
 
-  const catAllowed = assertCategoryAllowedForToken(
-    auth.agent.allowedCategories,
-    sectionRow.category,
-  );
-  if (!catAllowed.ok) {
-    return jsonError(catAllowed.status, catAllowed.error);
-  }
-
-  const writable = await assertSensitiveCategoryWritable(
+  const writer = await assertAgentIsCategoryWriter(
     supabase,
     auth.agent.agentId,
     sectionRow.category,
-    { knownSectionAgentId: sectionRow.agent_id },
   );
-  if (!writable.ok) {
-    return jsonError(writable.status, writable.error);
+  if (!writer.ok) {
+    return jsonError(writer.status, writer.error);
   }
 
   const payloadParsed = parseDashboardBlockPayload(

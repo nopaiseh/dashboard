@@ -516,44 +516,45 @@ BEGIN
 END;
 $$;
 
--- allowed_categories backfill semantics + block_key unique + upsert
+-- dashboard_writers backfill + block_key unique + upsert
 DO $$
 DECLARE
-  v_cats text[];
+  v_writer uuid;
+  v_bank_writer uuid;
   v_result jsonb;
   v_count int;
 BEGIN
-  -- Token with a section → backfill-equivalent categories from sections
-  INSERT INTO public.agent_tokens (id, agent_id, token_hash, allowed_categories)
-  VALUES (
-    'ffffffff-ffff-4fff-8fff-ffffffffffff',
-    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-    'smoke-hash-with-cats',
-    '{}'::text[]
-  );
+  -- Unique section owner for cpf → writer; bank inherits cpf writer.
+  INSERT INTO public.dashboard_writers (category, writer_agent_id)
+  SELECT
+    lower(trim(s.category)),
+    (array_agg(DISTINCT s.agent_id))[1]
+  FROM public.dashboard_sections s
+  WHERE s.agent_id IS NOT NULL
+    AND char_length(trim(s.category)) > 0
+  GROUP BY lower(trim(s.category))
+  HAVING count(DISTINCT s.agent_id) = 1
+  ON CONFLICT (category) DO NOTHING;
 
-  UPDATE public.agent_tokens t
-  SET allowed_categories = COALESCE(
-    (
-      SELECT array_agg(DISTINCT lower(trim(s.category)) ORDER BY lower(trim(s.category)))
-      FROM public.dashboard_sections s
-      WHERE s.agent_id = t.agent_id
-        AND char_length(trim(s.category)) > 0
-    ),
-    '{}'::text[]
-  )
-  WHERE t.id = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  INSERT INTO public.dashboard_writers (category, writer_agent_id, updated_at)
+  SELECT 'bank', w.writer_agent_id, now()
+  FROM public.dashboard_writers w
+  WHERE w.category = 'cpf'
+  ON CONFLICT (category) DO UPDATE
+  SET writer_agent_id = EXCLUDED.writer_agent_id, updated_at = now();
 
-  SELECT allowed_categories INTO v_cats
-  FROM public.agent_tokens
-  WHERE id = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
-
-  IF NOT ('cpf' = ANY (v_cats)) THEN
-    RAISE EXCEPTION 'backfill should include cpf from existing section, got %', v_cats;
+  SELECT writer_agent_id INTO v_writer
+  FROM public.dashboard_writers
+  WHERE category = 'cpf';
+  IF v_writer IS DISTINCT FROM 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' THEN
+    RAISE EXCEPTION 'cpf writer should be section owner, got %', v_writer;
   END IF;
-  -- CPF-section owner also receives bank (sensitive pair); no agent id hardcoded.
-  IF NOT ('bank' = ANY (v_cats)) THEN
-    RAISE EXCEPTION 'backfill should ∪ bank for cpf-section owner, got %', v_cats;
+
+  SELECT writer_agent_id INTO v_bank_writer
+  FROM public.dashboard_writers
+  WHERE category = 'bank';
+  IF v_bank_writer IS DISTINCT FROM v_writer THEN
+    RAISE EXCEPTION 'bank writer should match cpf writer';
   END IF;
 
   -- Upsert by block_key: insert then replace

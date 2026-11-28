@@ -11,9 +11,10 @@
 | 对象 | 说明 |
 |------|------|
 | `agents` | 姐妹（slug / name / area / bot_id） |
-| `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发；`allowed_categories text[]`（规范化小写；空＝不能写任何 dashboard 分类）。敏感分类 `cpf`/`bank` 跨 agent 互斥（触发器 + 签发/修改 409 + **写入时独立 403**） |
+| `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发（令牌本身不带分类白名单） |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
+| `dashboard_writers` | 每个看板分类一位写入专员（`category` PK → `writer_agent_id`）；无行则该分类一切 agent 写入 403；仅 owner（session + step-up）可设 |
 | `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密）；可选明文 `block_key` + 部分唯一索引 `(section_id, block_key)` |
 | `dashboard_block_events` | 区块审计，只增不改（禁止 UPDATE/DELETE/TRUNCATE） |
 | `daily_summaries` | 每日小结 |
@@ -42,11 +43,12 @@
 | POST | `/api/agent/items` | 新建 |
 | PATCH | `/api/agent/items/:id` | RPC `apply_agent_item_patch` 单事务 FOR UPDATE；不回写旧 status；冲突 `SQLSTATE XJ409`→409；approval 且 open 时只能 `withdrawn`；改内容 → 退回 open；**内容字段与 `status: withdrawn` 同时传入 → 400**；有本人决定后禁改 kind |
 | GET | `/api/agent/inbox?since=` | 已决定事项 + 流水；`invalidated` 表示内容事后变更 |
-| POST | `/api/agent/dashboard/sections` | 新建分区（`agent_id`=自己；须在令牌 `allowed_categories` 内） |
-| PATCH | `/api/agent/dashboard/sections/:id` | 更新自己的分区 |
-| POST | `/api/agent/dashboard/blocks` | 新建区块（加密 payload；无 DELETE） |
-| PATCH | `/api/agent/dashboard/blocks/:id` | 更新自己的区块 |
+| POST | `/api/agent/dashboard/sections` | 新建分区（须为该 `category` 的 `dashboard_writers` 写入人） |
+| PATCH | `/api/agent/dashboard/sections/:id` | 更新分区（须为当前/目标分类写入人） |
+| POST | `/api/agent/dashboard/blocks` | 新建区块（加密 payload；无 DELETE；须为分区分类写入人） |
+| PATCH | `/api/agent/dashboard/blocks/:id` | 更新区块（须为分区分类写入人） |
 | PUT | `/api/agent/dashboard/sections/:id/blocks/:block_key` | 按 `block_key` upsert（明文列 + 唯一索引；RPC 原子） |
+| GET/PUT | `/api/owner/dashboard/writers` | 所有者查看/指定看板写入人（PUT 须 passkey step-up） |
 
 ## 本人读接口
 

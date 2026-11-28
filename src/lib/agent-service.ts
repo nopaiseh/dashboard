@@ -242,7 +242,7 @@ export async function resolveAgentFromRequest(
   // from invalid / scanned tokens).
   const { data, error } = await supabase
     .from("agent_tokens")
-    .select("agent_id, token_hash, revoked_at, allowed_categories")
+    .select("agent_id, token_hash, revoked_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
 
