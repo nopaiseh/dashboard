@@ -357,7 +357,7 @@ export async function isGoalsMigrationComplete(
   return expectedIds.every((id) => existing.has(id));
 }
 
-/** In-process double-submit guard for execute (per server instance). */
+/** In-process double-submit guard (per server instance); DB lock is authoritative. */
 let executeLock: Promise<unknown> | null = null;
 
 export class MigrateGoalsBusyError extends Error {
@@ -367,13 +367,61 @@ export class MigrateGoalsBusyError extends Error {
   }
 }
 
+export async function acquireMigrateGoalsDbLock(
+  supabase: SupabaseClient,
+  holder: string,
+  ttlSeconds = 900,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc(
+    "try_acquire_migrate_goals_lock",
+    {
+      p_holder: holder,
+      p_ttl_seconds: ttlSeconds,
+    },
+  );
+  if (error) {
+    throw new Error("failed to acquire migrate_goals lock");
+  }
+  return data === true;
+}
+
+export async function releaseMigrateGoalsDbLock(
+  supabase: SupabaseClient,
+  holder: string,
+): Promise<void> {
+  const { error } = await supabase.rpc("release_migrate_goals_lock", {
+    p_holder: holder,
+  });
+  if (error) {
+    // Best-effort release; TTL expires the row if this fails.
+  }
+}
+
+/**
+ * One run at a time: in-process guard + Postgres lock row
+ * (try_acquire_migrate_goals_lock uses pg_try_advisory_xact_lock).
+ */
 export async function withMigrateExecuteLock<T>(
+  supabase: SupabaseClient,
   fn: () => Promise<T>,
 ): Promise<T> {
   if (executeLock) {
     throw new MigrateGoalsBusyError();
   }
-  const run = fn().finally(() => {
+
+  const holder = `web:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+  const acquired = await acquireMigrateGoalsDbLock(supabase, holder);
+  if (!acquired) {
+    throw new MigrateGoalsBusyError();
+  }
+
+  const run = (async () => {
+    try {
+      return await fn();
+    } finally {
+      await releaseMigrateGoalsDbLock(supabase, holder);
+    }
+  })().finally(() => {
     if (executeLock === run) executeLock = null;
   });
   executeLock = run;

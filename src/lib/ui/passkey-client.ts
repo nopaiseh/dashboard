@@ -266,43 +266,45 @@ export async function revokeAgentTokenWithPasskey(input: {
 
 export type MigrateGoalsPlanResponse = {
   action: "plan";
+  to_migrate: number;
+  already_existing: number;
   scanned: number;
-  skipped_migrated: number;
-  would_upsert: number;
   errors: number;
+  csrf_token: string;
+  plan_challenge_id: string;
 };
 
 export type MigrateGoalsExecuteResponse = {
   action: "execute";
+  to_migrate: number;
+  already_existing: number;
   scanned: number;
-  skipped_migrated: number;
-  would_upsert: number;
   inserted: number;
   conflict_skip: number;
   errors: number;
   verify: {
+    counts_match: boolean;
     goals: number;
     blocks_expected: number;
     missing: number;
+    missing_ids: string[];
     decrypt_ok: number;
     decrypt_failed: number;
+    decrypt_failed_ids: string[];
     ok: boolean;
   };
 };
 
-async function migrateGoalsWithPasskey(
-  action: "plan" | "execute",
-): Promise<MigrateGoalsPlanResponse | MigrateGoalsExecuteResponse> {
+export async function migrateGoalsPlanWithPasskey(): Promise<MigrateGoalsPlanResponse> {
   const step = await assertWithBoundStepUp({
     purpose: "step_up",
-    action:
-      action === "plan" ? "migrate_goals_plan" : "migrate_goals_execute",
+    action: "migrate_goals_plan",
   });
   const res = await fetch("/api/admin/migrate-goals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      action,
+      action: "plan",
       assertion: step.assertion,
       challenge_id: step.challenge_id,
       binding: step.binding,
@@ -311,17 +313,33 @@ async function migrateGoalsWithPasskey(
   if (!res.ok) {
     throw new PasskeyError(await readError(res), res.status);
   }
-  return (await res.json()) as
-    | MigrateGoalsPlanResponse
-    | MigrateGoalsExecuteResponse;
+  return (await res.json()) as MigrateGoalsPlanResponse;
 }
 
-export async function migrateGoalsPlanWithPasskey(): Promise<MigrateGoalsPlanResponse> {
-  const body = await migrateGoalsWithPasskey("plan");
-  return body as MigrateGoalsPlanResponse;
-}
-
-export async function migrateGoalsExecuteWithPasskey(): Promise<MigrateGoalsExecuteResponse> {
-  const body = await migrateGoalsWithPasskey("execute");
-  return body as MigrateGoalsExecuteResponse;
+export async function migrateGoalsExecuteWithPasskey(input: {
+  csrfToken: string;
+  planChallengeId: string;
+  confirm: true;
+}): Promise<MigrateGoalsExecuteResponse> {
+  const step = await assertWithBoundStepUp({
+    purpose: "step_up",
+    action: "migrate_goals_execute",
+  });
+  const res = await fetch("/api/admin/migrate-goals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "execute",
+      assertion: step.assertion,
+      challenge_id: step.challenge_id,
+      binding: step.binding,
+      csrf_token: input.csrfToken,
+      plan_challenge_id: input.planChallengeId,
+      confirm: input.confirm,
+    }),
+  });
+  if (!res.ok) {
+    throw new PasskeyError(await readError(res), res.status);
+  }
+  return (await res.json()) as MigrateGoalsExecuteResponse;
 }

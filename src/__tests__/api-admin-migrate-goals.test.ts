@@ -7,6 +7,7 @@ import { planGoalMigration } from "@/lib/dashboard/migrate-goals-plan";
 import { resetFieldKeyringCache } from "@/lib/crypto/fields-core";
 
 const CHALLENGE_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const PLAN_CHALLENGE_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const CRED_ID = "cred-owner-1";
 const KEY_V1 = Buffer.alloc(32, 1).toString("base64");
 
@@ -23,6 +24,19 @@ const GOAL: LegacyGoalRow = {
   updated_at: "2026-01-01T00:00:00.000Z",
 };
 
+const cookieStore = {
+  value: null as string | null,
+  get(name: string) {
+    if (name === "xjg_migrate_goals_stepup" && this.value) {
+      return { value: this.value };
+    }
+    return undefined;
+  },
+  set(name: string, value: string) {
+    if (name === "xjg_migrate_goals_stepup") this.value = value;
+  },
+};
+
 describe("POST /api/admin/migrate-goals", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -31,6 +45,8 @@ describe("POST /api/admin/migrate-goals", () => {
     vi.doUnmock("@/lib/auth-guard");
     vi.doUnmock("@/lib/supabase/server");
     vi.doUnmock("@/lib/dashboard/migrate-goals");
+    vi.doUnmock("next/headers");
+    cookieStore.value = null;
     resetRateLimits();
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
@@ -38,11 +54,16 @@ describe("POST /api/admin/migrate-goals", () => {
     process.env.WEBAUTHN_ORIGIN = "https://desk.nopaiseh.com";
     process.env.FIELD_ENCRYPTION_KEY = KEY_V1;
     resetFieldKeyringCache();
+
+    vi.doMock("next/headers", () => ({
+      cookies: async () => cookieStore,
+    }));
   });
 
   function mockGoalsClient(goals: LegacyGoalRow[], existingIds?: Set<string>) {
     const existing = new Set(existingIds ?? []);
     let rpcWrites = 0;
+    let lockHeld: string | null = null;
     return {
       client: {
         from: (table: string) => {
@@ -116,7 +137,16 @@ describe("POST /api/admin/migrate-goals", () => {
           }
           return {};
         },
-        rpc: async (_name: string, args: Record<string, unknown>) => {
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          if (name === "try_acquire_migrate_goals_lock") {
+            if (lockHeld) return { data: false, error: null };
+            lockHeld = String(args.p_holder);
+            return { data: true, error: null };
+          }
+          if (name === "release_migrate_goals_lock") {
+            if (lockHeld === String(args.p_holder)) lockHeld = null;
+            return { data: true, error: null };
+          }
           rpcWrites += 1;
           const blockId = String(args.p_block_id);
           if (existing.has(blockId)) {
@@ -127,6 +157,7 @@ describe("POST /api/admin/migrate-goals", () => {
         },
       },
       getWrites: () => rpcWrites,
+      isLocked: () => lockHeld !== null,
     };
   }
 
@@ -158,6 +189,7 @@ describe("POST /api/admin/migrate-goals", () => {
       }),
     );
     expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
   it("rejects missing / invalid step-up binding", async () => {
@@ -188,6 +220,7 @@ describe("POST /api/admin/migrate-goals", () => {
       }),
     );
     expect(res.status).toBe(400);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid binding");
   });
@@ -281,8 +314,9 @@ describe("POST /api/admin/migrate-goals", () => {
     expect(body.error).toBe("invalid challenge");
   });
 
-  it("dry-run plan returns counts and makes no RPC writes", async () => {
+  it("dry-run plan returns counts, csrf, audits, and makes no RPC writes", async () => {
     const { client, getWrites } = mockGoalsClient([GOAL]);
+    const auditSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.doMock("@/lib/origin", () => ({
       assertSameOrigin: () => ({ ok: true }),
     }));
@@ -326,19 +360,36 @@ describe("POST /api/admin/migrate-goals", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const body = (await res.json()) as {
-      scanned: number;
-      would_upsert: number;
-      skipped_migrated: number;
+      to_migrate: number;
+      already_existing: number;
+      csrf_token: string;
+      plan_challenge_id: string;
     };
-    expect(body.scanned).toBe(1);
-    expect(body.would_upsert).toBe(1);
-    expect(body.skipped_migrated).toBe(0);
+    expect(body.to_migrate).toBe(1);
+    expect(body.already_existing).toBe(0);
+    expect(body.csrf_token.length).toBeGreaterThan(10);
+    expect(body.plan_challenge_id).toBe(CHALLENGE_ID);
     expect(getWrites()).toBe(0);
     expect(JSON.stringify(body)).not.toContain("OA 余额");
+    expect(auditSpy).toHaveBeenCalled();
+    const auditLine = String(auditSpy.mock.calls[0]?.[0]);
+    expect(auditLine).toContain('"action":"plan"');
+    expect(auditLine).toContain('"actor_type":"user"');
+    expect(auditLine).not.toContain("OA 余额");
+    auditSpy.mockRestore();
+
+    // Capture step-up cookie from Set-Cookie if present
+    const setCookie = res.headers.getSetCookie?.() ?? [];
+    const stepCookie = setCookie.find((c) =>
+      c.startsWith("xjg_migrate_goals_stepup="),
+    );
+    if (stepCookie) {
+      cookieStore.value = stepCookie.split("=")[1]?.split(";")[0] ?? null;
+    }
   });
 
-  it("execute writes once then kill-switches to 404 when complete", async () => {
-    const { client, getWrites } = mockGoalsClient([GOAL]);
+  it("execute rejects without confirm / csrf / recent step-up", async () => {
+    const { client } = mockGoalsClient([GOAL]);
     vi.doMock("@/lib/origin", () => ({
       assertSameOrigin: () => ({ ok: true }),
     }));
@@ -358,65 +409,70 @@ describe("POST /api/admin/migrate-goals", () => {
     const { createAgentTokenStepUpBinding } = await import(
       "@/lib/agent-token-stepup"
     );
-    const { resetMigrateExecuteLockForTests } = await import(
-      "@/lib/dashboard/migrate-goals"
-    );
-    resetMigrateExecuteLockForTests();
-
     const { POST } = await import("@/app/api/admin/migrate-goals/route");
 
-    async function execOnce() {
-      const binding = await createAgentTokenStepUpBinding({
-        challengeId: CHALLENGE_ID,
-        action: "migrate_goals_execute",
-      });
-      return POST(
-        new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            origin: "https://desk.nopaiseh.com",
-          },
-          body: JSON.stringify({
-            action: "execute",
-            challenge_id: CHALLENGE_ID,
-            assertion: { id: CRED_ID },
-            binding,
-          }),
+    // Missing confirm / csrf fields → invalid body
+    const binding = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "migrate_goals_execute",
+    });
+    const noConfirm = await POST(
+      new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          action: "execute",
+          challenge_id: CHALLENGE_ID,
+          assertion: { id: CRED_ID },
+          binding,
+          csrf_token: "x",
+          plan_challenge_id: PLAN_CHALLENGE_ID,
+          confirm: false,
         }),
-      );
-    }
+      }),
+    );
+    expect(noConfirm.status).toBe(400);
 
-    const first = await execOnce();
-    expect(first.status).toBe(200);
-    const firstBody = (await first.json()) as {
-      inserted: number;
-      verify: { ok: boolean; decrypt_ok: number };
-    };
-    expect(firstBody.inserted).toBe(1);
-    expect(firstBody.verify.ok).toBe(true);
-    expect(firstBody.verify.decrypt_ok).toBe(1);
-    expect(getWrites()).toBe(1);
-
-    // After complete migration, endpoint returns 404 (kill switch).
-    const second = await execOnce();
-    expect(second.status).toBe(404);
+    // Valid shape but no recent step-up cookie → 404
+    const { createMigrateGoalsCsrfToken } = await import(
+      "@/lib/migrate-goals-csrf"
+    );
+    const csrf = await createMigrateGoalsCsrfToken({
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const binding2 = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "migrate_goals_execute",
+    });
+    cookieStore.value = null;
+    const noStepUp = await POST(
+      new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          action: "execute",
+          challenge_id: CHALLENGE_ID,
+          assertion: { id: CRED_ID },
+          binding: binding2,
+          csrf_token: csrf,
+          plan_challenge_id: PLAN_CHALLENGE_ID,
+          confirm: true,
+        }),
+      }),
+    );
+    expect(noStepUp.status).toBe(404);
+    expect(noStepUp.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("execute is idempotent when blocks already exist (conflict skip)", async () => {
-    const blockId = blockIdForGoal(GOAL.id);
-    const { client, getWrites } = mockGoalsClient([GOAL], new Set([blockId]));
-    // Force completeness check false so we can exercise execute path twice
-    // while blocks already exist (RPC returns already_migrated / plan skips).
-    vi.doMock("@/lib/dashboard/migrate-goals", async () => {
-      const actual = await vi.importActual<
-        typeof import("@/lib/dashboard/migrate-goals")
-      >("@/lib/dashboard/migrate-goals");
-      return {
-        ...actual,
-        isGoalsMigrationComplete: async () => false,
-      };
-    });
+  it("execute with confirm+csrf+step-up writes once then kill-switches", async () => {
+    const { client, getWrites } = mockGoalsClient([GOAL]);
+    const auditSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.doMock("@/lib/origin", () => ({
       assertSameOrigin: () => ({ ok: true }),
     }));
@@ -436,16 +492,158 @@ describe("POST /api/admin/migrate-goals", () => {
     const { createAgentTokenStepUpBinding } = await import(
       "@/lib/agent-token-stepup"
     );
+    const { createMigrateGoalsCsrfToken } = await import(
+      "@/lib/migrate-goals-csrf"
+    );
+    const { createMigrateGoalsStepUpToken } = await import(
+      "@/lib/migrate-goals-stepup"
+    );
     const { resetMigrateExecuteLockForTests } = await import(
       "@/lib/dashboard/migrate-goals"
     );
     resetMigrateExecuteLockForTests();
+
+    cookieStore.value = await createMigrateGoalsStepUpToken({
+      credentialId: CRED_ID,
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const csrf = await createMigrateGoalsCsrfToken({
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
 
     const { POST } = await import("@/app/api/admin/migrate-goals/route");
     const binding = await createAgentTokenStepUpBinding({
       challengeId: CHALLENGE_ID,
       action: "migrate_goals_execute",
     });
+    const first = await POST(
+      new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          action: "execute",
+          challenge_id: CHALLENGE_ID,
+          assertion: { id: CRED_ID },
+          binding,
+          csrf_token: csrf,
+          plan_challenge_id: PLAN_CHALLENGE_ID,
+          confirm: true,
+        }),
+      }),
+    );
+    expect(first.status).toBe(200);
+    expect(first.headers.get("Cache-Control")).toBe("no-store");
+    const firstBody = (await first.json()) as {
+      inserted: number;
+      verify: {
+        ok: boolean;
+        decrypt_ok: number;
+        decrypt_failed_ids: string[];
+        missing_ids: string[];
+        counts_match: boolean;
+      };
+    };
+    expect(firstBody.inserted).toBe(1);
+    expect(firstBody.verify.ok).toBe(true);
+    expect(firstBody.verify.counts_match).toBe(true);
+    expect(firstBody.verify.decrypt_ok).toBe(1);
+    expect(firstBody.verify.decrypt_failed_ids).toEqual([]);
+    expect(firstBody.verify.missing_ids).toEqual([]);
+    expect(getWrites()).toBe(1);
+    expect(JSON.stringify(firstBody)).not.toContain("OA 余额");
+
+    const auditLines = auditSpy.mock.calls.map((c) => String(c[0]));
+    expect(auditLines.some((l) => l.includes('"action":"execute"'))).toBe(
+      true,
+    );
+    auditSpy.mockRestore();
+
+    const binding2 = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "migrate_goals_execute",
+    });
+    const csrf2 = await createMigrateGoalsCsrfToken({
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const second = await POST(
+      new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://desk.nopaiseh.com",
+        },
+        body: JSON.stringify({
+          action: "execute",
+          challenge_id: CHALLENGE_ID,
+          assertion: { id: CRED_ID },
+          binding: binding2,
+          csrf_token: csrf2,
+          plan_challenge_id: PLAN_CHALLENGE_ID,
+          confirm: true,
+        }),
+      }),
+    );
+    expect(second.status).toBe(404);
+  });
+
+  it("returns 409 when DB advisory lock is held", async () => {
+    const { client } = mockGoalsClient([GOAL]);
+    // Force lock acquire to fail
+    const lockedClient = {
+      ...client,
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        if (name === "try_acquire_migrate_goals_lock") {
+          return { data: false, error: null };
+        }
+        return client.rpc(name, args);
+      },
+    };
+    vi.doMock("@/lib/origin", () => ({
+      assertSameOrigin: () => ({ ok: true }),
+    }));
+    vi.doMock("@/lib/auth-guard", () => ({
+      requireSession: async () => ({ ok: true }),
+    }));
+    vi.doMock("@/lib/passkey-step-up", () => ({
+      consumePasskeyAssertion: async () => ({
+        ok: true,
+        credentialId: CRED_ID,
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => lockedClient,
+    }));
+
+    const { createAgentTokenStepUpBinding } = await import(
+      "@/lib/agent-token-stepup"
+    );
+    const { createMigrateGoalsCsrfToken } = await import(
+      "@/lib/migrate-goals-csrf"
+    );
+    const { createMigrateGoalsStepUpToken } = await import(
+      "@/lib/migrate-goals-stepup"
+    );
+    const { resetMigrateExecuteLockForTests } = await import(
+      "@/lib/dashboard/migrate-goals"
+    );
+    resetMigrateExecuteLockForTests();
+
+    cookieStore.value = await createMigrateGoalsStepUpToken({
+      credentialId: CRED_ID,
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const csrf = await createMigrateGoalsCsrfToken({
+      planChallengeId: PLAN_CHALLENGE_ID,
+    });
+    const binding = await createAgentTokenStepUpBinding({
+      challengeId: CHALLENGE_ID,
+      action: "migrate_goals_execute",
+    });
+
+    const { POST } = await import("@/app/api/admin/migrate-goals/route");
     const res = await POST(
       new Request("https://desk.nopaiseh.com/api/admin/migrate-goals", {
         method: "POST",
@@ -458,18 +656,13 @@ describe("POST /api/admin/migrate-goals", () => {
           challenge_id: CHALLENGE_ID,
           assertion: { id: CRED_ID },
           binding,
+          csrf_token: csrf,
+          plan_challenge_id: PLAN_CHALLENGE_ID,
+          confirm: true,
         }),
       }),
     );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      inserted: number;
-      skipped_migrated: number;
-      verify: { ok: boolean };
-    };
-    expect(body.inserted).toBe(0);
-    expect(body.skipped_migrated).toBe(1);
-    expect(body.verify.ok).toBe(true);
-    expect(getWrites()).toBe(0);
+    expect(res.status).toBe(409);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 });

@@ -245,7 +245,42 @@ describe("migrate goals shared module", () => {
     const verify = await verifyGoalsMigration(client as never);
     expect(verify.ok).toBe(true);
     expect(verify.decryptOk).toBe(1);
+    expect(verify.decryptFailedBlockIds).toEqual([]);
+    expect(verify.missingBlockIds).toEqual([]);
     expect(existing.has(blockIdForGoal(GOAL.id))).toBe(true);
+  });
+
+  it("withMigrateExecuteLock uses DB lock RPCs and rejects when busy", async () => {
+    let held: string | null = null;
+    const client = {
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        if (name === "try_acquire_migrate_goals_lock") {
+          if (held) return { data: false, error: null };
+          held = String(args.p_holder);
+          return { data: true, error: null };
+        }
+        if (name === "release_migrate_goals_lock") {
+          if (held === String(args.p_holder)) held = null;
+          return { data: true, error: null };
+        }
+        return { data: null, error: { code: "unexpected" } };
+      },
+    };
+    const {
+      withMigrateExecuteLock,
+      MigrateGoalsBusyError,
+      resetMigrateExecuteLockForTests,
+    } = await import("@/lib/dashboard/migrate-goals");
+    resetMigrateExecuteLockForTests();
+
+    const value = await withMigrateExecuteLock(client as never, async () => 42);
+    expect(value).toBe(42);
+    expect(held).toBeNull();
+
+    held = "other";
+    await expect(
+      withMigrateExecuteLock(client as never, async () => 1),
+    ).rejects.toBeInstanceOf(MigrateGoalsBusyError);
   });
 
   it("CLI script still resolves shared module exports", async () => {

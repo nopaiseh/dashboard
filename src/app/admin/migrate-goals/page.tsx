@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { MigrateGoalsPanel } from "@/components/qingjian/MigrateGoalsPanel";
@@ -8,6 +9,10 @@ import {
   MIGRATE_GOALS_WEB_ENABLED,
   isGoalsMigrationComplete,
 } from "@/lib/dashboard/migrate-goals";
+import {
+  MIGRATE_GOALS_STEPUP_COOKIE,
+  verifyMigrateGoalsStepUpToken,
+} from "@/lib/migrate-goals-stepup";
 import { getServiceClient } from "@/lib/supabase/server";
 import { loadShellData, withUiReadGuard } from "@/lib/ui/page-helpers";
 
@@ -23,7 +28,8 @@ export const metadata: Metadata = {
 };
 
 /**
- * One-time owner-only migration UI. Removed in a follow-up PR.
+ * One-time owner-only migration UI. Deleted in the next release after migration.
+ * Server-side owner check; dry-run requires recent passkey step-up (panel).
  * Kill switch: MIGRATE_GOALS_WEB_ENABLED or migration already complete → 404.
  */
 export default async function MigrateGoalsAdminPage() {
@@ -48,6 +54,13 @@ export default async function MigrateGoalsAdminPage() {
       notFound();
     }
 
+    const jar = await cookies();
+    const stepUpCookie = jar.get(MIGRATE_GOALS_STEPUP_COOKIE)?.value;
+    const recentStepUp = stepUpCookie
+      ? await verifyMigrateGoalsStepUpToken(stepUpCookie)
+      : { ok: false as const };
+    const hasRecentStepUp = recentStepUp.ok;
+
     const { siteName, counts } = await loadShellData();
 
     return (
@@ -55,7 +68,7 @@ export default async function MigrateGoalsAdminPage() {
         <div className={"qj-pageTitleRow"}>
           <h1>迁移 goals → blocks</h1>
         </div>
-        <MigrateGoalsPanel />
+        <MigrateGoalsPanel hasRecentStepUp={hasRecentStepUp} />
       </AppShell>
     );
   });

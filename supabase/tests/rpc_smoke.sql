@@ -464,6 +464,37 @@ BEGIN
 END;
 $$;
 
+-- migrate_goals lock: acquire / double-acquire / release
+DO $$
+DECLARE
+  v_ok boolean;
+BEGIN
+  IF to_regprocedure('public.try_acquire_migrate_goals_lock(text,integer)') IS NULL THEN
+    RAISE EXCEPTION 'try_acquire_migrate_goals_lock missing';
+  END IF;
+
+  v_ok := public.try_acquire_migrate_goals_lock('smoke-holder', 60);
+  IF v_ok IS NOT TRUE THEN
+    RAISE EXCEPTION 'expected first acquire to succeed';
+  END IF;
+
+  v_ok := public.try_acquire_migrate_goals_lock('other-holder', 60);
+  IF v_ok IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'expected second acquire to fail while held';
+  END IF;
+
+  IF public.release_migrate_goals_lock('smoke-holder') IS NOT TRUE THEN
+    RAISE EXCEPTION 'expected release to succeed';
+  END IF;
+
+  v_ok := public.try_acquire_migrate_goals_lock('smoke-holder-2', 60);
+  IF v_ok IS NOT TRUE THEN
+    RAISE EXCEPTION 'expected re-acquire after release';
+  END IF;
+  PERFORM public.release_migrate_goals_lock('smoke-holder-2');
+END;
+$$;
+
 ROLLBACK;
 
 \echo OK rpc_smoke

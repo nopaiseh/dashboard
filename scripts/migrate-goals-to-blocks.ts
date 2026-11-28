@@ -19,8 +19,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { parseMigrateGoalsArgs } from "../src/lib/dashboard/migrate-goals-cli";
 import {
+  MigrateGoalsBusyError,
   runGoalsMigration,
   verifyGoalsMigration,
+  withMigrateExecuteLock,
 } from "../src/lib/dashboard/migrate-goals";
 
 async function main(): Promise<void> {
@@ -40,32 +42,48 @@ async function main(): Promise<void> {
     `[migrate-goals-to-blocks] dryRun=${dryRun} batchSize=${batchSize}`,
   );
 
-  const counts = await runGoalsMigration(supabase, {
-    dryRun,
-    batchSize,
-    hooks: {
-      onDryRunUpsert: ({ goalId, blockId }) => {
-        console.log(
-          `[dry-run] would migrate goal id=${goalId} → block id=${blockId}`,
-        );
-      },
-      onExecute: ({ goalId, blockId, result }) => {
-        if (result === "already_migrated") {
-          console.log(`[execute] already migrated block id=${blockId}`);
-          return;
-        }
-        console.log(
-          `[execute] migrated goal id=${goalId} → block id=${blockId}`,
-        );
-      },
-      onError: ({ blockId, code }) => {
-        console.error("migrate_dashboard_progress_block failed", {
-          blockId: blockId ?? null,
-          code,
-        });
-      },
+  const hooks = {
+    onDryRunUpsert: ({ goalId, blockId }: { goalId: string; blockId: string }) => {
+      console.log(
+        `[dry-run] would migrate goal id=${goalId} → block id=${blockId}`,
+      );
     },
-  });
+    onExecute: ({
+      goalId,
+      blockId,
+      result,
+    }: {
+      goalId: string;
+      blockId: string;
+      result: "inserted" | "already_migrated";
+    }) => {
+      if (result === "already_migrated") {
+        console.log(`[execute] already migrated block id=${blockId}`);
+        return;
+      }
+      console.log(
+        `[execute] migrated goal id=${goalId} → block id=${blockId}`,
+      );
+    },
+    onError: ({
+      blockId,
+      code,
+    }: {
+      blockId?: string;
+      code: string;
+    }) => {
+      console.error("migrate_dashboard_progress_block failed", {
+        blockId: blockId ?? null,
+        code,
+      });
+    },
+  };
+
+  const counts = dryRun
+    ? await runGoalsMigration(supabase, { dryRun: true, batchSize, hooks })
+    : await withMigrateExecuteLock(supabase, () =>
+        runGoalsMigration(supabase, { dryRun: false, batchSize, hooks }),
+      );
 
   console.log(
     `[migrate-goals-to-blocks] done scanned=${counts.scanned} skippedMigrated=${counts.skippedMigrated} conflictSkip=${counts.conflictSkip} wouldUpsert=${counts.wouldUpsert} inserted=${counts.inserted}`,
@@ -99,6 +117,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  if (err instanceof MigrateGoalsBusyError) {
+    console.error("[migrate-goals-to-blocks] failed: migration already in progress");
+    process.exitCode = 1;
+    return;
+  }
   const message = err instanceof Error ? err.message : "unknown error";
   console.error(`[migrate-goals-to-blocks] failed: ${message}`);
   process.exitCode = 1;
