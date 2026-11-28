@@ -59,6 +59,8 @@ jobs:
             # the same way; do not embed BEGIN/COMMIT inside migration files).
             PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f "$f"
           done
+          PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rpc_smoke.sql
+          PGPASSWORD=dashboard ./scripts/verify-drop-goals-guard.sh
 
       - name: Lint
         run: npm run lint
