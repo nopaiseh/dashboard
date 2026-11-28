@@ -254,6 +254,11 @@ BEGIN
   IF to_regprocedure('public.forbid_goals_mutation()') IS NOT NULL THEN
     RAISE EXCEPTION 'forbid_goals_mutation should be dropped';
   END IF;
+  IF to_regprocedure(
+    'public.migrate_dashboard_progress_block(uuid,text,integer,uuid,uuid,integer,uuid,text)'
+  ) IS NOT NULL THEN
+    RAISE EXCEPTION 'migrate_dashboard_progress_block should be dropped';
+  END IF;
 END;
 $$;
 
