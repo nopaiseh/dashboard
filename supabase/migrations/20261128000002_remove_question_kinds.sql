@@ -116,12 +116,15 @@ BEGIN
 END;
 $$;
 
--- 4) 收紧枚举：依赖旧 item_kind 签名的 PATCH RPC 先卸掉
+-- 4) 收紧枚举：依赖旧 item_kind 签名的 PATCH RPC 先卸掉；
+--    stale_items 视图依赖 items.kind，须先 DROP 再改列类型。
 DROP FUNCTION IF EXISTS public.apply_agent_item_patch(
   uuid, uuid, public.item_status, text, text, boolean, public.item_status,
   text, text, jsonb, text, timestamptz, boolean, text, boolean, public.item_kind,
   public.item_action
 );
+
+DROP VIEW IF EXISTS public.stale_items;
 
 CREATE TYPE public.item_kind_new AS ENUM (
   'approval',
@@ -135,6 +138,16 @@ ALTER TABLE public.items
 
 DROP TYPE public.item_kind;
 ALTER TYPE public.item_kind_new RENAME TO item_kind;
+
+CREATE OR REPLACE VIEW public.stale_items
+WITH (security_invoker = true)
+AS
+SELECT *
+FROM public.items
+WHERE status = 'open'
+  AND last_activity_at < (now() - interval '7 days');
+
+REVOKE ALL ON TABLE public.stale_items FROM anon, authenticated;
 
 -- 5) 按新枚举重建 PATCH RPC（逻辑与 20261127000002 一致）
 CREATE OR REPLACE FUNCTION public.apply_agent_item_patch(
