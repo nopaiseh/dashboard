@@ -1,10 +1,37 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { C2_LEDGER } from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
+import type { CpfLedgerRow } from "./cpfModel";
 
-export function CpfLedger({ sampleMode = false }: { sampleMode?: boolean }) {
+export function CpfLedger({
+  rows,
+  summary,
+  emptyWithdrawals,
+  sampleMode = false,
+}: {
+  rows: CpfLedgerRow[] | null;
+  summary?: string;
+  emptyWithdrawals?: string;
+  sampleMode?: boolean;
+}) {
   const [open, setOpen] = useState(true);
+
+  if (rows == null) {
+    return (
+      <>
+        <div className={"k-sec"}>
+          <h2>
+            流水
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+          </h2>
+        </div>
+        <EmptyBlock message="暂无流水" />
+      </>
+    );
+  }
 
   return (
     <>
@@ -32,57 +59,62 @@ export function CpfLedger({ sampleMode = false }: { sampleMode?: boolean }) {
           </span>
         </summary>
         <div className={"k-ledgerBody"}>
-          <table className={"k-tbl"}>
-            <thead>
-              <tr>
-                <th className={"l"}>入账日期</th>
-                <th className={"l"}>类型</th>
-                <th className={"l"}>说明 / 用途</th>
-                <th>OA</th>
-                <th>SA</th>
-                <th>MA</th>
-                <th>合计（S$）</th>
-              </tr>
-            </thead>
-            <tbody>
-              {C2_LEDGER.map((row) => (
-                <tr key={`${row.date}-${row.note}`}>
-                  <td className={"l"}>{row.date}</td>
-                  <td className={"l"}>
-                    <span
-                      className={
-                        row.kind === "in" ? "k-type k-in" : "k-type k-fee"
-                      }
-                    >
-                      {row.typeLabel}
-                    </span>
-                  </td>
-                  <td className={"l"}>{row.note}</td>
-                  <td>{cell(row.OA)}</td>
-                  <td>{cell(row.SA)}</td>
-                  <td>{cell(row.MA)}</td>
-                  <td>
-                    <b>{cell(row.total)}</b>
-                  </td>
+          {rows.length === 0 ? (
+            <EmptyBlock message="暂无流水记录" />
+          ) : (
+            <table className={"k-tbl"}>
+              <thead>
+                <tr>
+                  <th className={"l"}>入账日期</th>
+                  <th className={"l"}>类型</th>
+                  <th className={"l"}>说明 / 用途</th>
+                  <th>OA</th>
+                  <th>SA</th>
+                  <th>MA</th>
+                  <th>合计（S$）</th>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td className={"l"} colSpan={3}>
-                  最近 6 个月合计
-                </td>
-                <td />
-                <td />
-                <td />
-                <td>缴存 +17,760 · 保险扣款 −500 · 提取 0</td>
-              </tr>
-            </tfoot>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={`${row.date}-${row.note}`}>
+                    <td className={"l"}>{row.date}</td>
+                    <td className={"l"}>
+                      <span
+                        className={
+                          row.kind === "in" ? "k-type k-in" : "k-type k-fee"
+                        }
+                      >
+                        {row.typeLabel}
+                      </span>
+                    </td>
+                    <td className={"l"}>{row.note}</td>
+                    <td>{cell(row.OA)}</td>
+                    <td>{cell(row.SA)}</td>
+                    <td>{cell(row.MA)}</td>
+                    <td>
+                      <b>{cell(row.total)}</b>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {summary ? (
+                <tfoot>
+                  <tr>
+                    <td className={"l"} colSpan={3}>
+                      最近 6 个月合计
+                    </td>
+                    <td />
+                    <td />
+                    <td />
+                    <td>{summary}</td>
+                  </tr>
+                </tfoot>
+              ) : null}
+            </table>
+          )}
           <div className={"k-empty k-empty-sm"}>
             <b>无提取</b>
-            　近 6 个月没有买房、医疗就诊等提取。MA 支出仅为 MediShield Life 与
-            CareShield Life 保费。
+            {emptyWithdrawals ? <>　{emptyWithdrawals}</> : null}
           </div>
         </div>
       </details>

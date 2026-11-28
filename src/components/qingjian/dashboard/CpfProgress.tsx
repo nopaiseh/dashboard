@@ -1,25 +1,45 @@
-import {
-  C2_BAL,
-  C2_EXCEED_FRS,
-  C2_HIT,
-  C2_OA_SA,
-  C2_TARGETS,
-} from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
+import type { CpfProgressData } from "./cpfModel";
 import { formatMoney } from "./format";
 
-/**
- * 方案甲：两条细进度条（C2 定稿）。
- * 刻度标签在条上方对齐；白线刻度在条内；超出段斜纹。
- * 动态几何用 SVG 属性，避免 CSP 禁止的 style={{}}。
- */
-export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
-  const ma = C2_BAL.MA;
-  const bhs = C2_TARGETS.BHS;
-  const maPct = Math.min(100, (ma / bhs) * 100);
+export function CpfProgress({
+  data,
+  sampleMode = false,
+}: {
+  data: CpfProgressData | null;
+  sampleMode?: boolean;
+}) {
+  if (!data) {
+    return (
+      <>
+        <div className={"k-sec"}>
+          <h2>
+            目标进度
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+            <span className={"chip chipEst"}>估算</span>
+          </h2>
+        </div>
+        <EmptyBlock message="暂无目标进度" />
+      </>
+    );
+  }
 
-  const oaSa = C2_OA_SA;
-  const { BRS, FRS, ERS } = C2_TARGETS;
-  // Track = 0 … ERS; FRS at 50%, BRS at 25%
+  const {
+    ma,
+    bhs,
+    oaSa,
+    brs: BRS,
+    frs: FRS,
+    ers: ERS,
+    exceedFrs,
+    hitBhs,
+    hitBrs,
+    hitErs,
+    footnote,
+  } = data;
+  const maPct = Math.min(100, (ma / bhs) * 100);
   const brsX = (BRS / ERS) * 100;
   const frsX = (FRS / ERS) * 100;
   const nowX = Math.min(100, (oaSa / ERS) * 100);
@@ -40,7 +60,6 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
       </div>
       <div className={"card"}>
         <div className={"k-goal"}>
-          {/* MA vs BHS */}
           <div className={"k-grow"}>
             <h3>
               MA 对 BHS
@@ -55,7 +74,9 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
               aria-label={`MA 对 BHS 已达 ${Math.round(maPct)}%`}
             >
               <ProgressSvg
-                marks={[{ key: "BHS", label: "BHS", sub: "7.5万", x: 100, end: true }]}
+                marks={[
+                  { key: "BHS", label: "BHS", sub: "7.5万", x: 100, end: true },
+                ]}
                 solid={maPct}
                 overshoot={0}
                 now={null}
@@ -72,16 +93,17 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
                 </span>
                 <b />
               </div>
-              <div>
-                <span>估算 达 BHS</span>
-                <b>约 {C2_HIT.BHS}</b>
-              </div>
+              {hitBhs ? (
+                <div>
+                  <span>估算 达 BHS</span>
+                  <b>约 {hitBhs}</b>
+                </div>
+              ) : null}
             </div>
           </div>
 
           <hr className={"k-hr"} />
 
-          {/* SA+OA vs tiers */}
           <div className={"k-grow"}>
             <h3>
               SA+OA 对 BRS / FRS / ERS
@@ -100,7 +122,13 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
                 marks={[
                   { key: "BRS", label: "BRS", sub: "11万", x: brsX },
                   { key: "FRS", label: "FRS", sub: "22万", x: frsX },
-                  { key: "ERS", label: "ERS", sub: "44万", x: 100, end: true },
+                  {
+                    key: "ERS",
+                    label: "ERS",
+                    sub: "44万",
+                    x: 100,
+                    end: true,
+                  },
                 ]}
                 solid={solidToFrs}
                 overshoot={overshootW}
@@ -114,7 +142,9 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
                   BRS {formatMoney(BRS)}（{Math.round((oaSa / BRS) * 100)}%）
                 </span>
                 <b>
-                  <span className={"chip chipOver"}>已达 · {C2_HIT.BRS}</span>
+                  {hitBrs ? (
+                    <span className={"chip chipOver"}>已达 · {hitBrs}</span>
+                  ) : null}
                 </b>
               </div>
               <div>
@@ -122,9 +152,11 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
                   FRS {formatMoney(FRS)}（{Math.round((oaSa / FRS) * 100)}%）
                 </span>
                 <b>
-                  <span className={"chip chipOver"}>
-                    已达，超出 {formatMoney(C2_EXCEED_FRS)}
-                  </span>
+                  {oaSa >= FRS ? (
+                    <span className={"chip chipOver"}>
+                      已达，超出 {formatMoney(exceedFrs)}
+                    </span>
+                  ) : null}
                 </b>
               </div>
               <div>
@@ -132,17 +164,15 @@ export function CpfProgress({ sampleMode = false }: { sampleMode?: boolean }) {
                   下一档 ERS {formatMoney(ERS)}（{Math.round(nowX)}%）
                 </span>
                 <b>
-                  <span className={"chip chipNext"}>约 {C2_HIT.ERS}</span>
+                  {hitErs ? (
+                    <span className={"chip chipNext"}>约 {hitErs}</span>
+                  ) : null}
                 </b>
               </div>
             </div>
           </div>
         </div>
-        <div className={"k-mini"}>
-          目标值为示例：BHS {formatMoney(C2_TARGETS.BHS)}、BRS{" "}
-          {formatMoney(BRS)}、FRS {formatMoney(FRS)}、ERS {formatMoney(ERS)}
-          。越过的档位按实际比例显示（不卡在 100%），超出部分用斜纹标出，并指向下一档。达标年月为估算，目标按当前值计，不含每年上调。
-        </div>
+        {footnote ? <div className={"k-mini"}>{footnote}</div> : null}
       </div>
     </>
   );
@@ -155,13 +185,18 @@ function ProgressSvg({
   ticks = [],
   now,
 }: {
-  marks: Array<{ key: string; label: string; sub: string; x: number; end?: boolean }>;
+  marks: Array<{
+    key: string;
+    label: string;
+    sub: string;
+    x: number;
+    end?: boolean;
+  }>;
   solid: number;
   overshoot: number;
   ticks?: number[];
   now: { x: number; label: string } | null;
 }) {
-  // Geometry mirrors C2 HTML: 16px bar, labels above with 5px stem, now label below.
   const W = 1000;
   const labelH = 34;
   const barY = labelH;

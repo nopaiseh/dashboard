@@ -1,6 +1,29 @@
-import { C2_TODOS } from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
+import type { CpfTodoItem } from "./cpfModel";
 
-export function CpfTodos({ sampleMode = false }: { sampleMode?: boolean }) {
+export function CpfTodos({
+  items,
+  sampleMode = false,
+}: {
+  items: CpfTodoItem[] | null;
+  sampleMode?: boolean;
+}) {
+  if (!items || items.length === 0) {
+    return (
+      <>
+        <div className={"k-sec"}>
+          <h2>
+            相关待办
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+          </h2>
+        </div>
+        <EmptyBlock message="暂无待办" />
+      </>
+    );
+  }
+
   return (
     <>
       <div className={"k-sec"}>
@@ -14,7 +37,7 @@ export function CpfTodos({ sampleMode = false }: { sampleMode?: boolean }) {
       </div>
       <div className={"card"}>
         <ul className={"ck"}>
-          {C2_TODOS.map((item) => {
+          {items.map((item) => {
             const liClass = [
               item.overdue ? "k-late" : "",
               item.irreversible ? "k-risk" : "",

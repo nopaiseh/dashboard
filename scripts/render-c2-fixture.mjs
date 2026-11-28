@@ -25,6 +25,9 @@ const { SAMPLE_DASHBOARD } = await import(
 const { CpfSection } = await import(
   "../src/components/qingjian/dashboard/CpfSection.tsx"
 );
+const { parseCpfModel } = await import(
+  "../src/components/qingjian/dashboard/parseCpfModel.ts"
+);
 
 const cssPath = resolve(root, "src/components/qingjian/qingjian.css");
 const globalsPath = resolve(root, "src/app/globals.css");
@@ -33,8 +36,13 @@ const globals = readFileSync(globalsPath, "utf8");
 const rootMatch = globals.match(/:root\s*\{[\s\S]*?\n\}/);
 const rootCss = rootMatch ? rootMatch[0] : "";
 
+const cpfSec = SAMPLE_DASHBOARD.sections.find((s) => s.category === "cpf");
+const sampleModel = cpfSec
+  ? parseCpfModel(cpfSec, SAMPLE_DASHBOARD.headline)
+  : null;
+
 const body =
-  range === "all"
+  range === "all" && sampleModel
     ? renderToStaticMarkup(
         createElement(
           "div",
@@ -46,6 +54,7 @@ const body =
             "此页所有数字、日期均为设计稿占位，不是真实数据。",
           ),
           createElement(CpfSection, {
+            model: sampleModel,
             sampleMode: true,
             trendRange: "all",
           }),

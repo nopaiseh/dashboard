@@ -1,8 +1,31 @@
-import { C2_CONTRIB } from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
+import type { CpfContribData } from "./cpfModel";
 import { formatMoney } from "./format";
 
-export function CpfContrib({ sampleMode = false }: { sampleMode?: boolean }) {
-  const c = C2_CONTRIB;
+export function CpfContrib({
+  data,
+  sampleMode = false,
+}: {
+  data: CpfContribData | null;
+  sampleMode?: boolean;
+}) {
+  if (!data) {
+    return (
+      <>
+        <div className={"k-sec"}>
+          <h2>
+            本月缴存
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+          </h2>
+        </div>
+        <EmptyBlock message="暂无本月缴存" />
+      </>
+    );
+  }
+
+  const c = data;
   return (
     <>
       <div className={"k-sec"}>
@@ -12,7 +35,10 @@ export function CpfContrib({ sampleMode = false }: { sampleMode?: boolean }) {
             <span className={"chip chipSample"}>示例数据</span>
           ) : null}
         </h2>
-        <span className={"r"}>{c.asOfMonth}入账</span>
+        <span className={"r"}>
+          {c.asOfMonth}
+          {c.asOfMonth ? "入账" : ""}
+        </span>
       </div>
       <div className={"card"}>
         <table className={"k-tbl"}>
@@ -29,9 +55,7 @@ export function CpfContrib({ sampleMode = false }: { sampleMode?: boolean }) {
               <th>OA</th>
               <th>SA</th>
               <th>MA</th>
-              <th>
-                已缴 {formatMoney(c.paidYtd)} · 剩余
-              </th>
+              <th>已缴 {formatMoney(c.paidYtd)} · 剩余</th>
             </tr>
           </thead>
           <tbody>
@@ -54,7 +78,7 @@ export function CpfContrib({ sampleMode = false }: { sampleMode?: boolean }) {
             </tr>
           </tbody>
         </table>
-        <div className={"k-mini"}>{c.note}</div>
+        {c.note ? <div className={"k-mini"}>{c.note}</div> : null}
       </div>
     </>
   );

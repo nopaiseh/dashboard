@@ -1,44 +1,52 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
-import {
-  C2_COLORS,
-  C2_EMPLOYER_CHANGES,
-  C2_HIT,
-  C2_INT_TOTAL,
-  C2_MONTHS,
-  C2_PROJ,
-  C2_TARGETS,
-  C2_TRANSFERS,
-  C2_YEAR_END,
-  type AccBalances,
-} from "./c2Data";
+import { useId, useState, type KeyboardEvent } from "react";
+import { EmptyBlock } from "./EmptyBlock";
+import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
+import { CPF_COLORS } from "./cpfTheme";
 import { formatMoney } from "./format";
 import type { ChartRangeMode } from "./types";
 
-type StackPoint = {
-  t: string;
-  balances: AccBalances;
-  phase: "actual" | "projected";
-  grain: "month" | "year";
-};
-
 export function StackedTrendChart({
+  data,
   sampleMode = false,
-  initialRange = "12m",
+  initialRange,
 }: {
+  data: CpfTrendData | null;
   sampleMode?: boolean;
-  /** 截图夹具可强制「全部」视图 */
   initialRange?: ChartRangeMode;
 }) {
   const baseId = useId();
-  const [range, setRange] = useState<ChartRangeMode>(initialRange);
+  const [range, setRange] = useState<ChartRangeMode>(
+    initialRange ?? data?.defaultRange ?? "12m",
+  );
   const [hover, setHover] = useState<string | null>(null);
 
-  const points12 = useMemo(() => build12m(), []);
-  const pointsAll = useMemo(() => buildAll(), []);
-  const points = range === "12m" ? points12 : pointsAll;
+  if (!data || (data.points12.length === 0 && data.pointsAll.length === 0)) {
+    return (
+      <section id="c2-trend">
+        <div className={"k-sec"}>
+          <h2>
+            余额走势
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+            <span className={"chip chipEst"}>估算</span>
+          </h2>
+        </div>
+        <EmptyBlock message="暂无走势数据" />
+      </section>
+    );
+  }
+
+  const points = range === "12m" ? data.points12 : data.pointsAll;
   const hovered = points.find((p) => p.t === hover) ?? null;
+
+  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    setRange(e.key === "ArrowLeft" ? "12m" : "all");
+  };
 
   return (
     <section id="c2-trend">
@@ -55,6 +63,7 @@ export function StackedTrendChart({
             className={"k-seg"}
             role="tablist"
             aria-label="走势图时间范围"
+            onKeyDown={onTabKey}
           >
             <button
               type="button"
@@ -81,13 +90,11 @@ export function StackedTrendChart({
 
       <div className={"card"}>
         <div className={"k-ph"}>
-          {range === "12m"
-            ? "近 12 个月 · 实际"
-            : "全部 · 实际 + 估算"}
+          {range === "12m" ? "近 12 个月 · 实际" : "全部 · 实际 + 估算"}
           <span className={"k-yr"}>
             {range === "12m"
-              ? "2025 年 11 月 – 2026 年 10 月，均为月底数"
-              : "2016–2025 年底数 · 2026 起月底数 · 虚线为推算"}
+              ? data.subtitle12 ?? "月底数为主；虚线为推算"
+              : data.subtitleAll ?? "年底数 / 月底数 · 虚线为推算"}
           </span>
         </div>
 
@@ -95,13 +102,14 @@ export function StackedTrendChart({
           points={points}
           mode={range}
           baseId={baseId}
+          data={data}
           onHover={setHover}
         />
 
         <p className={"qj-dashChartTooltip"} aria-live="polite">
           {hovered
             ? tipText(hovered)
-            : "悬停或聚焦数据点可查看明细（年底数 / 月底数）"}
+            : "悬停或聚焦数据点可查看明细（年底数 / 月底数）；左右方向键切换范围"}
         </p>
 
         <div className={"legend"}>
@@ -143,65 +151,24 @@ export function StackedTrendChart({
   );
 }
 
-function tipText(p: StackPoint): string {
+function tipText(p: CpfTrendPoint): string {
   const grain = p.grain === "year" ? "年底数" : "月底数";
   const phase = p.phase === "projected" ? "（推算）" : "";
   const tot = p.balances.OA + p.balances.SA + p.balances.MA;
   return `${p.t} ${grain}${phase}：OA ${formatMoney(p.balances.OA)} · SA ${formatMoney(p.balances.SA)} · MA ${formatMoney(p.balances.MA)} · 合计 ${formatMoney(tot)}`;
 }
 
-function build12m(): StackPoint[] {
-  const actual = C2_MONTHS.map((m) => ({
-    t: m.t,
-    balances: m.balances,
-    phase: "actual" as const,
-    grain: "month" as const,
-  }));
-  // 近 12 个月视图：再往后约半年推算（逐月）
-  const projected = C2_PROJ.filter((m) => m.t <= "2027-04").map((m) => ({
-    t: m.t,
-    balances: m.balances,
-    phase: "projected" as const,
-    grain: "month" as const,
-  }));
-  return [...actual, ...projected];
-}
-
-function buildAll(): StackPoint[] {
-  const years: StackPoint[] = Object.entries(C2_YEAR_END).map(
-    ([y, balances]) => ({
-      t: y,
-      balances,
-      phase: "actual" as const,
-      grain: "year" as const,
-    }),
-  );
-  const months2026 = C2_MONTHS.filter((m) => m.t.startsWith("2026")).map(
-    (m) => ({
-      t: m.t,
-      balances: m.balances,
-      phase: "actual" as const,
-      grain: "month" as const,
-    }),
-  );
-  const projected = C2_PROJ.map((m) => ({
-    t: m.t,
-    balances: m.balances,
-    phase: "projected" as const,
-    grain: "month" as const,
-  }));
-  return [...years, ...months2026, ...projected];
-}
-
 function TrendSvg({
   points,
   mode,
   baseId,
+  data,
   onHover,
 }: {
-  points: StackPoint[];
+  points: CpfTrendPoint[];
   mode: ChartRangeMode;
   baseId: string;
+  data: CpfTrendData;
   onHover: (t: string | null) => void;
 }) {
   const W = mode === "all" ? 900 : 640;
@@ -213,7 +180,8 @@ function TrendSvg({
   const totals = points.map(
     (p) => p.balances.OA + p.balances.SA + p.balances.MA,
   );
-  const maxV = Math.max(...totals, C2_TARGETS.ERS * 0.3) * 1.08;
+  const guideMax = data.guides.reduce((m, g) => Math.max(m, g.amount), 0);
+  const maxV = Math.max(...totals, guideMax * 0.3, 1) * 1.08;
   const n = Math.max(1, points.length - 1);
 
   const xy = (i: number, v: number) => ({
@@ -224,13 +192,12 @@ function TrendSvg({
   const stackLayers = (
     phase: "actual" | "projected",
     key: keyof AccBalances,
-    baseline: (p: StackPoint) => number,
+    baseline: (p: CpfTrendPoint) => number,
   ) => {
     const idxs = points
       .map((p, i) => ({ p, i }))
       .filter(({ p }) => p.phase === phase);
     if (idxs.length === 0) return "";
-    // Include bridge from last actual for projected
     let seq = idxs;
     if (phase === "projected") {
       const lastActual = [...points.entries()]
@@ -271,9 +238,10 @@ function TrendSvg({
       .join(" ");
   };
 
-  const gridVals = mode === "all"
-    ? [100_000, 200_000, 300_000, 400_000]
-    : [100_000, 200_000, 300_000];
+  const gridVals =
+    mode === "all"
+      ? [100_000, 200_000, 300_000, 400_000]
+      : [100_000, 200_000, 300_000];
 
   const xLabels =
     mode === "12m"
@@ -283,7 +251,7 @@ function TrendSvg({
           { i: 5, label: "4月" },
           { i: 8, label: "7月" },
           { i: 11, label: "10月" },
-        ]
+        ].filter((x) => x.i < points.length)
       : [
           { i: points.findIndex((p) => p.t === "2016"), label: "2016" },
           { i: points.findIndex((p) => p.t === "2018"), label: "2018" },
@@ -293,9 +261,12 @@ function TrendSvg({
           { i: points.findIndex((p) => p.t === "2026-01"), label: "2026" },
         ].filter((x) => x.i >= 0);
 
-  // Jan interest step annotation (2026-01)
-  const janIdx = points.findIndex((p) => p.t === "2026-01");
-  const decIdx = points.findIndex((p) => p.t === "2025-12" || p.t === "2025");
+  const janIdx = data.janInterestAt
+    ? points.findIndex((p) => p.t === data.janInterestAt)
+    : -1;
+
+  const employer = data.events.filter((e) => e.kind === "employer_change");
+  const transfers = data.events.filter((e) => e.kind === "lump_sum");
 
   return (
     <svg
@@ -332,74 +303,77 @@ function TrendSvg({
         );
       })}
 
-      {/* stacked fills: OA (bottom), SA, MA */}
       <path
         d={stackLayers("actual", "OA", () => 0)}
-        fill={C2_COLORS.oa}
+        fill={CPF_COLORS.oa}
         opacity={0.95}
       />
       <path
         d={stackLayers("actual", "SA", (p) => p.balances.OA)}
-        fill={C2_COLORS.sa}
+        fill={CPF_COLORS.sa}
         opacity={0.92}
       />
       <path
         d={stackLayers("actual", "MA", (p) => p.balances.OA + p.balances.SA)}
-        fill={C2_COLORS.ma}
+        fill={CPF_COLORS.ma}
         opacity={0.9}
       />
       <path
         d={stackLayers("projected", "OA", () => 0)}
-        fill={C2_COLORS.oa}
+        fill={CPF_COLORS.oa}
         opacity={0.35}
       />
       <path
         d={stackLayers("projected", "SA", (p) => p.balances.OA)}
-        fill={C2_COLORS.sa}
+        fill={CPF_COLORS.sa}
         opacity={0.3}
       />
       <path
-        d={stackLayers("projected", "MA", (p) => p.balances.OA + p.balances.SA)}
-        fill={C2_COLORS.ma}
+        d={stackLayers(
+          "projected",
+          "MA",
+          (p) => p.balances.OA + p.balances.SA,
+        )}
+        fill={CPF_COLORS.ma}
         opacity={0.28}
       />
 
       <path d={topLine("actual")} className={"k-topActual"} fill="none" />
       <path d={topLine("projected")} className={"k-topProjected"} fill="none" />
 
-      {/* Jan interest step label */}
-      {janIdx >= 0 && decIdx >= 0 ? (
-        <g>
-          <text
-            x={xy(janIdx, totals[janIdx] ?? 0).x}
-            y={xy(janIdx, totals[janIdx] ?? 0).y - 10}
-            textAnchor="middle"
-            className={"k-stepLabel"}
-          >
-            {`1 月利息 +${formatMoney(C2_INT_TOTAL)}`}
-          </text>
-        </g>
+      {janIdx >= 0 && data.janInterestTotal != null ? (
+        <text
+          x={xy(janIdx, totals[janIdx] ?? 0).x}
+          y={xy(janIdx, totals[janIdx] ?? 0).y - 10}
+          textAnchor="middle"
+          className={"k-stepLabel"}
+        >
+          {`1 月利息 +${formatMoney(data.janInterestTotal)}`}
+        </text>
       ) : null}
 
-      {/* FRS / BRS / ERS guides on all view */}
-      {mode === "all" ? (
-        <>
-          <Guide
-            y={xy(0, C2_TARGETS.FRS).y}
-            label={`FRS 已达 · ${C2_HIT.FRS}`}
-            x1={PAD.left}
-            x2={W - PAD.right}
-          />
-          <Guide
-            y={xy(0, C2_TARGETS.BRS).y}
-            label={`BRS 已达 · ${C2_HIT.BRS}`}
-            x1={PAD.left}
-            x2={W - PAD.right}
-          />
-        </>
-      ) : null}
+      {mode === "all"
+        ? data.guides.map((g) => (
+            <g key={g.key}>
+              <line
+                x1={PAD.left}
+                x2={W - PAD.right}
+                y1={xy(0, g.amount).y}
+                y2={xy(0, g.amount).y}
+                className={"k-guideLine"}
+              />
+              <text
+                x={W - PAD.right}
+                y={xy(0, g.amount).y - 4}
+                textAnchor="end"
+                className={"k-guideLabel"}
+              >
+                {g.label}
+              </text>
+            </g>
+          ))
+        : null}
 
-      {/* points: year solid, month small; no hollow dots on projected */}
       {points.map((p, i) => {
         if (p.phase === "projected") return null;
         const tot = p.balances.OA + p.balances.SA + p.balances.MA;
@@ -411,9 +385,7 @@ function TrendSvg({
               cx={x}
               cy={y}
               r={r}
-              className={
-                p.grain === "year" ? "k-dotYear" : "k-dotMonth"
-              }
+              className={p.grain === "year" ? "k-dotYear" : "k-dotMonth"}
             />
             <circle
               cx={x}
@@ -432,8 +404,7 @@ function TrendSvg({
         );
       })}
 
-      {/* events: employer + transfers (all view; also 12m if in range) */}
-      {C2_EMPLOYER_CHANGES.map((ev) => {
+      {employer.map((ev) => {
         const i = nearestIndex(points, ev.t);
         if (i < 0) return null;
         const { x } = xy(i, 0);
@@ -447,19 +418,14 @@ function TrendSvg({
               rx={4}
               className={"k-empBadge"}
             />
-            <text
-              x={x}
-              y={H - 16}
-              textAnchor="middle"
-              className={"k-empText"}
-            >
+            <text x={x} y={H - 16} textAnchor="middle" className={"k-empText"}>
               换雇主
             </text>
           </g>
         );
       })}
-      {C2_TRANSFERS.map((tr) => {
-        const i = nearestIndex(points, String(tr.year));
+      {transfers.map((tr) => {
+        const i = nearestIndex(points, tr.t);
         if (i < 0) return null;
         const tot =
           points[i].balances.OA +
@@ -467,7 +433,7 @@ function TrendSvg({
           points[i].balances.MA;
         const { x, y } = xy(i, tot);
         return (
-          <g key={`flag-${tr.year}`}>
+          <g key={`flag-${tr.t}-${tr.short ?? tr.label}`}>
             <line
               x1={x}
               x2={x}
@@ -479,13 +445,9 @@ function TrendSvg({
               d={`M${x} ${y - 28} l12 5 l-12 5 z`}
               className={"qj-dashChartFlag"}
             />
-            <title>{tr.text}</title>
-            <text
-              x={x + 14}
-              y={y - 22}
-              className={"k-flagLabel"}
-            >
-              {tr.short}
+            <title>{tr.label}</title>
+            <text x={x + 14} y={y - 22} className={"k-flagLabel"}>
+              {tr.short ?? tr.label}
             </text>
           </g>
         );
@@ -509,37 +471,13 @@ function TrendSvg({
   );
 }
 
-function Guide({
-  y,
-  label,
-  x1,
-  x2,
-}: {
-  y: number;
-  label: string;
-  x1: number;
-  x2: number;
-}) {
-  return (
-    <g>
-      <line x1={x1} x2={x2} y1={y} y2={y} className={"k-guideLine"} />
-      <text x={x2} y={y - 4} textAnchor="end" className={"k-guideLabel"}>
-        {label}
-      </text>
-    </g>
-  );
-}
-
-function nearestIndex(points: StackPoint[], t: string): number {
-  // exact month
+function nearestIndex(points: CpfTrendPoint[], t: string): number {
   let i = points.findIndex((p) => p.t === t || p.t.startsWith(t));
   if (i >= 0) return i;
-  // year only
   if (/^\d{4}$/.test(t)) {
     i = points.findIndex((p) => p.t === t || p.t.startsWith(`${t}-`));
     return i;
   }
-  // YYYY-MM → year end fallback
   const y = t.slice(0, 4);
   return points.findIndex((p) => p.t === y);
 }

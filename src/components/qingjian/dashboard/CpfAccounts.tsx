@@ -1,11 +1,5 @@
-import {
-  C2_BAL,
-  C2_CHG_M,
-  C2_CHG_Y,
-  C2_CONTRIB,
-  C2_TOTAL,
-  type AccBalances,
-} from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
+import type { AccBalances, CpfAccountsData } from "./cpfModel";
 import { formatMoney } from "./format";
 
 const LABELS = [
@@ -15,19 +9,30 @@ const LABELS = [
 ];
 
 export function CpfAccounts({
-  balances = C2_BAL,
-  chgM = C2_CHG_M,
-  chgY = C2_CHG_Y,
-  asOf = "截至结算单 2026-10-31",
+  data,
   sampleMode = false,
 }: {
-  balances?: AccBalances;
-  chgM?: AccBalances;
-  chgY?: AccBalances;
-  asOf?: string;
+  data: CpfAccountsData | null;
   sampleMode?: boolean;
 }) {
-  const total = balances.OA + balances.SA + balances.MA || C2_TOTAL;
+  if (!data) {
+    return (
+      <>
+        <div className={"k-sec"}>
+          <h2>
+            户口余额
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+          </h2>
+        </div>
+        <EmptyBlock message="暂无户口余额" />
+      </>
+    );
+  }
+
+  const { balances, chgM, chgY, asOf } = data;
+  const total = balances.OA + balances.SA + balances.MA;
   const totalChgM = chgM.OA + chgM.SA + chgM.MA;
 
   return (
@@ -59,24 +64,51 @@ export function CpfAccounts({
             </span>
           </div>
         ))}
-        <div className={"num numEm"}>
-          <div className={"lb"}>
-            <span>
-              合计 <i>OA+SA+MA</i>
-            </span>
-          </div>
-          <b>{formatMoney(total)}</b>
-          <span className={"k-chg"}>
-            比上月 <b>▲ {formatMoney(totalChgM)}</b>
-          </span>
-          <span className={"k-yr"}>
-            缴存 {C2_CONTRIB.total.toLocaleString("en-SG")} · 利息 0
-          </span>
-          <span className={"k-yr"}>
-            比年初 +{formatMoney(chgY.OA + chgY.SA + chgY.MA)}
-          </span>
-        </div>
+        <TotalCard
+          total={total}
+          totalChgM={totalChgM}
+          chgY={chgY}
+          monthContribTotal={data.monthContribTotal}
+          monthInterest={data.monthInterest}
+        />
       </div>
     </>
+  );
+}
+
+function TotalCard({
+  total,
+  totalChgM,
+  chgY,
+  monthContribTotal,
+  monthInterest,
+}: {
+  total: number;
+  totalChgM: number;
+  chgY: AccBalances;
+  monthContribTotal?: number;
+  monthInterest?: number;
+}) {
+  return (
+    <div className={"num numEm"}>
+      <div className={"lb"}>
+        <span>
+          合计 <i>OA+SA+MA</i>
+        </span>
+      </div>
+      <b>{formatMoney(total)}</b>
+      <span className={"k-chg"}>
+        比上月 <b>▲ {formatMoney(totalChgM)}</b>
+      </span>
+      {monthContribTotal !== undefined ? (
+        <span className={"k-yr"}>
+          缴存 {monthContribTotal.toLocaleString("en-SG")} · 利息{" "}
+          {(monthInterest ?? 0).toLocaleString("en-SG")}
+        </span>
+      ) : null}
+      <span className={"k-yr"}>
+        比年初 +{formatMoney(chgY.OA + chgY.SA + chgY.MA)}
+      </span>
+    </div>
   );
 }

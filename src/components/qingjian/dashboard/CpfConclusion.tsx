@@ -1,21 +1,25 @@
-import { C2_CONCLUSION } from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
 
 export function CpfConclusion({
   title,
   body,
   sampleMode = false,
-  reachedFrs = true,
+  reachedFrs = false,
 }: {
   title?: string;
   body?: string;
   sampleMode?: boolean;
+  /** 由数据决定，默认 false，禁止写死为已达标。 */
   reachedFrs?: boolean;
 }) {
-  const headline = (title ?? C2_CONCLUSION.title).trim();
-  const support = (body ?? C2_CONCLUSION.body).trim();
-  if (!headline) return null;
+  const headline = (title ?? "").trim();
+  const support = (body ?? "").trim();
+  if (!headline) {
+    return (
+      <EmptyBlock title="一句话结论" message="暂无结论" />
+    );
+  }
 
-  // Split headline for em emphasis on money / date if matching C2 pattern
   const parts = splitConclusion(headline);
 
   return (
@@ -43,7 +47,6 @@ export function CpfConclusion({
 function splitConclusion(
   text: string,
 ): Array<{ text: string; em?: boolean }> {
-  // Emphasize "S$ …" amounts and "YYYY 年 …" ETA phrases like C2.
   const re =
     /(S\$\s*[\d,]+|S\$\s*[\d.]+|\d{4}\s*年(?:\s*\d+\s*月)?)/g;
   const out: Array<{ text: string; em?: boolean }> = [];

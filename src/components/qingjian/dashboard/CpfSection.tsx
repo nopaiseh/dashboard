@@ -7,41 +7,48 @@ import { CpfLedger } from "./CpfLedger";
 import { CpfProgress } from "./CpfProgress";
 import { CpfTodos } from "./CpfTodos";
 import { StackedTrendChart } from "./StackedTrendChart";
-import { C2_CONCLUSION } from "./c2Data";
+import type { CpfViewModel } from "./cpfModel";
+import type { ChartRangeMode } from "./types";
 
 /**
- * C2 定稿九段：结论 → 户口 → 进度 → 走势 → 缴存 → 年度 → 待办 → 流水 → 估算说明。
- * 示例数字来自 c2_model；生产页不显示「示例数据」chip / 横幅。
+ * C2 九段布局。金额只来自传入的 model（由 parseCpfModel 从 API 分区解析）。
+ * 禁止在此文件 import 示例数据模块。
  */
 export function CpfSection({
+  model,
   sampleMode = false,
-  conclusionTitle,
-  conclusionBody,
-  trendRange = "12m",
+  trendRange,
 }: {
+  model: CpfViewModel;
   sampleMode?: boolean;
-  conclusionTitle?: string;
-  conclusionBody?: string;
-  /** 截图夹具：走势默认范围 */
-  trendRange?: "12m" | "all";
+  trendRange?: ChartRangeMode;
 }) {
   return (
     <div className={"k-cpf"}>
       <CpfConclusion
-        title={conclusionTitle ?? C2_CONCLUSION.title}
-        body={conclusionBody ?? C2_CONCLUSION.body}
+        title={model.conclusion?.title}
+        body={model.conclusion?.body}
         sampleMode={sampleMode}
-        reachedFrs
+        reachedFrs={model.conclusion?.reachedFrs === true}
       />
-      <CpfAccounts sampleMode={sampleMode} />
-      <CpfProgress sampleMode={sampleMode} />
-      <StackedTrendChart sampleMode={sampleMode} initialRange={trendRange} />
-      <CpfContrib sampleMode={sampleMode} />
-      <CpfAnnual sampleMode={sampleMode} />
-      <CpfTodos sampleMode={sampleMode} />
-      <CpfLedger sampleMode={sampleMode} />
+      <CpfAccounts data={model.accounts} sampleMode={sampleMode} />
+      <CpfProgress data={model.progress} sampleMode={sampleMode} />
+      <StackedTrendChart
+        data={model.trend}
+        sampleMode={sampleMode}
+        initialRange={trendRange ?? model.trend?.defaultRange}
+      />
+      <CpfContrib data={model.contrib} sampleMode={sampleMode} />
+      <CpfAnnual data={model.annual} sampleMode={sampleMode} />
+      <CpfTodos items={model.todos} sampleMode={sampleMode} />
+      <CpfLedger
+        rows={model.ledger}
+        summary={model.ledgerSummary}
+        emptyWithdrawals={model.ledgerEmptyWithdrawals}
+        sampleMode={sampleMode}
+      />
       <div className={"k-assumptionsWrap"}>
-        <CpfAssumptions />
+        <CpfAssumptions data={model.assumptions} />
       </div>
     </div>
   );

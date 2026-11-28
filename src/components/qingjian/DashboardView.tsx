@@ -1,7 +1,8 @@
 import type { DashboardReadResult } from "@/lib/dashboard/types";
 import { BlockRenderer } from "./dashboard/BlockRenderer";
 import { CpfSection } from "./dashboard/CpfSection";
-import { sectionUsesC2Layout } from "./dashboard/fixtures";
+import { sectionUsesC2Layout } from "./dashboard/cpfLayout";
+import { parseCpfModel } from "./dashboard/parseCpfModel";
 import {
   PAGE_EMPTY_TEXT,
   categoryLabel,
@@ -18,7 +19,7 @@ export function DashboardView({
   sampleMode = false,
 }: {
   data: DashboardReadResult;
-  /** 仅截图 / 故事夹具为 true；生产页永不传。 */
+  /** 仅截图 / 故事夹具为 true；生产页永不传。只控制横幅/chip，不注入示例金额。 */
   sampleMode?: boolean;
 }) {
   const sections = sortSectionsForView(data.sections);
@@ -41,25 +42,15 @@ export function DashboardView({
         sections.map((section) => {
           if (
             isPinnedCategory(section.category) &&
-            (sampleMode || sectionUsesC2Layout(section))
+            sectionUsesC2Layout(section)
           ) {
-            const c2 = section.blocks.find(
-              (b) => b.payload.role === "c2_layout",
-            );
+            // 正式与夹具同一路径：只解析分区 blocks，绝不回落 c2 示例数字。
+            const model = parseCpfModel(section, data.headline);
             return (
               <CpfSection
                 key={section.id}
+                model={model}
                 sampleMode={sampleMode}
-                conclusionTitle={
-                  (typeof c2?.payload.title === "string"
-                    ? c2.payload.title
-                    : data.headline) || undefined
-                }
-                conclusionBody={
-                  typeof c2?.payload.text === "string"
-                    ? c2.payload.text
-                    : undefined
-                }
               />
             );
           }

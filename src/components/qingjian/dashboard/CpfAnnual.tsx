@@ -1,7 +1,30 @@
-import { C2_INT_JAN, C2_INT_TOTAL, C2_RATES } from "./c2Data";
+import { EmptyBlock } from "./EmptyBlock";
+import type { CpfAnnualData } from "./cpfModel";
 import { formatMoney } from "./format";
 
-export function CpfAnnual({ sampleMode = false }: { sampleMode?: boolean }) {
+export function CpfAnnual({
+  data,
+  sampleMode = false,
+}: {
+  data: CpfAnnualData | null;
+  sampleMode?: boolean;
+}) {
+  if (!data) {
+    return (
+      <>
+        <div className={"k-sec"}>
+          <h2>
+            年度
+            {sampleMode ? (
+              <span className={"chip chipSample"}>示例数据</span>
+            ) : null}
+          </h2>
+        </div>
+        <EmptyBlock message="暂无年度数据" />
+      </>
+    );
+  }
+
   return (
     <>
       <div className={"k-sec"}>
@@ -15,10 +38,7 @@ export function CpfAnnual({ sampleMode = false }: { sampleMode?: boolean }) {
       </div>
       <div className={"k-two"}>
         <div className={"card"}>
-          <h2>
-            2026 年 1 月入账的利息{" "}
-            <span className={"k-yr"}>（2025 年度）</span>
-          </h2>
+          <h2>{data.yearLabel}</h2>
           <table className={"k-tbl"}>
             <thead>
               <tr>
@@ -30,23 +50,23 @@ export function CpfAnnual({ sampleMode = false }: { sampleMode?: boolean }) {
             <tbody>
               <tr>
                 <td className={"l"}>OA</td>
-                <td>{(C2_RATES.OA * 100).toFixed(1)}%</td>
+                <td>{data.rates.OA}</td>
                 <td>
-                  <b>{formatMoney(C2_INT_JAN.OA)}</b>
+                  <b>{formatMoney(data.interest.OA)}</b>
                 </td>
               </tr>
               <tr>
                 <td className={"l"}>SA</td>
-                <td>4.0% + 额外 1%</td>
+                <td>{data.rates.SA}</td>
                 <td>
-                  <b>{formatMoney(C2_INT_JAN.SA)}</b>
+                  <b>{formatMoney(data.interest.SA)}</b>
                 </td>
               </tr>
               <tr>
                 <td className={"l"}>MA</td>
-                <td>4.0%</td>
+                <td>{data.rates.MA}</td>
                 <td>
-                  <b>{formatMoney(C2_INT_JAN.MA)}</b>
+                  <b>{formatMoney(data.interest.MA)}</b>
                 </td>
               </tr>
             </tbody>
@@ -54,29 +74,31 @@ export function CpfAnnual({ sampleMode = false }: { sampleMode?: boolean }) {
               <tr>
                 <td className={"l"}>合计</td>
                 <td />
-                <td>{formatMoney(C2_INT_TOTAL)}</td>
+                <td>{formatMoney(data.interestTotal)}</td>
               </tr>
             </tfoot>
           </table>
-          <div className={"k-mini"}>
-            每年 1 月入账一次，下次 2027 年 1 月。头 S$ 60,000 的额外 1%
-            计入 SA。利息栏通常只显示合计；示例里 2020 年在「全部」走势图的悬停提示中拆成基本利息
-            + 额外利息。
-          </div>
+          {data.note ? <div className={"k-mini"}>{data.note}</div> : null}
         </div>
 
         <div className={"card"}>
           <div className={"k-rstuHead"}>
             <h2>RSTU 自愿填补</h2>
-            <span className={"chip chipNeutral"}>12-31 截止</span>
+            {data.rstuDueChip ? (
+              <span className={"chip chipNeutral"}>{data.rstuDueChip}</span>
+            ) : null}
           </div>
-          <div className={"k-empty"}>
-            <b>本年未填补</b>
-            <p>今年还没有自愿填补。上限 S$ 8,000，税务减免尚未使用。</p>
-            <p className={"k-emptyExtra"}>
-              12-31 截止。应急金和信用卡还清优先。
-            </p>
-          </div>
+          {data.rstuEmpty ? (
+            <div className={"k-empty"}>
+              <b>{data.rstuTitle ?? "本年未填补"}</b>
+              {data.rstuBody ? <p>{data.rstuBody}</p> : null}
+              {data.rstuExtra ? (
+                <p className={"k-emptyExtra"}>{data.rstuExtra}</p>
+              ) : null}
+            </div>
+          ) : (
+            <EmptyBlock message="暂无 RSTU 记录" />
+          )}
         </div>
       </div>
     </>
