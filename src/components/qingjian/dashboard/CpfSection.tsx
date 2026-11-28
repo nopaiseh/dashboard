@@ -47,6 +47,7 @@ export function CpfSection({
               }
             : undefined,
           bhs: model.progress?.bhs,
+          frs: model.progress?.frs,
         }}
       />
       <CpfContrib data={model.contrib} sampleMode={sampleMode} />

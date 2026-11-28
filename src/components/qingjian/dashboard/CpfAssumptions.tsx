@@ -16,7 +16,7 @@ export function CpfAssumptions({ data }: { data: CpfAssumptionsData | null }) {
           <span className={"k-asmInline"}>{data.contribDetail}</span>
         </div>
         <div>
-          <span>假设 2 · 利率（现行，按月复利）</span>
+          <span>假设 2 · 利率（现行，按月计提、年末入账）</span>
           <b>{data.rateLine}</b>
           <span className={"k-asmBlock"}>{data.rateExtra}</span>
         </div>

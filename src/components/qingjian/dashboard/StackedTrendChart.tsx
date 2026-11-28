@@ -4,9 +4,10 @@ import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { EmptyBlock } from "./EmptyBlock";
 import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
 import {
-  averageMonthlyContrib,
   resolveAnnualRates,
+  resolveProjectionInflow,
   withNearTermProjection,
+  type ProjectionInflowKind,
 } from "./cpfProjection";
 import { CPF_COLORS } from "./cpfTheme";
 import { formatMoney, parseTrendPointTime } from "./format";
@@ -16,6 +17,8 @@ export type TrendProjectionInput = {
   rates?: { OA?: string; SA?: string; MA?: string };
   contrib?: AccBalances;
   bhs?: number;
+  /** Full Retirement Sum — used for MA overflow routing (under 55). */
+  frs?: number;
 };
 
 /** Evenly pick ~`count` indices from `length` points (inclusive ends). */
@@ -245,13 +248,24 @@ export function StackedTrendChart({
     const source = data
       ? [...data.points12, ...data.pointsAll]
       : [];
-    const contrib =
-      projection?.contrib ??
-      averageMonthlyContrib(
-        source.filter((p) => p.phase === "actual" && p.grain === "month"),
-      );
-    return { rates, contrib, bhs: projection?.bhs };
+    const monthlyActuals = source.filter(
+      (p) => p.phase === "actual" && p.grain === "month",
+    );
+    const { kind: inflowKind } = resolveProjectionInflow(
+      projection?.contrib,
+      monthlyActuals,
+    );
+    return {
+      rates,
+      contrib: projection?.contrib,
+      bhs: projection?.bhs,
+      frs: projection?.frs,
+      inflowKind,
+    };
   }, [data, projection]);
+
+  const inflowKind: ProjectionInflowKind =
+    projOpts.inflowKind ?? "balance_growth";
 
   const points12 = useMemo(() => {
     if (!data) return [];
@@ -382,7 +396,9 @@ export function StackedTrendChart({
           </span>
           <span>
             <i className={"leg-dash"} aria-hidden="true" />
-            估算（按月复利）
+            {inflowKind === "contrib"
+              ? "估算（利息年末入账）"
+              : "估算（余额增幅 · 利息年末入账）"}
           </span>
           {range === "all" ? (
             <>
