@@ -55,7 +55,9 @@ jobs:
           PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
           for f in supabase/migrations/*.sql; do
             echo "Applying $f"
-            PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+            # --single-transaction: each file is atomic (Supabase wraps migrations
+            # the same way; do not embed BEGIN/COMMIT inside migration files).
+            PGPASSWORD=dashboard psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f "$f"
           done
 
       - name: Lint

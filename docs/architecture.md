@@ -14,7 +14,10 @@
 | `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发 |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
-| `goals` / `daily_summaries` | 目标与每日小结 |
+| `goals` | **只读遗留**：目标；已迁到 `dashboard_blocks`（progress）。验证后另 PR 删除 |
+| `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密） |
+| `dashboard_block_events` | 区块审计，只增不改（禁止 UPDATE/DELETE/TRUNCATE） |
+| `daily_summaries` | 每日小结 |
 | `webauthn_credentials` | 本人 passkey |
 | `webauthn_registration` | 单行：`open` **默认 false**；`one_time_token_hash`；`bootstrap_consumed_at`（首次登记成功时写入）；`consumed_setup_grant_jti`（setup-grant 单次消费） |
 | `webauthn_challenges` | 短时 challenge；注册挑战带 `authorized=true` |
@@ -60,10 +63,43 @@
 | POST | `/api/agent/items` | 新建 |
 | PATCH | `/api/agent/items/:id` | RPC `apply_agent_item_patch` 单事务 FOR UPDATE；不回写旧 status；冲突 `SQLSTATE XJ409`→409；approval 且 open 时只能 `withdrawn`；改内容 → 退回 open；**内容字段与 `status: withdrawn` 同时传入 → 400**；有本人决定后禁改 kind |
 | GET | `/api/agent/inbox?since=` | 已决定事项 + 流水；`invalidated` 表示内容事后变更 |
+| POST | `/api/agent/dashboard/sections` | 新建分区（`agent_id`=自己） |
+| PATCH | `/api/agent/dashboard/sections/:id` | 更新自己的分区 |
+| POST | `/api/agent/dashboard/blocks` | 新建区块（加密 payload；无 DELETE） |
+| PATCH | `/api/agent/dashboard/blocks/:id` | 更新自己的区块 |
 
 ## 本人读接口
 
-`GET /api/items`、`/api/goals`、`/api/summaries`（需登录）。决定无批量接口。
+`GET /api/items`、`/api/dashboard`、`/api/goals`（只读遗留）、`/api/summaries`（需登录）。决定无批量接口。
+
+### Dashboard 加密字段
+
+| 明文 | 密文（`dashboard_blocks.payload` JSON） |
+|------|----------------------------------------|
+| `category`、`block_type`、`sort_order`、`agent_id`、时间戳 | 标题、数值、正文、一行标题、列表、进度、图表序列等 |
+
+AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信封版本查密钥）。`payload` 仅允许 `''` 或 `^v[0-9]+:` 前缀（无遗留明文）。服务端派生值接口：`runDerivedCompute`（内存解密→计算→返回；不落库/不缓存/不打明文日志）。
+
+### goals → blocks 迁移（应用侧脚本）
+
+SQL 迁移无法加密（密钥只在 app）。合并并部署 app 后：
+
+环境变量从 **进程环境** 读取（脚本不自动加载 `.env`，也**从不打印**密钥）：
+
+| 变量 | 用途 |
+|------|------|
+| `SUPABASE_URL` | Supabase API |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role（仅服务器） |
+| `FIELD_ENCRYPTION_KEY` 或密钥环 | 与线上 items 相同的字段加密密钥 |
+
+本地示例：`set -a && source .env.local && set +a`，再：
+
+```bash
+npm run migrate-goals                 # dry-run
+npm run migrate-goals -- --execute    # 幂等写入 progress 块；结束后校验行数并试解密
+```
+
+写入走 RPC `migrate_dashboard_progress_block`（分区 + 区块 + 审计同事务；审计 `actor_type=user`，因由阁主在应用侧执行）。块 id 由 `goals.id` 确定性派生；重跑跳过已存在块。`due_at` 规范化为 `toISOString()`。`goals` 表本迁移已改为只读，**本 PR 不删除**；验证后另 PR 删除。
 
 ## 防护
 

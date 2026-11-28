@@ -11,6 +11,7 @@ export {
   loadAgents,
   loadAllItems,
   loadCounts,
+  loadDashboard,
   loadGoals,
   loadHeldItems,
   loadItemDetail,

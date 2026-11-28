@@ -25,6 +25,7 @@ export {
   resetFieldKeyringCache,
   setFieldDecryptFailureReporter,
   type DecryptItemResult,
+  type FieldColumn,
   type FieldContext,
   type SensitiveColumn,
   type SensitiveItemFields,

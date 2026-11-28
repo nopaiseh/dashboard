@@ -5,6 +5,15 @@ import {
   decryptItemSensitiveFields,
   decryptItemsSensitiveFields,
 } from "@/lib/crypto/fields";
+import { decryptBlockPayload } from "@/lib/dashboard/crypto";
+import { extractHeadline } from "@/lib/dashboard/logic";
+import type {
+  DashboardBlockPublic,
+  DashboardBlockRow,
+  DashboardReadResult,
+  DashboardSectionPublic,
+  DashboardSectionRow,
+} from "@/lib/dashboard/types";
 import {
   DataReadError,
   SessionRequiredError,
@@ -321,6 +330,78 @@ export async function loadGoals(): Promise<
     ...g,
     agent_name: g.agent_id ? agents.get(g.agent_id)?.name ?? null : null,
   }));
+}
+
+const SECTION_COLUMNS =
+  "id, category, sort_order, agent_id, created_at, updated_at";
+
+const BLOCK_COLUMNS =
+  "id, section_id, block_type, sort_order, agent_id, payload, created_at, updated_at";
+
+/**
+ * Owner dashboard read (encrypted blocks decrypted in memory).
+ * `headline` is "" when no headline block exists (frontend fallback).
+ */
+export async function loadDashboard(): Promise<DashboardReadResult> {
+  await ensureSession();
+  const supabase = getServiceClient();
+  const [sectionsRes, blocksRes] = await Promise.all([
+    supabase
+      .from("dashboard_sections")
+      .select(SECTION_COLUMNS)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("dashboard_blocks")
+      .select(BLOCK_COLUMNS)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+  ]);
+  assertNoError(
+    "failed to load dashboard sections",
+    sectionsRes.error,
+    "dashboard_sections",
+  );
+  assertNoError(
+    "failed to load dashboard blocks",
+    blocksRes.error,
+    "dashboard_blocks",
+  );
+
+  const sections = (sectionsRes.data ?? []) as DashboardSectionRow[];
+  const blocks = (blocksRes.data ?? []) as DashboardBlockRow[];
+
+  const publicBlocks: DashboardBlockPublic[] = blocks.map((row) => {
+    const decrypted = decryptBlockPayload(row);
+    return {
+      id: row.id,
+      section_id: row.section_id,
+      block_type: row.block_type,
+      sort_order: row.sort_order,
+      agent_id: row.agent_id,
+      payload: decrypted.payload,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      decrypt_failed: decrypted.decrypt_failed,
+    };
+  });
+
+  const bySection = new Map<string, DashboardBlockPublic[]>();
+  for (const block of publicBlocks) {
+    const list = bySection.get(block.section_id) ?? [];
+    list.push(block);
+    bySection.set(block.section_id, list);
+  }
+
+  const sectionPublic: DashboardSectionPublic[] = sections.map((s) => ({
+    ...s,
+    blocks: bySection.get(s.id) ?? [],
+  }));
+
+  return {
+    headline: extractHeadline(publicBlocks),
+    sections: sectionPublic,
+  };
 }
 
 export async function loadAgents(): Promise<AgentRow[]> {
