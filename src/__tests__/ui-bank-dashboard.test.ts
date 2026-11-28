@@ -9,7 +9,10 @@ import { BankLedgerPanel } from "@/components/qingjian/dashboard/BankLedgerPanel
 import { BankOverview } from "@/components/qingjian/dashboard/BankOverview";
 import { BankProgressBar } from "@/components/qingjian/dashboard/BankProgressBar";
 import { BankSection } from "@/components/qingjian/dashboard/BankSection";
-import { computeTrendYDomain } from "@/components/qingjian/dashboard/BankTrend";
+import {
+  computeTrendYDomain,
+  formatTrendValueLabel,
+} from "@/components/qingjian/dashboard/BankTrend";
 import {
   BANK_EMPTY,
   BANK_NO_COMPARE,
@@ -301,6 +304,12 @@ describe("bank trend Y domain", () => {
     expect(allNeg.yMax).toBeLessThanOrEqual(0);
     expect(allNeg.yMin).toBeLessThanOrEqual(-8000);
   });
+
+  it("trend value label keeps minus sign after stripping S$", () => {
+    expect(formatTrendValueLabel(-1234)).toBe("−1,234");
+    expect(formatTrendValueLabel(1234)).toBe("1,234");
+    expect(formatTrendValueLabel(-1234.5)).toBe("−1,234.50");
+  });
 });
 
 describe("bank UI render (FAKE)", () => {
@@ -401,5 +410,19 @@ describe("bank UI render (FAKE)", () => {
     );
     expect(mid).toContain('aria-valuenow="42"');
     expect(mid).toContain('aria-valuetext="42%"');
+  });
+
+  it("empty progress bar aria-valuetext is 暂无数据 (not 0%)", () => {
+    const empty = renderToStaticMarkup(
+      createElement(BankProgressBar, { progress: null }),
+    );
+    expect(empty).toContain('role="progressbar"');
+    expect(empty).toContain(`aria-valuetext="${BANK_EMPTY}"`);
+    expect(empty).not.toContain('aria-valuetext="0%"');
+
+    const missing = renderToStaticMarkup(
+      createElement(BankProgressBar, { progress: undefined }),
+    );
+    expect(missing).toContain(`aria-valuetext="${BANK_EMPTY}"`);
   });
 });

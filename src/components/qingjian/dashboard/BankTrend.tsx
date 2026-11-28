@@ -301,15 +301,17 @@ function TrendSvg({
             y={yAt(lastActual.v) - 8}
             textAnchor="middle"
           >
-            {formatBankMoney(lastActual.v, lastActual.v % 1 === 0 ? 0 : 2).replace(
-              /^[−\-]?S\$/,
-              "",
-            )}
+            {formatTrendValueLabel(lastActual.v)}
           </text>
         </>
       ) : null}
     </svg>
   );
+}
+
+/** 趋势点标签：去掉「S$」保留负号（−1234 而非 1,234）。 */
+export function formatTrendValueLabel(v: number): string {
+  return formatBankMoney(v, v % 1 === 0 ? 0 : 2).replace("S$", "");
 }
 
 /** Y 轴按数据最小/最大值定范围（含负余额），不强制从 0 起。 */

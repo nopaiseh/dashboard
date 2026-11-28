@@ -1,4 +1,9 @@
-import { asBankNumber, bankProgressFill, formatBankProgressPct } from "./bankFormat";
+import {
+  asBankNumber,
+  BANK_EMPTY,
+  bankProgressFill,
+  formatBankProgressPct,
+} from "./bankFormat";
 
 /** 银行进度条：正常绿 / 落后橙 / 超标红斜纹；含 progressbar a11y。 */
 export function BankProgressBar({
@@ -11,7 +16,7 @@ export function BankProgressBar({
   /** status=behind 且未超标时用橙色条 */
   warn?: boolean;
   className?: string;
-  /** 可选可读标签；缺省用「进度 xx%」 */
+  /** 可选可读标签；缺省用「进度 xx%」或「暂无数据」 */
   label?: string;
 }) {
   const fill = bankProgressFill(progress);
@@ -19,8 +24,9 @@ export function BankProgressBar({
   const rawPct = n === null ? 0 : Math.round(n);
   // 超过 100% 时 aria-valuenow 不超出 aria-valuemax；valuetext 写真实百分比
   const valueNow = Math.min(100, Math.max(0, rawPct));
-  const valueText = formatBankProgressPct(n === null ? 0 : n);
-  const ariaLabel = label ?? `进度 ${valueText}`;
+  // 缺进度与页面一致读「暂无数据」，不要读成 0%
+  const valueText = n === null ? BANK_EMPTY : formatBankProgressPct(n);
+  const ariaLabel = label ?? (n === null ? BANK_EMPTY : `进度 ${valueText}`);
   const a11y = {
     role: "progressbar" as const,
     "aria-valuemin": 0,

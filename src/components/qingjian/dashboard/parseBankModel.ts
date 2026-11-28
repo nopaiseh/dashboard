@@ -39,7 +39,11 @@ import { isSensitivePayloadKey } from "./format";
 
 const KEY_SET = new Set<string>(BANK_BLOCK_KEYS);
 
-const ACC_KEY_BY_BLOCK: Partial<Record<BankBlockKey, BankAccountKey>> = {
+type BankAccBlockKey = Extract<BankBlockKey, `bank_acc_${string}`>;
+type BankTrendBlockKey = Extract<BankBlockKey, `bank_trend_${string}`>;
+
+/** 户口 metric 槽位 → account_key；缺 key 时 typecheck 失败。 */
+const ACC_KEY_BY_BLOCK = {
   bank_acc_ocbc_salary: "ocbc_salary",
   bank_acc_hsbc: "hsbc",
   bank_acc_trust: "trust",
@@ -47,9 +51,10 @@ const ACC_KEY_BY_BLOCK: Partial<Record<BankBlockKey, BankAccountKey>> = {
   bank_acc_ocbc_savings: "ocbc_savings",
   bank_acc_gxs: "gxs",
   bank_acc_wise: "wise",
-};
+} satisfies Record<BankAccBlockKey, BankAccountKey>;
 
-const TREND_KEY_BY_BLOCK: Partial<Record<BankBlockKey, BankAccountKey>> = {
+/** 趋势 chart_series 槽位 → account_key；缺 key 时 typecheck 失败。 */
+const TREND_KEY_BY_BLOCK = {
   bank_trend_ocbc_salary: "ocbc_salary",
   bank_trend_hsbc: "hsbc",
   bank_trend_trust: "trust",
@@ -57,7 +62,7 @@ const TREND_KEY_BY_BLOCK: Partial<Record<BankBlockKey, BankAccountKey>> = {
   bank_trend_ocbc_savings: "ocbc_savings",
   bank_trend_gxs: "gxs",
   bank_trend_wise: "wise",
-};
+} satisfies Record<BankTrendBlockKey, BankAccountKey>;
 
 function clean(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
