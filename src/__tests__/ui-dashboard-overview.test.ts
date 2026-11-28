@@ -225,6 +225,53 @@ describe("board summary helpers", () => {
     );
     expect(html).toContain("跨分区公积金结论");
   });
+
+  it("when two CPF sections share a block_key, lower section sort_order wins", () => {
+    // Higher sort_order listed first on purpose — DashboardView sorts before merge.
+    const laterSection = sectionStub({
+      id: "sec-later",
+      category: "cpf",
+      sort_order: 10,
+      agent_id: "00000000-0000-4000-8000-0000000000bb",
+      created_at: "2026-11-02T00:00:00.000Z",
+      blocks: [
+        textBlock("blk-later", "sec-later", {
+          block_key: "cpf_conclusion",
+          title: "高排序分区结论（应被忽略）",
+          text: "后写分区",
+        }),
+      ],
+    });
+    const earlierSection = sectionStub({
+      id: "sec-earlier",
+      category: "CPF",
+      sort_order: 1,
+      agent_id: "00000000-0000-4000-8000-0000000000aa",
+      created_at: "2026-11-01T00:00:00.000Z",
+      blocks: [
+        textBlock("blk-earlier", "sec-earlier", {
+          block_key: "cpf_conclusion",
+          title: "低排序分区结论（应保留）",
+          text: "先写分区",
+        }),
+      ],
+    });
+
+    const html = renderToStaticMarkup(
+      createElement(DashboardView, {
+        data: {
+          headline: "",
+          sections: [laterSection, earlierSection],
+        },
+      }),
+    );
+    expect(html).toContain("低排序分区结论（应保留）");
+    expect(html).not.toContain("高排序分区结论（应被忽略）");
+
+    const cards = buildBoardCards([laterSection, earlierSection], FIXED_NOW);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.summary).toBe("低排序分区结论（应保留）");
+  });
 });
 
 describe("dashboard overview grid", () => {

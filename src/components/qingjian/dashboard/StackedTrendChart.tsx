@@ -4,8 +4,212 @@ import { useId, useState, type KeyboardEvent } from "react";
 import { EmptyBlock } from "./EmptyBlock";
 import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
 import { CPF_COLORS } from "./cpfTheme";
-import { formatMoney } from "./format";
+import { formatMoney, parseTrendPointTime } from "./format";
 import type { ChartRangeMode } from "./types";
+
+/** Evenly pick ~`count` indices from `length` points (inclusive ends). */
+export function pickEvenIndices(length: number, count = 5): number[] {
+  if (length <= 0) return [];
+  if (length === 1) return [0];
+  const ticks = Math.min(Math.max(1, count), length);
+  if (ticks === 1) return [0];
+  const out: number[] = [];
+  for (let k = 0; k < ticks; k++) {
+    out.push(Math.round((k * (length - 1)) / (ticks - 1)));
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * X positions on a linear time scale between the series min/max dates.
+ * Single-point / zero-span / empty → no NaN (center, index fallback, or padLeft).
+ */
+export function xPositionsForDates(
+  times: Array<number | null>,
+  padLeft: number,
+  innerW: number,
+): number[] {
+  const n = times.length;
+  if (n === 0) return [];
+  if (n === 1) return [padLeft + innerW / 2];
+
+  const valid = times.filter((t): t is number => t != null && Number.isFinite(t));
+  const tMin = valid.length ? Math.min(...valid) : NaN;
+  const tMax = valid.length ? Math.max(...valid) : NaN;
+  const tSpan = tMax - tMin;
+
+  if (!Number.isFinite(tSpan) || tSpan === 0) {
+    const denom = Math.max(1, n - 1);
+    return times.map((_, i) => padLeft + (i / denom) * innerW);
+  }
+
+  const denom = Math.max(1, n - 1);
+  return times.map((t, i) => {
+    if (t == null || !Number.isFinite(t)) {
+      return padLeft + (i / denom) * innerW;
+    }
+    return padLeft + ((t - tMin) / tSpan) * innerW;
+  });
+}
+
+/** Month axis labels from real point dates (e.g. 2026-01 → 「1月」). */
+export function buildTwelveMonthXLabels(
+  points: Array<{ t: string }>,
+  tickCount = 5,
+): Array<{ i: number; label: string }> {
+  if (points.length === 0) return [];
+  const indices = pickEvenIndices(points.length, tickCount);
+  const years = new Set(
+    points
+      .map((p) => {
+        const m = p.t.trim().match(/^(\d{4})/);
+        return m ? m[1] : null;
+      })
+      .filter((y): y is string => y != null),
+  );
+  const multiYear = years.size > 1;
+  let prevYear: string | null = null;
+  return indices.map((i) => {
+    const raw = points[i]?.t.trim() ?? "";
+    const match = raw.match(/^(\d{4})(?:-(\d{2}))?/);
+    if (!match) return { i, label: raw };
+    const year = match[1]!;
+    const month = match[2] ? String(Number(match[2])) : "12";
+    let label = `${month}月`;
+    if (multiYear && (prevYear === null || year !== prevYear)) {
+      label = `${year}年${month}月`;
+    }
+    prevYear = year;
+    return { i, label };
+  });
+}
+
+/**
+ * Sort trend points by month-end time for drawing order.
+ * On equal timestamps, year (年底数) is drawn LAST so it is the top hover/focus target.
+ */
+export function sortTrendPointsByTime(
+  points: CpfTrendPoint[],
+): CpfTrendPoint[] {
+  return [...points].sort((a, b) => {
+    const ta = parseTrendPointTime(a.t);
+    const tb = parseTrendPointTime(b.t);
+    const aKey =
+      ta == null || !Number.isFinite(ta) ? Number.POSITIVE_INFINITY : ta;
+    const bKey =
+      tb == null || !Number.isFinite(tb) ? Number.POSITIVE_INFINITY : tb;
+    if (aKey !== bKey) return aKey - bKey;
+    if (a.grain !== b.grain) {
+      if (a.grain === "year") return 1;
+      if (b.grain === "year") return -1;
+    }
+    return a.t.localeCompare(b.t);
+  });
+}
+
+/** Year-end instant matching `parseTrendPointTime("YYYY")` (Dec 31, +08). */
+export function yearEndMs(year: number): number {
+  return parseTrendPointTime(String(year)) ?? NaN;
+}
+
+/** Calendar year in the same +08 zone used by `parseTrendPointTime`. */
+function calendarYearAt(ms: number): number {
+  return Number(
+    new Date(ms + 8 * 60 * 60 * 1000).toISOString().slice(0, 4),
+  );
+}
+
+export type YearXTick = {
+  year: number;
+  label: string;
+  /** Pixel x on the same linear date scale as `xPositionsForDates`. */
+  x: number;
+  /** Year-end timestamp used for placement. */
+  t: number;
+};
+
+/**
+ * Year axis ticks for 「全部」: every `step` years (default 2; adapts up so
+ * labels keep ~minLabelGapPx in SVG space — enough for mobile 390px), each
+ * anchored at year-end and clipped to [tMin, tMax].
+ */
+export function buildYearXTicks(
+  tMin: number,
+  tMax: number,
+  padLeft: number,
+  innerW: number,
+  opts?: { step?: number; minLabelGapPx?: number },
+): YearXTick[] {
+  if (
+    !Number.isFinite(tMin) ||
+    !Number.isFinite(tMax) ||
+    !Number.isFinite(padLeft) ||
+    !Number.isFinite(innerW) ||
+    tMax < tMin
+  ) {
+    return [];
+  }
+  if (innerW <= 0) return [];
+  const tSpan = tMax - tMin;
+
+  const fallbackTick = (year: number, t: number, x: number): YearXTick => ({
+    year,
+    label: String(year),
+    x,
+    t,
+  });
+
+  // Single instant or no year-end inside range → still show at least one year label.
+  if (tSpan === 0) {
+    const year = calendarYearAt(tMin);
+    return [fallbackTick(year, tMin, padLeft + innerW / 2)];
+  }
+
+  const yLo = calendarYearAt(tMin);
+  const yHi = calendarYearAt(tMax);
+  const candidates: number[] = [];
+  for (let y = yLo; y <= yHi + 1; y++) {
+    const t = yearEndMs(y);
+    if (!Number.isFinite(t)) continue;
+    if (t >= tMin && t <= tMax) candidates.push(y);
+  }
+  if (candidates.length === 0) {
+    const year = calendarYearAt((tMin + tMax) / 2);
+    return [fallbackTick(year, (tMin + tMax) / 2, padLeft + innerW / 2)];
+  }
+
+  const minGap = opts?.minLabelGapPx ?? 72;
+  const preferred = Math.max(1, opts?.step ?? 2);
+  const xOf = (y: number) =>
+    padLeft + ((yearEndMs(y) - tMin) / tSpan) * innerW;
+
+  const pick = (step: number): YearXTick[] => {
+    const first = candidates[0]!;
+    const years = candidates.filter((y) => (y - first) % step === 0);
+    return years.map((year) => ({
+      year,
+      label: String(year),
+      x: xOf(year),
+      t: yearEndMs(year),
+    }));
+  };
+
+  let step = preferred;
+  let ticks = pick(step);
+  while (ticks.length > 2 && step < 20) {
+    let ok = true;
+    for (let i = 1; i < ticks.length; i++) {
+      if (ticks[i]!.x - ticks[i - 1]!.x < minGap) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) break;
+    step += 1;
+    ticks = pick(step);
+  }
+  return ticks;
+}
 
 export function StackedTrendChart({
   data,
@@ -177,15 +381,27 @@ function TrendSvg({
   const innerW = W - PAD.left - PAD.right;
   const innerH = H - PAD.top - PAD.bottom;
 
-  const totals = points.map(
+  // Draw in time order (year before month on ties) so paths never go backwards.
+  const ordered = sortTrendPointsByTime(points);
+
+  const totals = ordered.map(
     (p) => p.balances.OA + p.balances.SA + p.balances.MA,
   );
   const guideMax = data.guides.reduce((m, g) => Math.max(m, g.amount), 0);
-  const maxV = Math.max(...totals, guideMax * 0.3, 1) * 1.08;
-  const n = Math.max(1, points.length - 1);
+  const maxV =
+    (ordered.length === 0
+      ? Math.max(guideMax * 0.3, 1)
+      : Math.max(...totals, guideMax * 0.3, 1)) * 1.08;
+  const pointTimes = ordered.map((p) => parseTrendPointTime(p.t));
+  const xAt = xPositionsForDates(pointTimes, PAD.left, innerW);
+  const validTimes = pointTimes.filter(
+    (t): t is number => t != null && Number.isFinite(t),
+  );
+  const tMin = validTimes.length ? Math.min(...validTimes) : NaN;
+  const tMax = validTimes.length ? Math.max(...validTimes) : NaN;
 
   const xy = (i: number, v: number) => ({
-    x: PAD.left + (i / n) * innerW,
+    x: xAt[i] ?? PAD.left,
     y: PAD.top + (1 - v / maxV) * innerH,
   });
 
@@ -194,13 +410,13 @@ function TrendSvg({
     key: keyof AccBalances,
     baseline: (p: CpfTrendPoint) => number,
   ) => {
-    const idxs = points
+    const idxs = ordered
       .map((p, i) => ({ p, i }))
       .filter(({ p }) => p.phase === phase);
     if (idxs.length === 0) return "";
     let seq = idxs;
     if (phase === "projected") {
-      const lastActual = [...points.entries()]
+      const lastActual = [...ordered.entries()]
         .reverse()
         .find(([, p]) => p.phase === "actual");
       if (lastActual) {
@@ -220,11 +436,11 @@ function TrendSvg({
   };
 
   const topLine = (phase: "actual" | "projected") => {
-    let seq = points
+    let seq = ordered
       .map((p, i) => ({ p, i }))
       .filter(({ p }) => p.phase === phase);
     if (phase === "projected") {
-      const lastActual = [...points.entries()]
+      const lastActual = [...ordered.entries()]
         .reverse()
         .find(([, p]) => p.phase === "actual");
       if (lastActual) seq = [{ p: lastActual[1], i: lastActual[0] }, ...seq];
@@ -243,26 +459,16 @@ function TrendSvg({
       ? [100_000, 200_000, 300_000, 400_000]
       : [100_000, 200_000, 300_000];
 
-  const xLabels =
+  const xLabels: Array<{ label: string; x: number }> =
     mode === "12m"
-      ? [
-          { i: 0, label: "11月" },
-          { i: 2, label: "1月" },
-          { i: 5, label: "4月" },
-          { i: 8, label: "7月" },
-          { i: 11, label: "10月" },
-        ].filter((x) => x.i < points.length)
-      : [
-          { i: points.findIndex((p) => p.t === "2016"), label: "2016" },
-          { i: points.findIndex((p) => p.t === "2018"), label: "2018" },
-          { i: points.findIndex((p) => p.t === "2020"), label: "2020" },
-          { i: points.findIndex((p) => p.t === "2022"), label: "2022" },
-          { i: points.findIndex((p) => p.t === "2024"), label: "2024" },
-          { i: points.findIndex((p) => p.t === "2026-01"), label: "2026" },
-        ].filter((x) => x.i >= 0);
+      ? buildTwelveMonthXLabels(ordered).map((xl) => ({
+          label: xl.label,
+          x: xAt[xl.i] ?? PAD.left,
+        }))
+      : buildYearXTicks(tMin, tMax, PAD.left, innerW);
 
   const janIdx = data.janInterestAt
-    ? points.findIndex((p) => p.t === data.janInterestAt)
+    ? ordered.findIndex((p) => p.t === data.janInterestAt)
     : -1;
 
   const employer = data.events.filter((e) => e.kind === "employer_change");
@@ -276,7 +482,7 @@ function TrendSvg({
       aria-labelledby={`${baseId}-sum`}
     >
       <title id={`${baseId}-sum`}>
-        {`三户口堆叠走势，共 ${points.length} 个点`}
+        {`三户口堆叠走势，共 ${ordered.length} 个点`}
       </title>
 
       {gridVals.map((v) => {
@@ -374,7 +580,7 @@ function TrendSvg({
           ))
         : null}
 
-      {points.map((p, i) => {
+      {ordered.map((p, i) => {
         if (p.phase === "projected") return null;
         const tot = p.balances.OA + p.balances.SA + p.balances.MA;
         const { x, y } = xy(i, tot);
@@ -405,7 +611,7 @@ function TrendSvg({
       })}
 
       {employer.map((ev) => {
-        const i = nearestIndex(points, ev.t);
+        const i = nearestIndex(ordered, ev.t);
         if (i < 0) return null;
         const { x } = xy(i, 0);
         return (
@@ -425,12 +631,12 @@ function TrendSvg({
         );
       })}
       {transfers.map((tr) => {
-        const i = nearestIndex(points, tr.t);
+        const i = nearestIndex(ordered, tr.t);
         if (i < 0) return null;
         const tot =
-          points[i].balances.OA +
-          points[i].balances.SA +
-          points[i].balances.MA;
+          ordered[i]!.balances.OA +
+          ordered[i]!.balances.SA +
+          ordered[i]!.balances.MA;
         const { x, y } = xy(i, tot);
         return (
           <g key={`flag-${tr.t}-${tr.short ?? tr.label}`}>
@@ -453,20 +659,17 @@ function TrendSvg({
         );
       })}
 
-      {xLabels.map((xl) => {
-        const { x } = xy(xl.i, 0);
-        return (
-          <text
-            key={xl.label}
-            x={x}
-            y={H - 8}
-            textAnchor="middle"
-            className={"k-axisText"}
-          >
-            {xl.label}
-          </text>
-        );
-      })}
+      {xLabels.map((xl) => (
+        <text
+          key={xl.label}
+          x={xl.x}
+          y={H - 8}
+          textAnchor="middle"
+          className={"k-axisText"}
+        >
+          {xl.label}
+        </text>
+      ))}
     </svg>
   );
 }

@@ -8,7 +8,14 @@ import {
   resolveRetirementStatuses,
 } from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
-import { StackedTrendChart } from "@/components/qingjian/dashboard/StackedTrendChart";
+import {
+  StackedTrendChart,
+  buildTwelveMonthXLabels,
+  buildYearXTicks,
+  sortTrendPointsByTime,
+  yearEndMs,
+  xPositionsForDates,
+} from "@/components/qingjian/dashboard/StackedTrendChart";
 import {
   parseCpfModel,
   reachedFrsFromTier,
@@ -17,11 +24,15 @@ import { parseMissingYears, parseTextPayload } from "@/components/qingjian/dashb
 import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
 import {
   formatWan,
+  parsePointTime,
+  parseTrendPointTime,
   progressFill,
 } from "@/components/qingjian/dashboard/format";
 import {
   C2_BAL,
   C2_EXCEED_FRS,
+  C2_MONTHS,
+  C2_PROJ,
   C2_TOTAL,
 } from "@/components/qingjian/dashboard/fixtures/c2SampleData";
 import {
@@ -315,6 +326,253 @@ describe("C2 CPF section", () => {
     expect(html).toContain("全部（2016 年起）");
     expect(html).toContain("月底数");
     expect(html).toContain(CPF_COLORS.oa);
+  });
+});
+
+describe("StackedTrendChart date scale", () => {
+  const padLeft = 48;
+  const innerW = 640 - 48 - 16;
+
+  it("keeps shared parsePointTime as month-start; trend parser is month-end", () => {
+    expect(parsePointTime("2025-12")).toBe(
+      Date.parse("2025-12-01T00:00:00+08:00"),
+    );
+    expect(parsePointTime("2025")).not.toBe(parsePointTime("2025-12"));
+    expect(parseTrendPointTime("2025")).toBe(parseTrendPointTime("2025-12"));
+    expect(parseTrendPointTime("2025-11")).toBe(
+      Date.parse("2025-11-30T00:00:00+08:00"),
+    );
+    expect(parseTrendPointTime("2026-01")).toBe(
+      Date.parse("2026-01-31T00:00:00+08:00"),
+    );
+  });
+
+  it("positions mixed yearly+monthly points by date (monotonic, not index-even)", () => {
+    // Synthetic 「全部」 mix: sparse yearly points then dense 2026 months.
+    const ts = [
+      "2016",
+      "2018",
+      "2020",
+      "2022",
+      "2024",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07",
+      "2026-08",
+      "2026-09",
+      "2026-10",
+      "2026-11",
+    ];
+    const times = ts.map((t) => parseTrendPointTime(t));
+    const xs = xPositionsForDates(times, padLeft, innerW);
+
+    expect(xs).toHaveLength(ts.length);
+    expect(xs.every((x) => Number.isFinite(x))).toBe(true);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]!).toBeGreaterThan(xs[i - 1]!);
+    }
+
+    // Index-even spacing would put 2026-01 at index 5/15 of the width.
+    const indexEvenAt2026Jan = padLeft + (5 / (ts.length - 1)) * innerW;
+    const dateScaleAt2026Jan = xs[5]!;
+    // On a real time scale, 2026-01 sits near the right (years 2016–2024 span most of the axis).
+    expect(dateScaleAt2026Jan).toBeGreaterThan(indexEvenAt2026Jan + innerW * 0.15);
+
+    // Monthly gaps among 2026 points are much smaller than the 2016→2018 year gap.
+    const yearGap = xs[1]! - xs[0]!;
+    const monthGap = xs[6]! - xs[5]!;
+    expect(monthGap).toBeLessThan(yearGap * 0.2);
+  });
+
+  it("handles empty and single-point series without NaN", () => {
+    expect(xPositionsForDates([], padLeft, innerW)).toEqual([]);
+    const one = xPositionsForDates(
+      [parseTrendPointTime("2026-01")],
+      padLeft,
+      innerW,
+    );
+    expect(one).toHaveLength(1);
+    expect(Number.isFinite(one[0]!)).toBe(true);
+    expect(one[0]).toBe(padLeft + innerW / 2);
+  });
+
+  it("labels a 2026-01 start series as 1月 (not hardcoded 11月)", () => {
+    const points = Array.from({ length: 11 }, (_, i) => ({
+      t: `2026-${String(i + 1).padStart(2, "0")}`,
+    }));
+    const labels = buildTwelveMonthXLabels(points);
+    expect(labels.length).toBeGreaterThan(0);
+    // Hardcoded ticks used to start at 「11月」; real data starting 2026-01 must start at 「1月」.
+    expect(labels[0]!.label).toBe("1月");
+    expect(labels[0]!.i).toBe(0);
+    // All labels are derived months from the series.
+    for (const l of labels) {
+      expect(l.label).toMatch(/^\d{1,2}月$/);
+      const month = Number(l.label.replace("月", ""));
+      expect(month).toBeGreaterThanOrEqual(1);
+      expect(month).toBeLessThanOrEqual(11);
+    }
+  });
+
+  it("renders 1月 on the 12m chart when series starts at 2026-01", () => {
+    const points = Array.from({ length: 11 }, (_, i) => ({
+      t: `2026-${String(i + 1).padStart(2, "0")}`,
+      balances: { OA: 1000 * (i + 1), SA: 500, MA: 200 },
+      phase: "actual" as const,
+      grain: "month" as const,
+    }));
+    const html = renderToStaticMarkup(
+      createElement(StackedTrendChart, {
+        data: {
+          points12: points,
+          pointsAll: points,
+          events: [],
+          guides: [],
+          defaultRange: "12m",
+        },
+        initialRange: "12m",
+      }),
+    );
+    expect(html).toContain(">1月<");
+    // Must not keep the old hardcoded first tick 「11月」 as the only/leading label pattern.
+    const axisLabels = [...html.matchAll(/class="k-axisText"[^>]*>([^<]+)</g)].map(
+      (m) => m[1],
+    );
+    const monthLabels = axisLabels.filter((t) => /^\d{1,2}月$/.test(t ?? ""));
+    expect(monthLabels[0]).toBe("1月");
+  });
+
+  it("year ticks use equal pixel spans for equal years; last tick is not 2026-01", () => {
+    const allInnerW = 900 - 48 - 16;
+    const ts = [
+      "2016",
+      "2018",
+      "2020",
+      "2022",
+      "2024",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07",
+      "2026-08",
+      "2026-09",
+      "2026-10",
+      "2026-11",
+    ];
+    const times = ts.map((t) => parseTrendPointTime(t)!);
+    const tMin = Math.min(...times);
+    const tMax = Math.max(...times);
+    const ticks = buildYearXTicks(tMin, tMax, padLeft, allInnerW);
+
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    // Anchored at year-end, not at 2026-01 (month-end Jan).
+    const jan2026 = parseTrendPointTime("2026-01")!;
+    for (const tick of ticks) {
+      expect(tick.t).toBe(yearEndMs(tick.year));
+      expect(Math.abs(tick.t - jan2026)).toBeGreaterThan(1);
+    }
+    expect(ticks.map((t) => t.year)).not.toContain(2026);
+
+    // Equal year steps → equal pixel gaps (date scale).
+    const yearSteps = ticks
+      .slice(1)
+      .map((t, i) => t.year - ticks[i]!.year);
+    expect(new Set(yearSteps).size).toBe(1);
+    const gaps = ticks.slice(1).map((t, i) => t.x - ticks[i]!.x);
+    for (const g of gaps) {
+      expect(Math.abs(g - gaps[0]!)).toBeLessThan(0.51);
+    }
+
+    // Old bug: placing "2026" at 2026-01 made 2024→2026 (~13mo) shorter than 24mo spans.
+    const x2024 = ticks.find((t) => t.year === 2024)?.x;
+    const x2022 = ticks.find((t) => t.year === 2022)?.x;
+    expect(x2024).toBeDefined();
+    expect(x2022).toBeDefined();
+    const twoYearGap = x2024! - x2022!;
+    const fake2026AtJan =
+      padLeft + ((jan2026 - tMin) / (tMax - tMin)) * allInnerW;
+    expect(fake2026AtJan - x2024!).toBeLessThan(twoYearGap * 0.7);
+  });
+
+  it("year ticks fall back to a single year label when span is within one year", () => {
+    const tMin = parseTrendPointTime("2026-01")!;
+    const tMax = parseTrendPointTime("2026-10")!;
+    const ticks = buildYearXTicks(tMin, tMax, padLeft, innerW);
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.label).toBe("2026");
+    expect(Number.isFinite(ticks[0]!.x)).toBe(true);
+  });
+
+  it("drawn order is non-decreasing; year point is last on YYYY/YYYY-12 tie", () => {
+    // String order from parseCpfModel puts "2025" before "2025-11"; month-end
+    // time + sort keeps the path monotonic and draws year last for hover.
+    const raw = [
+      { t: "2025", grain: "year" as const },
+      { t: "2025-11", grain: "month" as const },
+      { t: "2025-12", grain: "month" as const },
+      { t: "2026-01", grain: "month" as const },
+    ].map((p) => ({
+      ...p,
+      balances: { OA: 1, SA: 1, MA: 1 },
+      phase: "actual" as const,
+    }));
+
+    const ordered = sortTrendPointsByTime(raw);
+    expect(ordered.map((p) => p.t)).toEqual([
+      "2025-11",
+      "2025-12",
+      "2025",
+      "2026-01",
+    ]);
+    // Equal time: year drawn last so it is the hover/focus target.
+    expect(ordered[1]!.grain).toBe("month");
+    expect(ordered[2]!.grain).toBe("year");
+    expect(parseTrendPointTime("2025")).toBe(parseTrendPointTime("2025-12"));
+
+    const xs = xPositionsForDates(
+      ordered.map((p) => parseTrendPointTime(p.t)),
+      padLeft,
+      innerW,
+    );
+    expect(xs.every((x) => Number.isFinite(x))).toBe(true);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]!).toBeGreaterThanOrEqual(xs[i - 1]!);
+    }
+  });
+
+  it("points12 is last 12 monthly actuals (c2SampleData shape) spanning full width", () => {
+    const cpf = SAMPLE_DASHBOARD.sections.find((s) => s.category === "cpf")!;
+    const model = parseCpfModel(cpf, SAMPLE_DASHBOARD.headline);
+    expect(model.trend).not.toBeNull();
+    const p12 = model.trend!.points12;
+    expect(p12).toHaveLength(12);
+    expect(p12.every((p) => p.phase === "actual")).toBe(true);
+    expect(p12.every((p) => p.grain === "month")).toBe(true);
+    expect(p12.map((p) => p.t)).toEqual(C2_MONTHS.map((m) => m.t));
+    expect(p12.some((p) => C2_PROJ.some((proj) => proj.t === p.t))).toBe(false);
+
+    const allInnerW = 640 - 48 - 16;
+    const times = p12.map((p) => parseTrendPointTime(p.t));
+    const xs = xPositionsForDates(times, padLeft, allInnerW);
+    expect(xs[0]).toBeCloseTo(padLeft, 5);
+    expect(xs[xs.length - 1]).toBeCloseTo(padLeft + allInnerW, 5);
+    expect((xs[xs.length - 1]! - xs[0]!) / allInnerW).toBeCloseTo(1, 5);
+
+    // Contrast: wrongly appending half-yearly projections would squash actuals.
+    const wrongTimes = [
+      ...times,
+      ...C2_PROJ.map((p) => parseTrendPointTime(p.t)),
+    ];
+    const wrongXs = xPositionsForDates(wrongTimes, padLeft, allInnerW);
+    const actualSpanWrong = wrongXs[11]! - wrongXs[0]!;
+    expect(actualSpanWrong / allInnerW).toBeLessThan(0.3);
   });
 });
 

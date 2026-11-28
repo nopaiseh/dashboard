@@ -540,13 +540,15 @@ function parseTrend(blocks: DashboardBlockPublic[]): CpfTrendData | null {
     }));
   if (allPoints.length === 0) return null;
 
-  const monthPoints = allPoints.filter((p) => p.grain === "month");
+  // 「近 12 个月」: last 12 consecutive monthly actuals only (no half-yearly
+  // projected samples that would squash the date scale out to ~2030).
+  const monthlyActuals = allPoints.filter(
+    (p) => p.grain === "month" && p.phase === "actual",
+  );
   const points12 =
-    monthPoints.length >= 12
-      ? monthPoints.slice(-18)
-      : monthPoints.length
-        ? monthPoints
-        : allPoints.slice(-18);
+    monthlyActuals.length > 0
+      ? monthlyActuals.slice(-12)
+      : allPoints.filter((p) => p.phase === "actual").slice(-12);
 
   const primary = byAcc.get("OA") ?? unnamed[0] ?? charts[0];
   const p = clean(primary.payload);

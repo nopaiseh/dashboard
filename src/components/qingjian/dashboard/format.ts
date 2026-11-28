@@ -108,7 +108,10 @@ export function progressCaption(view: {
   return null;
 }
 
-/** Parse ISO-ish `t` (YYYY / YYYY-MM / YYYY-MM-DD) to sortable timestamp. */
+/**
+ * Shared parse for chartRange / ChartSeriesBlock (+08:00).
+ * YYYY → Dec 31; YYYY-MM → 1st of month (unchanged filter-bound semantics).
+ */
 export function parsePointTime(t: string): number | null {
   const raw = t.trim();
   if (!raw) return null;
@@ -117,6 +120,30 @@ export function parsePointTime(t: string): number | null {
   }
   if (/^\d{4}-\d{2}$/.test(raw)) {
     return Date.parse(`${raw}-01T00:00:00+08:00`);
+  }
+  const ms = Date.parse(raw);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * StackedTrendChart only: YYYY → year-end Dec 31; YYYY-MM → month-end
+ * (「月底数」), so YYYY-12 coincides with YYYY.
+ */
+export function parseTrendPointTime(t: string): number | null {
+  const raw = t.trim();
+  if (!raw) return null;
+  if (/^\d{4}$/.test(raw)) {
+    return Date.parse(`${raw}-12-31T00:00:00+08:00`);
+  }
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    const y = Number(raw.slice(0, 4));
+    const m = Number(raw.slice(5, 7));
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+      return null;
+    }
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const dd = String(lastDay).padStart(2, "0");
+    return Date.parse(`${raw}-${dd}T00:00:00+08:00`);
   }
   const ms = Date.parse(raw);
   return Number.isNaN(ms) ? null : ms;
