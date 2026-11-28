@@ -287,6 +287,13 @@ BEGIN
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   );
 
+  -- 写入 RPC 要求 agent 在 dashboard_writers 中
+  INSERT INTO public.dashboard_writers (category, agent_id)
+  VALUES
+    ('cpf', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+    ('bank', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  ON CONFLICT (category, agent_id) DO NOTHING;
+
   -- 明文 payload 被 CHECK 拒绝
   BEGIN
     INSERT INTO public.dashboard_blocks (
