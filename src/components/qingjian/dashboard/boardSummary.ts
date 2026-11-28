@@ -52,6 +52,14 @@ export function boardConclusionSummary(
     if (text) return firstLine(text);
   }
 
+  const lists = section.blocks
+    .filter((b) => b.block_type === "list")
+    .sort((a, b) => a.sort_order - b.sort_order);
+  for (const l of lists) {
+    const title = str(l.payload.title)?.trim();
+    if (title) return firstLine(title);
+  }
+
   return null;
 }
 
