@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  MAX_EMBEDDED_JSON_DEPTH,
+  MAX_EMBEDDED_JSON_STRING_LENGTH,
   normalizeForNricScan,
   stringContainsSingaporeNricOrFin,
 } from "@/lib/dashboard/nric-guard";
@@ -183,6 +185,27 @@ describe("embedded JSON string unwrapping", () => {
         items: [JSON.stringify({ note: SAMPLE_NRIC })],
       }),
     ).toBe(true);
+  });
+
+  it("fail-closes when JSON-looking nesting exceeds the depth cap", () => {
+    // Innermost is a JSON string; each wrap adds one unwrap. Exactly MAX
+    // unwraps reaches { ok: true }; MAX+1 fail-closes.
+    let nested = JSON.stringify({ ok: true });
+    for (let i = 1; i < MAX_EMBEDDED_JSON_DEPTH; i++) {
+      nested = JSON.stringify({ w: nested });
+    }
+    expect(containsSingaporeNricOrFin({ text: nested })).toBe(false);
+
+    const tooDeep = JSON.stringify({ w: nested });
+    expect(containsSingaporeNricOrFin({ text: tooDeep })).toBe(true);
+    expect(containsSingaporeNricOrFin({ items: [tooDeep] })).toBe(true);
+  });
+
+  it("fail-closes when a JSON-looking string exceeds the size cap", () => {
+    const oversized = `{${"a".repeat(MAX_EMBEDDED_JSON_STRING_LENGTH)}}`;
+    expect(oversized.length).toBeGreaterThan(MAX_EMBEDDED_JSON_STRING_LENGTH);
+    expect(containsSingaporeNricOrFin({ text: oversized })).toBe(true);
+    expect(containsSingaporeNricOrFin({ items: [oversized] })).toBe(true);
   });
 });
 
@@ -424,5 +447,40 @@ describe("dashboard write routes: identical invalid payload bodies", () => {
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual(IDENTICAL_ERROR_BODY);
     }
+  });
+
+  it("returns 400 when embedded JSON exceeds depth or size caps", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    async function postText(text: string) {
+      mockAgentAuth();
+      const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
+      return POST(
+        new Request("http://localhost/api/agent/dashboard/blocks", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            section_id: SECTION_ID,
+            block_type: "text",
+            payload: { text },
+          }),
+        }),
+      );
+    }
+
+    let nested = JSON.stringify({ ok: true });
+    for (let i = 1; i < MAX_EMBEDDED_JSON_DEPTH; i++) {
+      nested = JSON.stringify({ w: nested });
+    }
+    const tooDeep = JSON.stringify({ w: nested });
+    const depthRes = await postText(tooDeep);
+    expect(depthRes.status).toBe(400);
+    expect(await depthRes.json()).toEqual(IDENTICAL_ERROR_BODY);
+
+    vi.resetModules();
+    const oversized = `{${"a".repeat(MAX_EMBEDDED_JSON_STRING_LENGTH)}}`;
+    const sizeRes = await postText(oversized);
+    expect(sizeRes.status).toBe(400);
+    expect(await sizeRes.json()).toEqual(IDENTICAL_ERROR_BODY);
   });
 });

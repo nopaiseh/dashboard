@@ -34,8 +34,8 @@ const FORBIDDEN_IDENTIFIER_KEYS = new Set([
 export const MAX_EMBEDDED_JSON_DEPTH = 5;
 
 /**
- * Skip JSON.parse for oversized strings (DoS guard).
- * Aligned with BODY_MAX so legitimate text payloads still unwrap.
+ * Reject JSON-looking strings longer than this (DoS guard; fail closed).
+ * Aligned with BODY_MAX.
  */
 export const MAX_EMBEDDED_JSON_STRING_LENGTH = 10_000;
 
@@ -57,26 +57,12 @@ export function stringContainsSingaporeNricOrFin(value: string): boolean {
   return SINGAPORE_NRIC_OR_FIN.test(normalizeForNricScan(value));
 }
 
-/**
- * If `raw` looks like a JSON object/array (trimmed, starts with `{` or `[`)
- * and is within size limits, return the parsed value; otherwise undefined.
- * Parse failures are silent — caller falls back to regex-only scanning.
- * Never log the input or parsed content.
- */
-function tryParseEmbeddedJson(raw: string): unknown | undefined {
+/** True when trimmed value starts with `{` or `[` (JSON object/array shape). */
+export function looksLikeJsonContainer(raw: string): boolean {
   const trimmed = raw.trim();
-  if (trimmed.length === 0 || trimmed.length > MAX_EMBEDDED_JSON_STRING_LENGTH) {
-    return undefined;
-  }
+  if (trimmed.length === 0) return false;
   const first = trimmed[0];
-  if (first !== "{" && first !== "[") {
-    return undefined;
-  }
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return undefined;
-  }
+  return first === "{" || first === "[";
 }
 
 /**
@@ -88,17 +74,30 @@ function tryParseEmbeddedJson(raw: string): unknown | undefined {
  *
  * String values that look like JSON (trimmed `{` / `[`) are JSON.parse'd and
  * walked recursively so banned keys inside list-item JSON strings are caught.
- * Depth and string-size caps prevent parse DoS. Never log parsed content.
+ * Depth / size over the caps → fail closed (treat as hit). Parse failure →
+ * regex-only scan. Never log parsed content.
  */
 export function containsSingaporeNricOrFin(value: unknown): boolean {
   const seen = new WeakSet<object>();
 
   function walk(node: unknown, jsonDepth: number): boolean {
     if (typeof node === "string") {
-      if (jsonDepth < MAX_EMBEDDED_JSON_DEPTH) {
-        const parsed = tryParseEmbeddedJson(node);
-        if (parsed !== undefined && walk(parsed, jsonDepth + 1)) {
+      if (looksLikeJsonContainer(node)) {
+        const trimmed = node.trim();
+        // Fail closed: do not silently skip deeper checks past caps.
+        if (jsonDepth >= MAX_EMBEDDED_JSON_DEPTH) {
           return true;
+        }
+        if (trimmed.length > MAX_EMBEDDED_JSON_STRING_LENGTH) {
+          return true;
+        }
+        try {
+          const parsed: unknown = JSON.parse(trimmed);
+          if (walk(parsed, jsonDepth + 1)) {
+            return true;
+          }
+        } catch {
+          // Parse failed — fall back to regex-only on the raw string.
         }
       }
       return stringContainsSingaporeNricOrFin(node);

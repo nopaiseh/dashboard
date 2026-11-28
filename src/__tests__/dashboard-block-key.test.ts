@@ -513,4 +513,175 @@ describe("block_key API uniqueness", () => {
     expect(rpcCalled).toBe(true);
     expect(res.status).toBe(200);
   });
+
+  it("PATCH without block_key replaces the payload and drops the old key", async () => {
+    // Documented behaviour: sending a new payload omits block_key → key gone;
+    // another block in the same section may then claim that key.
+    mockAuth();
+    const selfEnc = encryptBlockPayload(BLOCK_ID, {
+      title: "OA",
+      value: 2,
+      block_key: "cpf_acc_oa",
+    });
+    const droppedEnc = encryptBlockPayload(BLOCK_ID, {
+      title: "OA",
+      value: 3,
+    });
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: (col: string) => {
+              if (col === "id") {
+                return {
+                  maybeSingle: async () => ({
+                    data: {
+                      id: BLOCK_ID,
+                      section_id: SECTION_ID,
+                      block_type: "metric",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      payload: selfEnc,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                };
+              }
+              return Promise.resolve({
+                data: [{ id: BLOCK_ID, payload: selfEnc }],
+                error: null,
+              });
+            },
+          }),
+        }),
+        rpc: async (name: string) => {
+          expect(name).toBe("apply_agent_dashboard_block_patch");
+          return {
+            data: {
+              block: {
+                id: BLOCK_ID,
+                section_id: SECTION_ID,
+                block_type: "metric",
+                sort_order: 0,
+                agent_id: AGENT_A,
+                payload: droppedEnc,
+                created_at: "2026-01-01T00:00:00.000Z",
+                updated_at: "2026-01-01T00:00:00.000Z",
+              },
+            },
+            error: null,
+          };
+        },
+      }),
+    }));
+
+    const { PATCH } = await import(
+      "@/app/api/agent/dashboard/blocks/[id]/route"
+    );
+    const patchRes = await PATCH(
+      new Request(`http://localhost/api/agent/dashboard/blocks/${BLOCK_ID}`, {
+        method: "PATCH",
+        headers: {
+          authorization: "Bearer xjg_at_test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          payload: { title: "OA", value: 3 },
+        }),
+      }),
+      { params: Promise.resolve({ id: BLOCK_ID }) },
+    );
+    expect(patchRes.status).toBe(200);
+    const patchBody = await patchRes.json();
+    expect(patchBody.block.payload).toEqual({ title: "OA", value: 3 });
+    expect(patchBody.block.payload.block_key).toBeUndefined();
+
+    vi.resetModules();
+    mockAuth();
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "cpf",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () =>
+                Promise.resolve({
+                  // Sibling after PATCH: key dropped, so cpf_acc_oa is free.
+                  data: [{ id: BLOCK_ID, payload: droppedEnc }],
+                  error: null,
+                }),
+            }),
+          };
+        },
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          expect(name).toBe("create_dashboard_block");
+          const newId = args.p_id as string;
+          const enc = encryptBlockPayload(newId, {
+            title: "OA",
+            value: 9,
+            block_key: "cpf_acc_oa",
+          });
+          return {
+            data: {
+              block: {
+                id: newId,
+                section_id: SECTION_ID,
+                block_type: "metric",
+                sort_order: 1,
+                agent_id: AGENT_A,
+                payload: enc,
+                created_at: "2026-01-01T00:00:00.000Z",
+                updated_at: "2026-01-01T00:00:00.000Z",
+              },
+            },
+            error: null,
+          };
+        },
+      }),
+    }));
+
+    const { POST } = await import("@/app/api/agent/dashboard/blocks/route");
+    const postRes = await POST(
+      new Request("http://localhost/api/agent/dashboard/blocks", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer xjg_at_test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          section_id: SECTION_ID,
+          block_type: "metric",
+          payload: {
+            title: "OA",
+            value: 9,
+            block_key: "cpf_acc_oa",
+          },
+        }),
+      }),
+    );
+    expect(postRes.status).toBe(201);
+    const postBody = await postRes.json();
+    expect(postBody.block.payload.block_key).toBe("cpf_acc_oa");
+  });
 });
