@@ -67,7 +67,7 @@ AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信�
 - Cookie 写操作校验 Origin；登录/注册 options 库内限流；登录失败计数经 `record_login_failure_atomic` 原子 upsert（读锁定状态或 RPC 失败则 fail closed；`locked` 时 verify 返回 429）。
 - RPC：`REVOKE EXECUTE FROM public, anon, authenticated`，仅 `service_role`；冲突/禁止/未找到用自定义 SQLSTATE `XJ409` / `XJ403` / `XJ404`。
 - 安全头：HSTS、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`、`X-Robots-Tag`。
-- **姐妹 Bearer 限流**：`rate_limit_buckets` + `rate_limit_check` RPC（跨实例；60/分 + 1000/日）；RPC 失败回退 `src/lib/rate-limit.ts` 进程内 Map。登录与 `register/options` 另有专用 DB 限流。Vercel 防火墙仍可作兜底。
+- **姐妹 Bearer 限流**：先查并校验令牌，再调 `rate_limit_buckets` + `rate_limit_check`（跨实例）。有效令牌键 `agent:`+哈希（60/分 + 1000/日）；无效/未知/吊销共用 `agent:invalid`（同额度）。RPC 失败或 ~1.5s 超时回退 `src/lib/rate-limit.ts`。清理约 1% 调用、每次最多 500 行。登录与 `register/options` 另有专用 DB 限流。
 
 ## 输入校验
 

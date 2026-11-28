@@ -1,5 +1,6 @@
 -- Cross-instance rate limit buckets for agent bearer tokens (and reusable keys).
--- App stores key as 'agent:' || sha256(token); never the raw token.
+-- App stores key as 'agent:' || sha256(token) for valid tokens, or 'agent:invalid'
+-- for unknown/revoked/invalid bearers; never the raw token.
 -- Merging this migration auto-applies to production (Supabase Deploy).
 
 CREATE TABLE public.rate_limit_buckets (
@@ -49,9 +50,16 @@ BEGIN
       USING ERRCODE = 'XJ400';
   END IF;
 
-  -- Opportunistic cleanup of stale windows (older than 1 day).
-  DELETE FROM public.rate_limit_buckets
-  WHERE window_start < (now() - interval '1 day');
+  -- ~1% of calls: bounded cleanup of stale windows (older than 1 day, max 500).
+  IF random() < 0.01 THEN
+    DELETE FROM public.rate_limit_buckets
+    WHERE ctid IN (
+      SELECT ctid
+      FROM public.rate_limit_buckets
+      WHERE window_start < (now() - interval '1 day')
+      LIMIT 500
+    );
+  END IF;
 
   v_window_start := to_timestamp(
     floor(extract(epoch FROM now()) / p_window_seconds) * p_window_seconds

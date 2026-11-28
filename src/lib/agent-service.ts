@@ -13,6 +13,9 @@ const AGENT_RATE_LIMIT_PER_MINUTE = 60;
 const AGENT_RATE_WINDOW_SECONDS = 60;
 const AGENT_RATE_LIMIT_PER_DAY = 1000;
 const AGENT_RATE_DAY_WINDOW_SECONDS = 86_400;
+/** Shared bucket for unknown / revoked / otherwise invalid bearer tokens. */
+const AGENT_INVALID_RATE_KEY = "agent:invalid";
+const AGENT_RATE_RPC_TIMEOUT_MS = 1500;
 
 type DbRateLimitRow = {
   allowed?: boolean;
@@ -42,29 +45,45 @@ function parseDbRateLimit(data: unknown): RateLimitResult | null {
   };
 }
 
+function fallbackInProcess(key: string): RateLimitResult {
+  return checkRateLimit(
+    key,
+    AGENT_RATE_LIMIT_PER_MINUTE,
+    AGENT_RATE_WINDOW_SECONDS * 1000,
+  );
+}
+
 /**
  * Cross-instance limiter via `rate_limit_check`.
- * On RPC failure, falls back to the in-process Map (never fail-open).
+ * On RPC failure or timeout, falls back to the in-process Map (never fail-open).
  */
-async function checkAgentTokenRateLimit(
+async function checkAgentRateLimit(
   supabase: SupabaseClient,
-  tokenHash: string,
+  key: string,
 ): Promise<RateLimitResult> {
-  const key = `agent:${tokenHash}`;
-
   const runRpc = async (
     limit: number,
     windowSeconds: number,
   ): Promise<RateLimitResult | "error"> => {
-    const { data, error } = await supabase.rpc("rate_limit_check", {
-      p_key: key,
-      p_limit: limit,
-      p_window_seconds: windowSeconds,
-    });
-    if (error) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), AGENT_RATE_RPC_TIMEOUT_MS);
+    try {
+      const { data, error } = await supabase
+        .rpc("rate_limit_check", {
+          p_key: key,
+          p_limit: limit,
+          p_window_seconds: windowSeconds,
+        })
+        .abortSignal(ac.signal);
+      if (error) {
+        return "error";
+      }
+      return parseDbRateLimit(data) ?? "error";
+    } catch {
       return "error";
+    } finally {
+      clearTimeout(timer);
     }
-    return parseDbRateLimit(data) ?? "error";
   };
 
   const minute = await runRpc(
@@ -75,11 +94,7 @@ async function checkAgentTokenRateLimit(
     console.warn(
       "agent rate limit rpc unavailable; falling back to in-process limiter",
     );
-    return checkRateLimit(
-      key,
-      AGENT_RATE_LIMIT_PER_MINUTE,
-      AGENT_RATE_WINDOW_SECONDS * 1000,
-    );
+    return fallbackInProcess(key);
   }
   if (!minute.allowed) {
     return minute;
@@ -93,11 +108,7 @@ async function checkAgentTokenRateLimit(
     console.warn(
       "agent rate limit rpc unavailable; falling back to in-process limiter",
     );
-    return checkRateLimit(
-      key,
-      AGENT_RATE_LIMIT_PER_MINUTE,
-      AGENT_RATE_WINDOW_SECONDS * 1000,
-    );
+    return fallbackInProcess(key);
   }
   if (!day.allowed) {
     return day;
@@ -123,16 +134,9 @@ export async function resolveAgentFromRequest(
   }
 
   const tokenHash = hashAgentToken(raw);
-  const rate = await checkAgentTokenRateLimit(supabase, tokenHash);
-  if (!rate.allowed) {
-    return {
-      ok: false,
-      status: 429,
-      error: "rate limit exceeded",
-      retryAfterSeconds: rate.retryAfterSeconds,
-    };
-  }
 
+  // One token-table lookup before rate limiting (avoids per-hash bucket explosion
+  // from invalid / scanned tokens).
   const { data, error } = await supabase
     .from("agent_tokens")
     .select("agent_id, token_hash, revoked_at")
@@ -142,13 +146,28 @@ export async function resolveAgentFromRequest(
   if (error) {
     return { ok: false, status: 500, error: "token lookup failed" };
   }
-  if (!data) {
-    return { ok: false, status: 401, error: "invalid token" };
+
+  const agent = data ? authenticateAgentToken(raw, [data]) : null;
+  const rateKey = agent
+    ? `agent:${tokenHash}`
+    : AGENT_INVALID_RATE_KEY;
+
+  const rate = await checkAgentRateLimit(supabase, rateKey);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      status: 429,
+      error: "rate limit exceeded",
+      retryAfterSeconds: rate.retryAfterSeconds,
+    };
   }
 
-  const agent = authenticateAgentToken(raw, [data]);
   if (!agent) {
-    return { ok: false, status: 401, error: "invalid or revoked token" };
+    return {
+      ok: false,
+      status: 401,
+      error: data ? "invalid or revoked token" : "invalid token",
+    };
   }
 
   return { ok: true, agent };
