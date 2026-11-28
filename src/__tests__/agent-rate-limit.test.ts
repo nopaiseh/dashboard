@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateAgentBearerToken, hashAgentToken } from "@/lib/crypto";
-import { checkRateLimit, resetRateLimits } from "@/lib/rate-limit";
+import {
+  checkRateLimit,
+  peekRateLimit,
+  resetRateLimits,
+} from "@/lib/rate-limit";
 
 const AGENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -151,10 +155,16 @@ function createWindowedRpcMock() {
 }
 
 describe("resolveAgentFromRequest DB rate limit", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
-    resetRateLimits();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Reset the same module graph resolveAgentFromRequest will import.
+    const rateLimit = await import("@/lib/rate-limit");
+    rateLimit.resetRateLimits();
+    const { resetRecentlyValidAgentHashes } = await import(
+      "@/lib/agent-service"
+    );
+    resetRecentlyValidAgentHashes();
   });
 
   afterEach(() => {
@@ -558,6 +568,348 @@ describe("resolveAgentFromRequest DB rate limit", () => {
       `Bearer ${raw}`,
     );
     expect(after.ok).toBe(true);
+  });
+
+  it("precheck over the limit returns 429 with Retry-After and skips supabase", async () => {
+    const {
+      resolveAgentFromRequest,
+      AGENT_RATE_LIMIT_PER_MINUTE,
+    } = await import("@/lib/agent-service");
+
+    // Exhaust the in-process invalid bucket via normal invalid path (DB still allows).
+    for (let i = 0; i < AGENT_RATE_LIMIT_PER_MINUTE; i += 1) {
+      const raw = generateAgentBearerToken();
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 1, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: null,
+      });
+      const result = await resolveAgentFromRequest(
+        supabase as never,
+        `Bearer ${raw}`,
+      );
+      expect(result).toMatchObject({ ok: false, status: 401 });
+    }
+
+    const from = vi.fn();
+    const rpc = vi.fn();
+    const supabase = { from, rpc };
+    const blocked = await resolveAgentFromRequest(
+      supabase as never,
+      `Bearer ${generateAgentBearerToken()}`,
+    );
+
+    expect(blocked).toMatchObject({
+      ok: false,
+      status: 429,
+      error: "rate limit exceeded",
+    });
+    if (!blocked.ok) {
+      expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    }
+    expect(from).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("recently-valid hash bypasses precheck but still looks up the token", async () => {
+    const raw = generateAgentBearerToken();
+    const tokenHash = hashAgentToken(raw);
+    const {
+      resolveAgentFromRequest,
+      AGENT_RATE_LIMIT_PER_MINUTE,
+    } = await import("@/lib/agent-service");
+
+    // Prime recently-valid via a successful auth.
+    {
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 59, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: {
+          agent_id: AGENT_ID,
+          token_hash: tokenHash,
+          revoked_at: null,
+        },
+      });
+      expect(
+        (await resolveAgentFromRequest(supabase as never, `Bearer ${raw}`)).ok,
+      ).toBe(true);
+    }
+
+    // Exhaust local invalid bucket with other tokens.
+    for (let i = 0; i < AGENT_RATE_LIMIT_PER_MINUTE; i += 1) {
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 1, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: null,
+      });
+      await resolveAgentFromRequest(
+        supabase as never,
+        `Bearer ${generateAgentBearerToken()}`,
+      );
+    }
+
+    const lookups = { count: 0 };
+    const { supabase, rpcCalls } = mockSupabase({
+      rpcImpl: async () => ({
+        data: { allowed: true, remaining: 58, retry_after_seconds: 60 },
+        error: null,
+      }),
+      tokenRow: {
+        agent_id: AGENT_ID,
+        token_hash: tokenHash,
+        revoked_at: null,
+      },
+      trackLookups: lookups,
+    });
+
+    const result = await resolveAgentFromRequest(
+      supabase as never,
+      `Bearer ${raw}`,
+    );
+    expect(result.ok).toBe(true);
+    expect(lookups.count).toBe(1);
+    expect(rpcCalls.some((c) => c.args.p_key === `agent:${tokenHash}`)).toBe(
+      true,
+    );
+  });
+
+  it("revoked token in recently-valid still 401/429 and is removed from the set", async () => {
+    const raw = generateAgentBearerToken();
+    const tokenHash = hashAgentToken(raw);
+    const {
+      resolveAgentFromRequest,
+      AGENT_RATE_LIMIT_PER_MINUTE,
+      recentlyValidAgentHashCount,
+    } = await import("@/lib/agent-service");
+
+    {
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 59, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: {
+          agent_id: AGENT_ID,
+          token_hash: tokenHash,
+          revoked_at: null,
+        },
+      });
+      expect(
+        (await resolveAgentFromRequest(supabase as never, `Bearer ${raw}`)).ok,
+      ).toBe(true);
+      expect(recentlyValidAgentHashCount()).toBe(1);
+    }
+
+    // Revoked: bypasses precheck, looks up, returns 401, leaves the set.
+    {
+      const lookups = { count: 0 };
+      const { supabase, rpcCalls } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 50, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: {
+          agent_id: AGENT_ID,
+          token_hash: tokenHash,
+          revoked_at: "2026-01-01T00:00:00.000Z",
+        },
+        trackLookups: lookups,
+      });
+      const result = await resolveAgentFromRequest(
+        supabase as never,
+        `Bearer ${raw}`,
+      );
+      expect(result).toEqual({
+        ok: false,
+        status: 401,
+        error: "invalid or revoked token",
+      });
+      expect(lookups.count).toBe(1);
+      expect(rpcCalls.every((c) => c.args.p_key === "agent:invalid")).toBe(
+        true,
+      );
+      expect(recentlyValidAgentHashCount()).toBe(0);
+    }
+
+    // Fill invalid memory; former recently-valid hash must now hit precheck.
+    for (let i = 0; i < AGENT_RATE_LIMIT_PER_MINUTE; i += 1) {
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 1, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: null,
+      });
+      await resolveAgentFromRequest(
+        supabase as never,
+        `Bearer ${generateAgentBearerToken()}`,
+      );
+    }
+
+    const from = vi.fn();
+    const rpc = vi.fn();
+    const blocked = await resolveAgentFromRequest(
+      { from, rpc } as never,
+      `Bearer ${raw}`,
+    );
+    expect(blocked).toMatchObject({ ok: false, status: 429 });
+    expect(from).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("recently-valid TTL and cap evict entries", async () => {
+    vi.useFakeTimers();
+    const {
+      resolveAgentFromRequest,
+      RECENTLY_VALID_MAX,
+      RECENTLY_VALID_TTL_MS,
+      recentlyValidAgentHashCount,
+      AGENT_RATE_LIMIT_PER_MINUTE,
+    } = await import("@/lib/agent-service");
+
+    const first = generateAgentBearerToken();
+    const firstHash = hashAgentToken(first);
+    {
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 59, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: {
+          agent_id: AGENT_ID,
+          token_hash: firstHash,
+          revoked_at: null,
+        },
+      });
+      expect(
+        (await resolveAgentFromRequest(supabase as never, `Bearer ${first}`))
+          .ok,
+      ).toBe(true);
+    }
+
+    for (let i = 0; i < RECENTLY_VALID_MAX; i += 1) {
+      const raw = generateAgentBearerToken();
+      const tokenHash = hashAgentToken(raw);
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 59, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: {
+          agent_id: AGENT_ID,
+          token_hash: tokenHash,
+          revoked_at: null,
+        },
+      });
+      expect(
+        (await resolveAgentFromRequest(supabase as never, `Bearer ${raw}`)).ok,
+      ).toBe(true);
+    }
+    expect(recentlyValidAgentHashCount()).toBe(RECENTLY_VALID_MAX);
+
+    // Cap dropped the oldest (first): with a full invalid bucket it hits precheck.
+    for (let i = 0; i < AGENT_RATE_LIMIT_PER_MINUTE; i += 1) {
+      const { supabase } = mockSupabase({
+        rpcImpl: async () => ({
+          data: { allowed: true, remaining: 1, retry_after_seconds: 60 },
+          error: null,
+        }),
+        tokenRow: null,
+      });
+      await resolveAgentFromRequest(
+        supabase as never,
+        `Bearer ${generateAgentBearerToken()}`,
+      );
+    }
+    {
+      const from = vi.fn();
+      const rpc = vi.fn();
+      const blocked = await resolveAgentFromRequest(
+        { from, rpc } as never,
+        `Bearer ${first}`,
+      );
+      expect(blocked).toMatchObject({ ok: false, status: 429 });
+      expect(from).not.toHaveBeenCalled();
+      expect(rpc).not.toHaveBeenCalled();
+    }
+
+    // TTL expiry: advancing past TTL also clears the 60s invalid window.
+    vi.advanceTimersByTime(RECENTLY_VALID_TTL_MS + 1);
+    const late = generateAgentBearerToken();
+    const lateHash = hashAgentToken(late);
+    const { supabase } = mockSupabase({
+      rpcImpl: async () => ({
+        data: { allowed: true, remaining: 59, retry_after_seconds: 60 },
+        error: null,
+      }),
+      tokenRow: {
+        agent_id: AGENT_ID,
+        token_hash: lateHash,
+        revoked_at: null,
+      },
+    });
+    expect(
+      (await resolveAgentFromRequest(supabase as never, `Bearer ${late}`)).ok,
+    ).toBe(true);
+    expect(recentlyValidAgentHashCount()).toBe(1);
+  });
+
+  it("under the invalid memory limit behaviour is unchanged (lookup + RPC + 401)", async () => {
+    const raw = generateAgentBearerToken();
+    const lookups = { count: 0 };
+    const { supabase, rpcCalls } = mockSupabase({
+      rpcImpl: async () => ({
+        data: { allowed: true, remaining: 59, retry_after_seconds: 60 },
+        error: null,
+      }),
+      tokenRow: null,
+      trackLookups: lookups,
+    });
+
+    const { resolveAgentFromRequest } = await import("@/lib/agent-service");
+    const result = await resolveAgentFromRequest(
+      supabase as never,
+      `Bearer ${raw}`,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 401,
+      error: "invalid token",
+    });
+    expect(lookups.count).toBe(1);
+    expect(rpcCalls.length).toBeGreaterThan(0);
+    expect(rpcCalls[0]?.args.p_key).toBe("agent:invalid");
+  });
+});
+
+describe("peekRateLimit", () => {
+  beforeEach(() => {
+    resetRateLimits();
+  });
+
+  it("does not increment and reports denied when already at limit", () => {
+    for (let i = 0; i < 60; i += 1) {
+      expect(checkRateLimit("agent:invalid", 60, 60_000).allowed).toBe(true);
+    }
+    expect(peekRateLimit("agent:invalid", 60, 60_000).allowed).toBe(false);
+    expect(peekRateLimit("agent:invalid", 60, 60_000).allowed).toBe(false);
+    expect(checkRateLimit("agent:invalid", 60, 60_000).allowed).toBe(false);
+  });
+
+  it("treats missing buckets as allowed without creating them", () => {
+    expect(peekRateLimit("never-used", 60, 60_000)).toMatchObject({
+      allowed: true,
+      remaining: 60,
+    });
+    // Still empty → checkRateLimit starts a fresh window at count 1.
+    expect(checkRateLimit("never-used", 60, 60_000).remaining).toBe(59);
   });
 });
 

@@ -1,9 +1,9 @@
 /**
- * 简易**进程内**内存限流（兜底）。
+ * 简易**进程内**内存限流（兜底 + agent:invalid 预检）。
  *
  * 姐妹 Bearer 鉴权主路径已走库表 + `rate_limit_check` RPC（跨实例）。
- * 本 Map 仅在 RPC 不可用时回退使用；多实例 / 冷启动仍各自计数。
- * 登录与 register/options 另有专用 DB 限流。
+ * 本 Map 在 RPC 不可用时回退使用，并对 `agent:invalid` 做查表前预检；
+ * 多实例 / 冷启动仍各自计数。登录与 register/options 另有专用 DB 限流。
  */
 
 export interface RateLimitResult {
@@ -47,6 +47,46 @@ export function checkRateLimit(
   }
 
   existing.count += 1;
+  return {
+    allowed: true,
+    remaining: limit - existing.count,
+    retryAfterSeconds: Math.max(
+      1,
+      Math.ceil((existing.resetAt - now) / 1000),
+    ),
+  };
+}
+
+/**
+ * Read-only check: does not create or increment a bucket.
+ * Expired / missing buckets are treated as under the limit.
+ */
+export function peekRateLimit(
+  key: string,
+  limit: number,
+  windowMs: number,
+  now: number = Date.now(),
+): RateLimitResult {
+  const existing = buckets.get(key);
+  if (!existing || existing.resetAt <= now) {
+    return {
+      allowed: true,
+      remaining: limit,
+      retryAfterSeconds: Math.ceil(windowMs / 1000),
+    };
+  }
+
+  if (existing.count >= limit) {
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((existing.resetAt - now) / 1000),
+      ),
+    };
+  }
+
   return {
     allowed: true,
     remaining: limit - existing.count,

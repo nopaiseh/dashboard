@@ -67,7 +67,7 @@ AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信�
 - Cookie 写操作校验 Origin；登录/注册 options 库内限流；登录失败计数经 `record_login_failure_atomic` 原子 upsert（读锁定状态或 RPC 失败则 fail closed；`locked` 时 verify 返回 429）。
 - RPC：`REVOKE EXECUTE FROM public, anon, authenticated`，仅 `service_role`；冲突/禁止/未找到用自定义 SQLSTATE `XJ409` / `XJ403` / `XJ404`。
 - 安全头：HSTS、`frame-ancestors 'none'`、`Referrer-Policy: no-referrer`、`X-Robots-Tag`。
-- **姐妹 Bearer 限流**：先查并校验令牌，再调 `rate_limit_buckets` + `rate_limit_check`（跨实例）。有效令牌键 `agent:`+哈希（60/分 + 1000/日）；无效/未知/吊销共用 `agent:invalid`（同额度）。RPC 失败或 ~1.5s 超时回退 `src/lib/rate-limit.ts`。清理约 1% 调用、每次最多 500 行。登录与 `register/options` 另有专用 DB 限流。
+- **姐妹 Bearer 限流**：查表前对本实例 `agent:invalid` 内存桶做只读预检（超限且非近期有效哈希 → 直接 429）；再查并校验令牌，再调 `rate_limit_buckets` + `rate_limit_check`（跨实例）。有效令牌键 `agent:`+哈希（60/分 + 1000/日）；无效/未知/吊销共用 `agent:invalid`（同额度，并同步 bump 进程内桶）。RPC 失败或 ~1.5s 超时回退 `src/lib/rate-limit.ts`。清理约 1% 调用、每次最多 500 行。登录与 `register/options` 另有专用 DB 限流。
 
 ## 输入校验
 
