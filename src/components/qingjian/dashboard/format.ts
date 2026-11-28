@@ -22,7 +22,7 @@ export function formatMoney(
   const prefix = unit.trim();
   if (!prefix) return `${sign}${formatted}`;
   if (prefix.endsWith("$") || prefix === "S$" || prefix === "$") {
-    return `${sign}${prefix}${formatted}`;
+    return `${sign}${prefix} ${formatted}`;
   }
   return `${sign}${formatted} ${prefix}`;
 }

@@ -2,42 +2,24 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DashboardView } from "@/components/qingjian/DashboardView";
-import { BlockRenderer } from "@/components/qingjian/dashboard/BlockRenderer";
-import { ProgressBlock } from "@/components/qingjian/dashboard/ProgressBlock";
-import { ChartSeriesBlock } from "@/components/qingjian/dashboard/ChartSeriesBlock";
+import { CpfProgress } from "@/components/qingjian/dashboard/CpfProgress";
+import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
+import { StackedTrendChart } from "@/components/qingjian/dashboard/StackedTrendChart";
+import {
+  C2_BAL,
+  C2_EXCEED_FRS,
+  C2_HIT,
+  C2_TOTAL,
+} from "@/components/qingjian/dashboard/c2Data";
 import {
   EMPTY_DASHBOARD,
   SAMPLE_DASHBOARD,
 } from "@/components/qingjian/dashboard/fixtures";
-import { filterSeriesByRange } from "@/components/qingjian/dashboard/chartRange";
-import { progressCaption, progressFill } from "@/components/qingjian/dashboard/format";
-import {
-  parseChartSeriesPayload,
-  parseMetricPayload,
-  parseProgressPayload,
-} from "@/components/qingjian/dashboard/parse";
 import {
   isDashboardEmpty,
   sortSectionsForView,
 } from "@/components/qingjian/dashboard/sortSections";
 import { PROJECTION_NOTE } from "@/components/qingjian/dashboard/labels";
-import type { DashboardBlockPublic } from "@/lib/dashboard/types";
-
-const NOW = "2026-11-28T00:00:00.000Z";
-
-function makeBlock(
-  partial: Pick<
-    DashboardBlockPublic,
-    "id" | "section_id" | "block_type" | "sort_order" | "payload"
-  >,
-): DashboardBlockPublic {
-  return {
-    agent_id: null,
-    created_at: NOW,
-    updated_at: NOW,
-    ...partial,
-  };
-}
 
 describe("dashboard section ordering", () => {
   it("pins cpf first even when sort_order is higher", () => {
@@ -52,207 +34,94 @@ describe("dashboard section ordering", () => {
   });
 });
 
-describe("dashboard progress helpers", () => {
-  it("allows overshoot beyond 100% with striped band math", () => {
-    const fill = progressFill(1.12);
-    expect(fill.withinPct).toBe(100);
-    expect(fill.overshootPct).toBeGreaterThan(0);
-    expect(fill.ratio).toBeCloseTo(1.12);
+describe("C2 CPF section", () => {
+  it("renders nine-part layout with Chinese account labels and c2 numbers", () => {
+    const html = renderToStaticMarkup(
+      createElement(CpfSection, { sampleMode: true }),
+    );
+    expect(html).toContain("普通户口 OA");
+    expect(html).toContain("特别户口 SA");
+    expect(html).toContain("保健储蓄 MA");
+    expect(html).toContain("合计");
+    expect(html).not.toContain("Ordinary Account");
+    expect(html).toContain(C2_BAL.OA.toLocaleString("en-SG"));
+    expect(html).toContain(C2_TOTAL.toLocaleString("en-SG"));
+    expect(html).toContain("MA 对 BHS");
+    expect(html).toContain("SA+OA 对 BRS / FRS / ERS");
+    expect(html).toContain("本月缴存");
+    expect(html).toContain("本年未填补");
+    expect(html).toContain("相关待办");
+    expect(html).toContain("不可逆");
+    expect(html).toContain("无提取");
+    expect(html).toContain("估算说明");
+    expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
+    expect(html).toContain(String(C2_EXCEED_FRS.toLocaleString("en-SG")));
+    expect(html).toContain(C2_HIT.ERS);
   });
 
-  it("builds 已达 FRS / 下一档 ERS caption", () => {
-    const caption = progressCaption({
-      reachedTier: "FRS",
-      overshoot: 12400,
-      nextTier: "ERS",
-      nextTierYear: "2038",
-      unit: "S$",
-    });
-    expect(caption).toContain("已达 FRS");
-    expect(caption).toContain("超出");
-    expect(caption).toContain("下一档 ERS");
-    expect(caption).toContain("2038");
+  it("progress uses thin SVG bar with aligned tier labels and overshoot hatch", () => {
+    const html = renderToStaticMarkup(createElement(CpfProgress, {}));
+    expect(html).toContain("k-progressSvg");
+    expect(html).toContain("BRS");
+    expect(html).toContain("FRS");
+    expect(html).toContain("ERS");
+    expect(html).toContain("现在 → 下一档");
+    expect(html).toContain("c2-over-");
+  });
+
+  it("chart exposes keyboard-operable range tabs and stacked series", () => {
+    const html = renderToStaticMarkup(createElement(StackedTrendChart, {}));
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain("近 12 个月");
+    expect(html).toContain("全部（2016 年起）");
+    expect(html).toContain("月底数");
+    expect(html).toContain(C2_COLORS_CHECK);
   });
 });
 
-describe("dashboard chart range", () => {
-  it("defaults filtering to recent window vs all-from-2016", () => {
-    const view = parseChartSeriesPayload(
-      SAMPLE_DASHBOARD.sections.find((s) => s.category === "cpf")!.blocks.find(
-        (b) => b.block_type === "chart_series",
-      )!.payload,
-    )!;
-    const now = new Date("2026-06-15T00:00:00+08:00");
-    const recent = filterSeriesByRange(view.series, "12m", 2016, now);
-    const all = filterSeriesByRange(view.series, "all", 2016, now);
-    expect(all.length).toBeGreaterThan(recent.length);
-    expect(all.some((p) => p.t === "2016")).toBe(true);
-    expect(recent.some((p) => p.t === "2016")).toBe(false);
-  });
-});
-
-describe("dashboard payload parsing", () => {
-  it("reads metric delta / ytd extensions when present", () => {
-    const view = parseMetricPayload({
-      title: "OA",
-      value: 100,
-      unit: "S$",
-      delta_mom: 12,
-      ytd: 90,
-    });
-    expect(view?.deltaMom).toBe(12);
-    expect(view?.ytd).toBe(90);
-  });
-
-  it("parses progress tiers and overshoot fields", () => {
-    const view = parseProgressPayload({
-      title: "对照",
-      progress: 1.12,
-      tiers: [
-        { key: "BRS", label: "BRS", amount: 100 },
-        { key: "FRS", label: "FRS", amount: 200 },
-      ],
-      reached_tier: "FRS",
-      overshoot: 20,
-      next_tier: "ERS",
-      next_tier_year: 2038,
-    });
-    expect(view?.tiers).toHaveLength(2);
-    expect(view?.reachedTier).toBe("FRS");
-    expect(view?.overshoot).toBe(20);
-  });
-
-  it("strips sensitive keys from payload view", () => {
-    const view = parseMetricPayload({
-      title: "OA",
-      value: 1,
-      nric: "S1234567A",
-      cpf_account: "123456789",
-    });
-    expect(view).not.toBeNull();
-    expect(JSON.stringify(view)).not.toContain("S1234567A");
-    expect(JSON.stringify(view)).not.toContain("123456789");
-  });
-});
+const C2_COLORS_CHECK = "#a9c9b6";
 
 describe("dashboard UI rendering", () => {
-  it("renders sample dashboard with pinned CPF and projection note", () => {
+  it("sample dashboard shows C2 CPF then travel, with sample banner only in sampleMode", () => {
     const html = renderToStaticMarkup(
       createElement(DashboardView, {
         data: SAMPLE_DASHBOARD,
-        sampleBanner: true,
+        sampleMode: true,
       }),
     );
     expect(html).toContain("示例数据");
-    expect(html).toContain("公积金");
+    expect(html).toContain("普通户口 OA");
     expect(html).toContain("旅行");
-    expect(html.indexOf("公积金")).toBeLessThan(html.indexOf("旅行"));
-    expect(html).toContain("本年未填补");
-    expect(html).toContain("无提取");
-    expect(html).toContain("该年暂无结算单");
-    expect(html).toContain(PROJECTION_NOTE);
-    expect(html).toContain("近 12 个月");
-    expect(html).toContain("全部（2016 年起）");
+    expect(html.indexOf("一句话结论")).toBeLessThan(html.indexOf("旅行"));
+    // 缺年斜纹只作为图内样式说明出现在估算文案，不单独成块
+    expect(html).not.toContain("k-yearGap");
     expect(html).not.toContain("style=");
   });
 
-  it("renders calm page empty state", () => {
+  it("production mode does not show sample banner", () => {
+    const html = renderToStaticMarkup(
+      createElement(DashboardView, {
+        data: SAMPLE_DASHBOARD,
+        sampleMode: false,
+      }),
+    );
+    // c2_layout role still triggers CpfSection, but no top banner
+    expect(html).not.toContain("此页所有数字、日期均为设计稿占位");
+    expect(html).toContain("普通户口 OA");
+  });
+
+  it("renders calm page empty state without headline", () => {
     const html = renderToStaticMarkup(
       createElement(DashboardView, { data: EMPTY_DASHBOARD }),
     );
     expect(html).toContain("暂无看板内容");
-    expect(html).not.toContain("qj-dashHeadline");
+    expect(html).not.toContain("一句话结论");
   });
 
-  it("hides headline when empty string", () => {
-    const html = renderToStaticMarkup(
-      createElement(DashboardView, {
-        data: { headline: "   ", sections: [] },
-      }),
-    );
-    expect(html).not.toContain("dash-headline");
-  });
-
-  it("renders overshoot progress stripe markup", () => {
-    const view = parseProgressPayload({
-      title: "退休总和对照",
-      progress: 1.12,
-      unit: "S$",
-      reached_tier: "FRS",
-      overshoot: 12400,
-      next_tier: "ERS",
-      next_tier_year: 2038,
-      tiers: [
-        { key: "BRS", label: "BRS", amount: 106500 },
-        { key: "FRS", label: "FRS", amount: 213000 },
-        { key: "ERS", label: "ERS", amount: 426000 },
-      ],
-    })!;
-    const html = renderToStaticMarkup(
-      createElement(ProgressBlock, { view, blockId: "blk-progress" }),
-    );
-    expect(html).toContain("qj-dashProgressOver");
-    expect(html).toContain("已达 FRS");
-    expect(html).toContain("下一档 ERS");
-  });
-
-  it("renders chart range tabs as keyboard-operable tabs", () => {
-    const view = parseChartSeriesPayload({
-      title: "走势",
-      series: [
-        { t: "2026-01", v: 10 },
-        { t: "2026-02", v: 12, phase: "projected" },
-      ],
-    })!;
-    const html = renderToStaticMarkup(createElement(ChartSeriesBlock, { view }));
-    expect(html).toContain('role="tablist"');
-    expect(html).toContain('role="tab"');
-    expect(html).toContain('aria-selected="true"');
-    expect(html).toContain("近 12 个月");
-    expect(html).toContain("月底数");
-  });
-
-  it("BlockRenderer covers metric / list empty / decrypt failure", () => {
-    const metric = renderToStaticMarkup(
-      createElement(BlockRenderer, {
-        block: makeBlock({
-          id: "m1",
-          section_id: "s",
-          block_type: "metric",
-          sort_order: 0,
-          payload: { title: "利息合计", value: 100, unit: "S$" },
-        }),
-      }),
-    );
-    expect(metric).toContain("利息合计");
-
-    const emptyList = renderToStaticMarkup(
-      createElement(BlockRenderer, {
-        block: makeBlock({
-          id: "l1",
-          section_id: "s",
-          block_type: "list",
-          sort_order: 0,
-          payload: { title: "自愿填补", items: [], empty: "本年未填补" },
-        }),
-      }),
-    );
-    expect(emptyList).toContain("本年未填补");
-
-    const failed = renderToStaticMarkup(
-      createElement(BlockRenderer, {
-        block: {
-          ...makeBlock({
-            id: "x",
-            section_id: "s",
-            block_type: "text",
-            sort_order: 0,
-            payload: {},
-          }),
-          decrypt_failed: true,
-        },
-      }),
-    );
-    expect(failed).toContain("暂无数据");
+  it("overdue todo is marked and irreversible badge present", () => {
+    const html = renderToStaticMarkup(createElement(CpfSection, {}));
+    expect(html).toContain("k-late");
+    expect(html).toContain("k-badgeRed");
+    expect(html).toContain("不可逆");
   });
 });

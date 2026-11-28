@@ -1,5 +1,7 @@
 import type { DashboardReadResult } from "@/lib/dashboard/types";
 import { BlockRenderer } from "./dashboard/BlockRenderer";
+import { CpfSection } from "./dashboard/CpfSection";
+import { sectionUsesC2Layout } from "./dashboard/fixtures";
 import {
   PAGE_EMPTY_TEXT,
   categoryLabel,
@@ -13,28 +15,22 @@ import {
 
 export function DashboardView({
   data,
-  sampleBanner = false,
+  sampleMode = false,
 }: {
   data: DashboardReadResult;
-  /** Mark story / fixture renders as 示例数据 (never for live owner data). */
-  sampleBanner?: boolean;
+  /** 仅截图 / 故事夹具为 true；生产页永不传。 */
+  sampleMode?: boolean;
 }) {
   const sections = sortSectionsForView(data.sections);
   const empty = isDashboardEmpty(data.headline, data.sections);
-  const headline = data.headline.trim();
 
   return (
     <div className={"qj-dash"}>
-      {sampleBanner ? (
-        <p className={"qj-dashSampleBanner"} role="note">
-          示例数据 — 虚构数值，仅供版式预览
-        </p>
-      ) : null}
-
-      {headline ? (
-        <section className={"qj-hero qj-dashHeadline"} aria-labelledby="dash-headline">
-          <h1 id="dash-headline">{headline}</h1>
-        </section>
+      {sampleMode ? (
+        <div className={"banner"} role="note">
+          <b>示例数据</b>
+          此页所有数字、日期均为设计稿占位，不是真实数据。
+        </div>
       ) : null}
 
       {empty ? (
@@ -43,14 +39,38 @@ export function DashboardView({
         </div>
       ) : (
         sections.map((section) => {
+          if (
+            isPinnedCategory(section.category) &&
+            (sampleMode || sectionUsesC2Layout(section))
+          ) {
+            const c2 = section.blocks.find(
+              (b) => b.payload.role === "c2_layout",
+            );
+            return (
+              <CpfSection
+                key={section.id}
+                sampleMode={sampleMode}
+                conclusionTitle={
+                  (typeof c2?.payload.title === "string"
+                    ? c2.payload.title
+                    : data.headline) || undefined
+                }
+                conclusionBody={
+                  typeof c2?.payload.text === "string"
+                    ? c2.payload.text
+                    : undefined
+                }
+              />
+            );
+          }
+
           const blocks = sortBlocksForView(section.blocks);
           if (blocks.length === 0) return null;
-          const pinned = isPinnedCategory(section.category);
           return (
             <section
               key={section.id}
               className={
-                pinned
+                isPinnedCategory(section.category)
                   ? "qj-dashSection qj-dashSectionPinned"
                   : "qj-dashSection"
               }
