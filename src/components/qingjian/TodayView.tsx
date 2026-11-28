@@ -1,27 +1,16 @@
 import Link from "next/link";
 import type { Counts, ItemWithMeta } from "@/lib/read";
-import { progressPercent } from "@/lib/ui/format";
 import { ItemList } from "./ItemList";
-import { ProgressBar } from "./ProgressBar";
-
-type GoalCard = {
-  id: string;
-  title: string;
-  role: string;
-  progress: number;
-};
 
 export function TodayView({
   summary,
   counts,
-  goals,
   pending,
   heldPreview,
   sistersPreview,
 }: {
   summary: string | null;
   counts: Counts;
-  goals: GoalCard[];
   pending: ItemWithMeta[];
   heldPreview: string;
   sistersPreview: string;
@@ -66,24 +55,6 @@ export function TodayView({
           <p>{sistersPreview}</p>
         </Link>
       </div>
-
-      {goals.length > 0 ? (
-        <>
-          <div className={"qj-sectionHead"}>
-            <h2>目标进度</h2>
-            <Link href="/goals">全部目标</Link>
-          </div>
-          <div className={"qj-goals"}>
-            {goals.map((g) => (
-              <article key={g.id} className={"qj-card"}>
-                <h3>{g.title}</h3>
-                <div className={"qj-role"}>{g.role}</div>
-                <ProgressBar value={progressPercent(g.progress)} label={g.title} />
-              </article>
-            ))}
-          </div>
-        </>
-      ) : null}
 
       <div className={"qj-sectionHead"}>
         <h2>待批</h2>

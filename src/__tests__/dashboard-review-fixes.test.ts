@@ -6,7 +6,7 @@ import {
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
 import { planCreateBlock, planPatchBlock } from "@/lib/dashboard/logic";
-import { normalizeDueAt } from "@/lib/dashboard/migrate-goals-plan";
+import { normalizeDueAt } from "@/lib/content-hash";
 import type {
   DashboardBlockRow,
   DashboardSectionRow,

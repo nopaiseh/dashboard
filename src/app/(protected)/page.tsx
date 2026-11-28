@@ -2,7 +2,6 @@ import { connection } from "next/server";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { TodayView } from "@/components/qingjian/TodayView";
 import {
-  loadGoals,
   loadHeldItems,
   loadLatestSummary,
   loadOpenApprovals,
@@ -18,21 +17,14 @@ export default async function HomePage() {
   return withUiReadGuard(async () => {
     const { siteName, counts } = await loadShellData();
 
-    const [sum, goalRows, held, sisters, pending] = await Promise.all([
+    const [sum, held, sisters, pending] = await Promise.all([
       loadLatestSummary(),
-      loadGoals(),
       loadHeldItems(),
       loadSisterCards(),
       loadOpenApprovals(5),
     ]);
 
     const summary = sum?.content ?? null;
-    const goals = goalRows.slice(0, 3).map((g) => ({
-      id: g.id,
-      title: g.title || g.area || "目标",
-      role: [g.agent_name, g.target].filter(Boolean).join(" · ") || g.metric || "",
-      progress: Number(g.progress) || 0,
-    }));
 
     let heldPreview = "查看超过 7 天无动静的事项";
     if (held[0]) {
@@ -51,7 +43,6 @@ export default async function HomePage() {
         <TodayView
           summary={summary}
           counts={counts}
-          goals={goals}
           pending={pending}
           heldPreview={heldPreview}
           sistersPreview={sistersPreview}

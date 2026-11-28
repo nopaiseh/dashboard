@@ -11,10 +11,6 @@ export {
   type DashboardDerivedComputer,
 } from "@/lib/dashboard/compute";
 export {
-  blockIdForGoal,
-  sectionIdForCategory,
-} from "@/lib/dashboard/ids";
-export {
   assertBlockOwnedByAgent,
   assertSectionOwnedByAgent,
   extractHeadline,
