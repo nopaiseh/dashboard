@@ -31,21 +31,14 @@ export const NAV_TABS = [
   { id: "todo", href: "/todo", label: "待办", kind: "todo" as const, primary: true },
   { id: "waiting", href: "/waiting", label: "待回音", kind: "waiting" as const, primary: true },
   { id: "held", href: "/held", label: "搁置", primary: false },
-  { id: "sisters", href: "/sisters", label: "姐妹", primary: false },
-  {
-    id: "settings",
-    href: "/settings/agents",
-    label: "令牌",
-    primary: false,
-  },
+  { id: "agents", href: "/agents", label: "专员", primary: false },
 ] as const;
 
 export type NavTabId = (typeof NAV_TABS)[number]["id"];
 
 /** 从 pathname 推断顶栏高亮；错误边界与客户端壳共用。 */
 export function navTabFromPathname(pathname: string): NavTabId {
-  if (pathname.startsWith("/settings")) return "settings";
-  if (pathname.startsWith("/sisters")) return "sisters";
+  if (pathname.startsWith("/agents")) return "agents";
   if (pathname.startsWith("/pending")) return "pending";
   if (pathname.startsWith("/todo")) return "todo";
   if (pathname.startsWith("/waiting")) return "waiting";
@@ -61,7 +54,7 @@ export const MOBILE_BOTTOM = [
 ] as const;
 
 export const INVALIDATED_APPROVAL_LABEL = "内容已变更，原批准已失效";
-export const READ_PENDING_LABEL = "待姐妹读取";
+export const READ_PENDING_LABEL = "待专员读取";
 export const READ_DONE_LABEL = "已读取";
 export const LOCKOUT_MESSAGE = "尝试次数过多，请 15 分钟后再试";
 export const ONE_BY_ONE_HINT = "一条一条批准";

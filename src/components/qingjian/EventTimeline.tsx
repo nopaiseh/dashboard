@@ -29,8 +29,8 @@ export function EventTimeline({
             ev.actor_type === "user"
               ? "本人"
               : ev.agent_id
-                ? (agentNameById.get(ev.agent_id) ?? "姐妹")
-                : "姐妹";
+                ? (agentNameById.get(ev.agent_id) ?? "专员")
+                : "专员";
           const option =
             ev.option_key != null
               ? optionLabelByKey.get(ev.option_key) ?? ev.option_key

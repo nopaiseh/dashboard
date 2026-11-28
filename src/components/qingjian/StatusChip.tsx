@@ -30,7 +30,7 @@ export function WarnChip({ children }: { children: React.ReactNode }) {
 export function ReadChip({ read }: { read: boolean }) {
   return (
     <span className={`${"qj-chip"} ${"qj-chipRead"}`}>
-      {read ? "已读取" : "待姐妹读取"}
+      {read ? "已读取" : "待专员读取"}
     </span>
   );
 }

@@ -124,8 +124,9 @@ describe("navTabFromPathname", () => {
   it("maps known routes", () => {
     expect(navTabFromPathname("/")).toBe("today");
     expect(navTabFromPathname("/pending")).toBe("pending");
-    expect(navTabFromPathname("/sisters/abc")).toBe("sisters");
-    expect(navTabFromPathname("/settings/agents")).toBe("settings");
+    expect(navTabFromPathname("/agents/abc")).toBe("agents");
+    expect(navTabFromPathname("/agents")).toBe("agents");
+    expect(navTabFromPathname("/settings/agents")).toBe("today");
     expect(navTabFromPathname("/items/abc")).toBe("today");
     expect(navTabFromPathname("/waiting")).toBe("waiting");
     expect(navTabFromPathname("/todo")).toBe("todo");

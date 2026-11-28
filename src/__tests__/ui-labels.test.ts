@@ -25,9 +25,12 @@ describe("ui labels", () => {
       "todo",
       "waiting",
       "held",
-      "sisters",
-      "settings",
+      "agents",
     ]);
+    expect(NAV_TABS.find((t) => t.id === "agents")?.label).toBe("专员");
+    expect(NAV_TABS.find((t) => t.id === "agents")?.href).toBe("/agents");
+    expect(NAV_TABS.map((t) => t.id)).not.toContain("settings");
+    expect(NAV_TABS.map((t) => t.label)).not.toContain("令牌");
     expect(KIND_LABELS.approval).toBe("待批");
     expect(ACTION_LABELS.update).toBe("更新");
     expect(INVALIDATED_APPROVAL_LABEL).toContain("原批准已失效");

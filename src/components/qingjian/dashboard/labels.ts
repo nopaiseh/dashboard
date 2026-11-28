@@ -9,7 +9,7 @@ export const PINNED_CATEGORY = "cpf";
 
 export const PROJECTION_NOTE = "按现行利率计息，未计入利率调整";
 
-export const PAGE_EMPTY_TEXT = "暂无看板内容。姐妹写入分区后，会显示在这里。";
+export const PAGE_EMPTY_TEXT = "暂无看板内容。专员写入分区后，会显示在这里。";
 
 export const BLOCK_EMPTY_DEFAULT = "暂无数据";
 
