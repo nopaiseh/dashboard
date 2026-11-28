@@ -37,6 +37,17 @@ export function CpfSection({
         data={model.trend}
         sampleMode={sampleMode}
         initialRange={trendRange ?? model.trend?.defaultRange}
+        projection={{
+          rates: model.annual?.rates,
+          contrib: model.contrib
+            ? {
+                OA: model.contrib.OA,
+                SA: model.contrib.SA,
+                MA: model.contrib.MA,
+              }
+            : undefined,
+          bhs: model.progress?.bhs,
+        }}
       />
       <CpfContrib data={model.contrib} sampleMode={sampleMode} />
       <CpfAnnual data={model.annual} sampleMode={sampleMode} />

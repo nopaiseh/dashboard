@@ -11,6 +11,7 @@ export function formatMoney(
   value: number,
   unit = "S$",
   fractionDigits = 0,
+  opts?: { tight?: boolean },
 ): string {
   if (!Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
@@ -21,10 +22,11 @@ export function formatMoney(
   const sign = value < 0 ? "-" : "";
   const prefix = unit.trim();
   if (!prefix) return `${sign}${formatted}`;
+  const sep = opts?.tight ? "" : " ";
   if (prefix.endsWith("$") || prefix === "S$" || prefix === "$") {
-    return `${sign}${prefix} ${formatted}`;
+    return `${sign}${prefix}${sep}${formatted}`;
   }
-  return `${sign}${formatted} ${prefix}`;
+  return `${sign}${formatted}${sep}${prefix}`;
 }
 
 export function formatDelta(value: number, unit = "S$"): string {

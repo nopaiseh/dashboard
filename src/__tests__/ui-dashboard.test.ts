@@ -2,12 +2,18 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DashboardView } from "@/components/qingjian/DashboardView";
+import { splitConclusion } from "@/components/qingjian/dashboard/CpfConclusion";
 import {
   CpfProgress,
   ratioPct,
   resolveRetirementStatuses,
 } from "@/components/qingjian/dashboard/CpfProgress";
 import { CpfSection } from "@/components/qingjian/dashboard/CpfSection";
+import {
+  averageMonthlyContrib,
+  projectNextMonths,
+  withNearTermProjection,
+} from "@/components/qingjian/dashboard/cpfProjection";
 import {
   StackedTrendChart,
   buildTwelveMonthXLabels,
@@ -23,6 +29,7 @@ import {
 import { parseMissingYears, parseTextPayload } from "@/components/qingjian/dashboard/parse";
 import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
 import {
+  formatMoney,
   formatWan,
   parsePointTime,
   parseTrendPointTime,
@@ -269,8 +276,14 @@ describe("C2 CPF section", () => {
     expect(html).not.toContain("Ordinary Account");
     expect(html).toContain(C2_BAL.OA.toLocaleString("en-SG"));
     expect(html).toContain(C2_TOTAL.toLocaleString("en-SG"));
-    expect(html).toContain("MA 对 BHS");
-    expect(html).toContain("SA+OA 对 BRS / FRS / ERS");
+    expect(html).toContain("医疗储蓄");
+    expect(html).toContain("退休储蓄");
+    expect(html).toContain("现有 S$72,613.00");
+    expect(html).toContain("现有 S$262,962.00");
+    expect(html).toContain("BHS S$75,000");
+    expect(html).toContain("BRS S$110,000");
+    expect(html).toContain("FRS S$220,000");
+    expect(html).toContain("ERS S$440,000");
     expect(html).toContain("本月缴存");
     expect(html).toContain("本年未填补");
     expect(html).toContain("相关待办");
@@ -281,7 +294,7 @@ describe("C2 CPF section", () => {
     expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
     expect(html).toContain(String(C2_EXCEED_FRS.toLocaleString("en-SG")));
     expect(html).toContain("2030 年");
-    expect(html).toContain("下一档，约");
+    expect(html).toContain("已达，超出");
     expect(html).toContain("已达 FRS");
     expect(html).toContain("k-tblScroll");
     expect(html).toContain('aria-label="本月缴存表格"');
@@ -312,7 +325,14 @@ describe("C2 CPF section", () => {
     expect(html).toContain("现在 → 下一档");
     expect(html).toContain("c2-over-");
     expect(html).toContain("已达，超出");
-    expect(html).toContain("下一档，约");
+    expect(html).toContain("医疗储蓄");
+    expect(html).toContain("退休储蓄");
+    expect(html).toContain("BHS S$75,000");
+    expect(html).toContain("ERS S$440,000");
+    // Not-yet ERS shows percentage at right; no in-label (213%) / 下一档 prefix.
+    expect(html).toMatch(/>\d+%</);
+    expect(html).not.toContain("下一档 ERS");
+    expect(html).not.toContain("（213%）");
   });
 
   it("chart exposes keyboard-operable range tabs and stacked series", () => {
@@ -323,9 +343,15 @@ describe("C2 CPF section", () => {
     );
     expect(html).toContain('role="tablist"');
     expect(html).toContain("近 12 个月");
-    expect(html).toContain("全部（2016 年起）");
+    expect(html).toContain(">全部<");
+    expect(html).not.toContain("全部（2016 年起）");
     expect(html).toContain("月底数");
     expect(html).toContain(CPF_COLORS.oa);
+    expect(html).toContain("估算");
+    // Near-term projection months after last actual (2026-10).
+    expect(html).toContain("2026-11");
+    expect(html).toContain("k-topProjected");
+    expect(html).toContain(" · 估算");
   });
 });
 
@@ -437,13 +463,17 @@ describe("StackedTrendChart date scale", () => {
         initialRange: "12m",
       }),
     );
-    expect(html).toContain(">1月<");
-    // Must not keep the old hardcoded first tick 「11月」 as the only/leading label pattern.
+    // With a 6-month estimate the axis may cross into 2027, so the first tick
+    // can be 「2026年1月」 or 「1月」 — never the old hardcoded 「11月」.
+    expect(html).toMatch(/>2026年1月<|>1月</);
     const axisLabels = [...html.matchAll(/class="k-axisText"[^>]*>([^<]+)</g)].map(
       (m) => m[1],
     );
-    const monthLabels = axisLabels.filter((t) => /^\d{1,2}月$/.test(t ?? ""));
-    expect(monthLabels[0]).toBe("1月");
+    const monthLabels = axisLabels.filter((t) =>
+      /^(\d{4}年)?\d{1,2}月$/.test(t ?? ""),
+    );
+    expect(monthLabels[0]).toMatch(/^(2026年)?1月$/);
+    expect(html).toContain("k-topProjected");
   });
 
   it("year ticks use equal pixel spans for equal years; last tick is not 2026-01", () => {
@@ -894,7 +924,7 @@ describe("CpfProgress zero denominators", () => {
     );
     expect(html).not.toContain("Infinity");
     expect(html).not.toContain("NaN");
-    expect(html).toContain("已达 BHS");
+    expect(html).toContain("BHS S$0");
     expect(html).toContain(">0%<");
   });
 });
@@ -966,5 +996,63 @@ describe("dashboard UI rendering", () => {
     expect(html).toContain("k-late");
     expect(html).toContain("k-badgeRed");
     expect(html).toContain("不可逆");
+  });
+});
+
+describe("CpfConclusion amount highlighting", () => {
+  it("keeps decimals inside the green amount token", () => {
+    const parts = splitConclusion("合计约 S$14,280.45，下一档预计 2030 年 7 月");
+    const amount = parts.find((p) => p.em && p.text.includes("14,280"));
+    expect(amount?.text).toBe("S$14,280.45");
+    expect(parts.some((p) => p.text === ".45")).toBe(false);
+  });
+});
+
+describe("formatMoney tight option", () => {
+  it("omits the space after S$ when tight", () => {
+    expect(formatMoney(72613, "S$", 2, { tight: true })).toBe("S$72,613.00");
+    expect(formatMoney(75000, "S$", 0, { tight: true })).toBe("S$75,000");
+    expect(formatMoney(75000, "S$", 0)).toBe("S$ 75,000");
+  });
+});
+
+describe("cpf near-term projection", () => {
+  const actuals = C2_MONTHS.map((m) => ({
+    t: m.t,
+    balances: m.balances,
+    phase: "actual" as const,
+    grain: "month" as const,
+  }));
+  const projected = C2_PROJ.slice(0, 8).map((m) => ({
+    t: m.t,
+    balances: m.balances,
+    phase: "projected" as const,
+    grain: "month" as const,
+  }));
+
+  it("projects six months after last actual when source has samples", () => {
+    const out = withNearTermProjection(actuals, [...actuals, ...projected], 6);
+    const proj = out.filter((p) => p.phase === "projected");
+    expect(proj).toHaveLength(6);
+    expect(proj[0]!.t).toBe("2026-11");
+    expect(proj[5]!.t).toBe("2027-04");
+    expect(proj[0]!.balances.OA).toBe(C2_PROJ[0]!.balances.OA);
+  });
+
+  it("compounds when no projected samples exist", () => {
+    const last = actuals[actuals.length - 1]!;
+    const contrib = averageMonthlyContrib(actuals, 3);
+    const out = projectNextMonths(last, 6, {
+      rates: { OA: 0.025, SA: 0.04, MA: 0.04 },
+      contrib,
+      bhs: 75_000,
+    });
+    expect(out).toHaveLength(6);
+    expect(out.every((p) => p.phase === "projected")).toBe(true);
+    const lastTot =
+      out[5]!.balances.OA + out[5]!.balances.SA + out[5]!.balances.MA;
+    const firstTot =
+      last.balances.OA + last.balances.SA + last.balances.MA;
+    expect(lastTot).toBeGreaterThan(firstTot);
   });
 });
