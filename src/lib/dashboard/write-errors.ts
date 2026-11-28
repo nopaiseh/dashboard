@@ -26,11 +26,19 @@ const ZOD_ISSUE_MESSAGE_ZH: Record<string, string> = {
   invalid_type: "类型不对",
   invalid_value: "不在允许的取值内",
   too_big: "超出长度上限",
-  too_small: "缺少必填字段",
+  // Numeric / length minimums (empty string, value < min, …). Missing
+  // required keys use invalid_type + undefined → 缺少必填字段 below.
+  too_small: "低于下限",
   invalid_format: "格式不对",
 };
 
 const ZOD_ISSUE_FALLBACK_ZH = "校验未通过";
+
+/** Cap each dotted path segment so huge unrecognized keys cannot DoS clients. */
+export const DASHBOARD_ISSUE_PATH_SEGMENT_MAX = 64;
+
+/** Fixed stand-in when a path segment exceeds DASHBOARD_ISSUE_PATH_SEGMENT_MAX. */
+export const DASHBOARD_ISSUE_PATH_SEGMENT_PLACEHOLDER = "<truncated>";
 
 type ZodIssue = z.ZodError["issues"][number];
 
@@ -50,13 +58,20 @@ function messageForIssue(issue: ZodIssue): string {
   return ZOD_ISSUE_MESSAGE_ZH[issue.code] ?? ZOD_ISSUE_FALLBACK_ZH;
 }
 
+function pathSegment(raw: string): string {
+  return raw.length > DASHBOARD_ISSUE_PATH_SEGMENT_MAX
+    ? DASHBOARD_ISSUE_PATH_SEGMENT_PLACEHOLDER
+    : raw;
+}
+
 function dottedPath(path: PropertyKey[]): string {
-  return path.map(String).join(".");
+  return path.map((p) => pathSegment(String(p))).join(".");
 }
 
 /**
  * Map a ZodError to capped client issues: dotted path, zod code, fixed Chinese
- * message. For unrecognized_keys, append each offending key to the path.
+ * message. For unrecognized_keys, append each offending key to the path
+ * (segments longer than DASHBOARD_ISSUE_PATH_SEGMENT_MAX become the placeholder).
  * Never includes received / input / expected / submitted values.
  */
 export function formatDashboardZodIssues(
@@ -71,8 +86,9 @@ export function formatDashboardZodIssues(
       for (const key of keys) {
         if (out.length >= DASHBOARD_INVALID_PAYLOAD_ISSUES_MAX) break;
         const base = dottedPath(issue.path);
+        const seg = pathSegment(key);
         out.push({
-          path: base ? `${base}.${key}` : key,
+          path: base ? `${base}.${seg}` : seg,
           code: "unrecognized_keys",
           message: ZOD_ISSUE_MESSAGE_ZH.unrecognized_keys!,
         });

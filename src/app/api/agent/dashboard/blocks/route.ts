@@ -9,7 +9,10 @@ import {
   encryptBlockPayload,
 } from "@/lib/dashboard/crypto";
 import { planCreateBlock } from "@/lib/dashboard/logic";
-import { containsSingaporeNricOrFin } from "@/lib/dashboard/nric-guard";
+import {
+  containsSingaporeNricOrFin,
+  privacyOptionsForCategory,
+} from "@/lib/dashboard/nric-guard";
 import {
   earlyValidateDashboardPayload,
   parseDashboardBlockPayload,
@@ -68,6 +71,8 @@ export async function POST(request: Request) {
     return jsonError(400, "invalid json");
   }
 
+  // Shared privacy first (no travel-only entire-value booking-ref) so
+  // NRIC/card hits fail closed before any DB round-trip.
   if (containsSingaporeNricOrFin(body)) {
     return dashboardInvalidPayloadResponse();
   }
@@ -99,6 +104,14 @@ export async function POST(request: Request) {
   }
 
   const sectionRow = section as DashboardSectionRow;
+
+  const travelPrivacy = privacyOptionsForCategory(sectionRow.category);
+  if (
+    travelPrivacy.travel &&
+    containsSingaporeNricOrFin(body, travelPrivacy)
+  ) {
+    return dashboardInvalidPayloadResponse();
+  }
 
   const writer = await assertAgentIsCategoryWriter(
     supabase,

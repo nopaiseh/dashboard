@@ -22,6 +22,7 @@ export {
 export {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
+  privacyOptionsForCategory,
   stringContainsLongDigitRun,
 } from "@/lib/dashboard/nric-guard";
 export {
@@ -50,10 +51,13 @@ export {
   parseBankBlockPayload,
   type BankUnit,
 } from "@/lib/dashboard/bank-validation";
+export { parseTravelBlockPayload } from "@/lib/dashboard/travel-validation";
 export {
   DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
   DASHBOARD_INVALID_PAYLOAD_ERROR,
   DASHBOARD_INVALID_PAYLOAD_ISSUES_MAX,
+  DASHBOARD_ISSUE_PATH_SEGMENT_MAX,
+  DASHBOARD_ISSUE_PATH_SEGMENT_PLACEHOLDER,
   dashboardBlockKeyConflictResponse,
   dashboardInvalidPayloadResponse,
   formatDashboardZodIssues,

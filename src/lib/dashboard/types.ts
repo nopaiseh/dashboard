@@ -42,7 +42,9 @@ export interface DashboardBlockRow {
 }
 
 /** Optional semantic slot; mirrored in plaintext column when set. */
-type WithOptionalBlockKey = { block_key?: CpfBlockKey | BankBlockKey };
+type WithOptionalBlockKey = {
+  block_key?: CpfBlockKey | BankBlockKey | string;
+};
 
 /** Decrypted payload shapes (API / compute; never log). */
 export type HeadlinePayload = { text: string } & WithOptionalBlockKey;

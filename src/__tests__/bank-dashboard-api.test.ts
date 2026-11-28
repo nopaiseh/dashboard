@@ -107,21 +107,22 @@ describe("bank block_key whitelist (28 keys + cross category)", () => {
 });
 
 describe("dashboard writers", () => {
-  it("backfill: ordinary cats get all owners; unique cpf → cpf+bank", () => {
+  it("backfill: ordinary cats get all owners; unique cpf → cpf+bank; travel skipped", () => {
     expect(
       backfillDashboardWriters([
         { category: "cpf", agent_id: AGENT_A },
         { category: "travel", agent_id: AGENT_B },
         { category: "bank", agent_id: AGENT_B },
+        { category: "ops", agent_id: AGENT_B },
       ]),
     ).toEqual([
       { category: "bank", agent_id: AGENT_A },
       { category: "cpf", agent_id: AGENT_A },
-      { category: "travel", agent_id: AGENT_B },
+      { category: "ops", agent_id: AGENT_B },
     ]);
   });
 
-  it("backfill: multi-owner ordinary cats list all; multi cpf skips cpf+bank", () => {
+  it("backfill: multi cpf skips cpf+bank; travel never backfilled", () => {
     expect(
       backfillDashboardWriters([
         { category: "cpf", agent_id: AGENT_A },
@@ -130,10 +131,7 @@ describe("dashboard writers", () => {
         { category: "travel", agent_id: AGENT_B },
         { category: "bank", agent_id: AGENT_A },
       ]),
-    ).toEqual([
-      { category: "travel", agent_id: AGENT_A },
-      { category: "travel", agent_id: AGENT_B },
-    ]);
+    ).toEqual([]);
   });
 
   it("writer may create section; non-writer and unset category → 403", async () => {
@@ -537,6 +535,29 @@ describe("privacy guard bank extensions (CPF-safe)", () => {
     // Every CPF whitelist key name itself is safe.
     for (const key of CPF_BLOCK_KEYS) {
       expect(containsSingaporeNricOrFin({ block_key: key })).toBe(false);
+    }
+  });
+
+  it("does not reject date phrases that used to trip passport-like (cpf/bank safe)", () => {
+    for (const text of [
+      "Salary 2026-11-29",
+      "Due 29/11/2026",
+      "FY 2026-01-01",
+    ]) {
+      expect(containsSingaporeNricOrFin({ text }), text).toBe(false);
+      expect(
+        containsSingaporeNricOrFin({ note: text }, { travel: false }),
+        text,
+      ).toBe(false);
+    }
+  });
+
+  it("does not reject cpf/bank labels that look like booking refs", () => {
+    for (const label of ["OCBC360", "GIRO2026", "SRS2026", "CPFOA1"]) {
+      expect(containsSingaporeNricOrFin({ label }), label).toBe(false);
+      expect(containsSingaporeNricOrFin({ title: label }), label).toBe(false);
+      // Travel mode would flag entire-value codes — must not apply to bank.
+      expect(containsSingaporeNricOrFin({ label })).toBe(false);
     }
   });
 });

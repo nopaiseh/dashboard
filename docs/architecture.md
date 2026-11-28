@@ -14,7 +14,7 @@
 | `agent_tokens` | Bearer 令牌 sha256；`revoked_at` 可作废重发（令牌本身不带分类白名单） |
 | `items` | 事项；`content_hash` = sha256(JSON.stringify([kind, title, body, options, source_url, normalize(due_at)]))；`due_at` 比对前统一 `toISOString()` |
 | `item_events` | 只增不改（禁止 UPDATE/DELETE/TRUNCATE）；决定记录 credential_id、verified_at、content_hash |
-| `dashboard_writers` | 看板写入人多对多（PK `(category, agent_id)`）；列表为空则该分类一切 agent 写入 403；仅 owner（session + step-up）可添加/移除。回填：普通分类全员；`cpf`/`bank` 仅唯一 cpf 拥有者 |
+| `dashboard_writers` | 看板写入人多对多（PK `(category, agent_id)`）；列表为空则该分类一切 agent 写入 403；仅 owner（session + step-up）可添加/移除。回填：普通分类全员；`cpf`/`bank` 仅当唯一 cpf 拥有者时回填一次；`travel` 从不回填（仅 owner 指定） |
 | `dashboard_sections` / `dashboard_blocks` | 通用 dashboard 分区/区块；敏感内容在 `payload`（应用层加密）；可选明文 `block_key` + 部分唯一索引 `(section_id, block_key)` |
 | `dashboard_block_events` | 区块审计，只增不改（禁止 UPDATE/DELETE/TRUNCATE） |
 | `daily_summaries` | 每日小结 |
@@ -60,7 +60,7 @@
 |------|----------------------------------------|
 | `category`、`block_type`、`sort_order`、`agent_id`、可选 `block_key`、时间戳 | 标题、数值、正文、一行标题、列表、进度、图表序列等 |
 
-`block_key` 按分区白名单：`bank` → `BANK_BLOCK_KEYS`；`cpf` → `CPF_BLOCK_KEYS`；其他维持原状。银行区块另有严格字段与等式校验（`unit` 白名单 `S$`/`月`；详见 `docs/agent-api.md`）。隐私拦截：禁用键名（含 card/iban/swift/pan/last4 等）与连续 ≥9 位数字 / NRIC 形态 → 整包 `400`（不回显命中内容；`bank_ledger` 月 JSON 扫描上限 32k，其它嵌入 JSON 10k）。zod 失败另附固定中文 `issues`（不含提交值）。所有者读路径（`GET /api/dashboard`）对所有分区（含 bank）一律会话保护，与 CPF 相同。
+`block_key` 按分区白名单：`bank` → `BANK_BLOCK_KEYS`；`cpf` → `CPF_BLOCK_KEYS`；`travel` → `travel_<slot>` / `travel_<trip>_<slot>`；其他维持原状。银行区块另有严格字段与等式校验（`unit` 白名单 `S$`/`月`；详见 `docs/agent-api.md`）；旅行区块另有严格字段校验。隐私拦截：禁用键名（含 card/iban/swift/pan/last4/passport/bookingref/pnr 等）与连续 ≥9 位数字 / NRIC / 护照形态 / 订票码关键词 → 整包 `400`（不回显命中内容；`bank_ledger` 月 JSON 扫描上限 32k，其它嵌入 JSON 10k）。zod 失败另附固定中文 `issues`（不含提交值）。所有者读路径（`GET /api/dashboard`）对所有分区（含 bank / travel）一律会话保护，与 CPF 相同。
 
 AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信封版本查密钥）。`payload` 仅允许 `''` 或 `^v[0-9]+:` 前缀（无遗留明文）。服务端派生值接口：`runDerivedCompute`（内存解密→计算→返回；不落库/不缓存/不打明文日志）。
 

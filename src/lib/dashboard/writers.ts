@@ -161,6 +161,7 @@ export async function removeDashboardWriter(
  * - Ordinary categories: every section owner becomes a writer
  * - cpf / bank: only when exactly one agent owns a cpf section → that
  *   agent is the sole writer for both; otherwise neither is backfilled
+ * - travel: never auto-backfilled (owner assigns via API; empty → 403)
  */
 export function backfillDashboardWriters(
   sections: ReadonlyArray<{ category: string; agent_id: string | null }>,
@@ -180,7 +181,13 @@ export function backfillDashboardWriters(
   for (const [category, agents] of [...byCat.entries()].sort((a, b) =>
     a[0].localeCompare(b[0]),
   )) {
-    if (category === "cpf" || category === "bank") continue;
+    if (
+      category === "cpf" ||
+      category === "bank" ||
+      category === "travel"
+    ) {
+      continue;
+    }
     for (const agent_id of [...agents].sort()) {
       out.push({ category, agent_id });
     }
