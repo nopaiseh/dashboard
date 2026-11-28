@@ -25,11 +25,14 @@ import { MissingYearStripe } from "@/components/qingjian/dashboard/EmptyBlock";
 import {
   formatWan,
   parsePointTime,
+  parseTrendPointTime,
   progressFill,
 } from "@/components/qingjian/dashboard/format";
 import {
   C2_BAL,
   C2_EXCEED_FRS,
+  C2_MONTHS,
+  C2_PROJ,
   C2_TOTAL,
 } from "@/components/qingjian/dashboard/fixtures/c2SampleData";
 import {
@@ -330,15 +333,18 @@ describe("StackedTrendChart date scale", () => {
   const padLeft = 48;
   const innerW = 640 - 48 - 16;
 
-  it("parses YYYY-MM as month-end so YYYY-12 matches YYYY year-end", () => {
-    expect(parsePointTime("2025")).toBe(parsePointTime("2025-12"));
-    expect(parsePointTime("2025-11")).toBe(
+  it("keeps shared parsePointTime as month-start; trend parser is month-end", () => {
+    expect(parsePointTime("2025-12")).toBe(
+      Date.parse("2025-12-01T00:00:00+08:00"),
+    );
+    expect(parsePointTime("2025")).not.toBe(parsePointTime("2025-12"));
+    expect(parseTrendPointTime("2025")).toBe(parseTrendPointTime("2025-12"));
+    expect(parseTrendPointTime("2025-11")).toBe(
       Date.parse("2025-11-30T00:00:00+08:00"),
     );
-    expect(parsePointTime("2026-01")).toBe(
+    expect(parseTrendPointTime("2026-01")).toBe(
       Date.parse("2026-01-31T00:00:00+08:00"),
     );
-    expect(parsePointTime("2025")!).toBeGreaterThan(parsePointTime("2025-11")!);
   });
 
   it("positions mixed yearly+monthly points by date (monotonic, not index-even)", () => {
@@ -361,7 +367,7 @@ describe("StackedTrendChart date scale", () => {
       "2026-10",
       "2026-11",
     ];
-    const times = ts.map((t) => parsePointTime(t));
+    const times = ts.map((t) => parseTrendPointTime(t));
     const xs = xPositionsForDates(times, padLeft, innerW);
 
     expect(xs).toHaveLength(ts.length);
@@ -384,7 +390,11 @@ describe("StackedTrendChart date scale", () => {
 
   it("handles empty and single-point series without NaN", () => {
     expect(xPositionsForDates([], padLeft, innerW)).toEqual([]);
-    const one = xPositionsForDates([parsePointTime("2026-01")], padLeft, innerW);
+    const one = xPositionsForDates(
+      [parseTrendPointTime("2026-01")],
+      padLeft,
+      innerW,
+    );
     expect(one).toHaveLength(1);
     expect(Number.isFinite(one[0]!)).toBe(true);
     expect(one[0]).toBe(padLeft + innerW / 2);
@@ -456,14 +466,14 @@ describe("StackedTrendChart date scale", () => {
       "2026-10",
       "2026-11",
     ];
-    const times = ts.map((t) => parsePointTime(t)!);
+    const times = ts.map((t) => parseTrendPointTime(t)!);
     const tMin = Math.min(...times);
     const tMax = Math.max(...times);
     const ticks = buildYearXTicks(tMin, tMax, padLeft, allInnerW);
 
     expect(ticks.length).toBeGreaterThanOrEqual(3);
     // Anchored at year-end, not at 2026-01 (month-end Jan).
-    const jan2026 = parsePointTime("2026-01")!;
+    const jan2026 = parseTrendPointTime("2026-01")!;
     for (const tick of ticks) {
       expect(tick.t).toBe(yearEndMs(tick.year));
       expect(Math.abs(tick.t - jan2026)).toBeGreaterThan(1);
@@ -491,9 +501,18 @@ describe("StackedTrendChart date scale", () => {
     expect(fake2026AtJan - x2024!).toBeLessThan(twoYearGap * 0.7);
   });
 
-  it("drawn order is non-decreasing for 2025 year + 2025-11..2026-01 months", () => {
-    // String order from parseCpfModel puts "2025" before "2025-11", but with
-    // month-start parsing that would place Nov left of year-end → path backtracks.
+  it("year ticks fall back to a single year label when span is within one year", () => {
+    const tMin = parseTrendPointTime("2026-01")!;
+    const tMax = parseTrendPointTime("2026-10")!;
+    const ticks = buildYearXTicks(tMin, tMax, padLeft, innerW);
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.label).toBe("2026");
+    expect(Number.isFinite(ticks[0]!.x)).toBe(true);
+  });
+
+  it("drawn order is non-decreasing; year point is last on YYYY/YYYY-12 tie", () => {
+    // String order from parseCpfModel puts "2025" before "2025-11"; month-end
+    // time + sort keeps the path monotonic and draws year last for hover.
     const raw = [
       { t: "2025", grain: "year" as const },
       { t: "2025-11", grain: "month" as const },
@@ -508,17 +527,17 @@ describe("StackedTrendChart date scale", () => {
     const ordered = sortTrendPointsByTime(raw);
     expect(ordered.map((p) => p.t)).toEqual([
       "2025-11",
-      "2025",
       "2025-12",
+      "2025",
       "2026-01",
     ]);
-    // Equal time: year before month so year hit is not covered.
-    expect(ordered[1]!.grain).toBe("year");
-    expect(ordered[2]!.grain).toBe("month");
-    expect(parsePointTime("2025")).toBe(parsePointTime("2025-12"));
+    // Equal time: year drawn last so it is the hover/focus target.
+    expect(ordered[1]!.grain).toBe("month");
+    expect(ordered[2]!.grain).toBe("year");
+    expect(parseTrendPointTime("2025")).toBe(parseTrendPointTime("2025-12"));
 
     const xs = xPositionsForDates(
-      ordered.map((p) => parsePointTime(p.t)),
+      ordered.map((p) => parseTrendPointTime(p.t)),
       padLeft,
       innerW,
     );
@@ -526,6 +545,34 @@ describe("StackedTrendChart date scale", () => {
     for (let i = 1; i < xs.length; i++) {
       expect(xs[i]!).toBeGreaterThanOrEqual(xs[i - 1]!);
     }
+  });
+
+  it("points12 is last 12 monthly actuals (c2SampleData shape) spanning full width", () => {
+    const cpf = SAMPLE_DASHBOARD.sections.find((s) => s.category === "cpf")!;
+    const model = parseCpfModel(cpf, SAMPLE_DASHBOARD.headline);
+    expect(model.trend).not.toBeNull();
+    const p12 = model.trend!.points12;
+    expect(p12).toHaveLength(12);
+    expect(p12.every((p) => p.phase === "actual")).toBe(true);
+    expect(p12.every((p) => p.grain === "month")).toBe(true);
+    expect(p12.map((p) => p.t)).toEqual(C2_MONTHS.map((m) => m.t));
+    expect(p12.some((p) => C2_PROJ.some((proj) => proj.t === p.t))).toBe(false);
+
+    const allInnerW = 640 - 48 - 16;
+    const times = p12.map((p) => parseTrendPointTime(p.t));
+    const xs = xPositionsForDates(times, padLeft, allInnerW);
+    expect(xs[0]).toBeCloseTo(padLeft, 5);
+    expect(xs[xs.length - 1]).toBeCloseTo(padLeft + allInnerW, 5);
+    expect((xs[xs.length - 1]! - xs[0]!) / allInnerW).toBeCloseTo(1, 5);
+
+    // Contrast: wrongly appending half-yearly projections would squash actuals.
+    const wrongTimes = [
+      ...times,
+      ...C2_PROJ.map((p) => parseTrendPointTime(p.t)),
+    ];
+    const wrongXs = xPositionsForDates(wrongTimes, padLeft, allInnerW);
+    const actualSpanWrong = wrongXs[11]! - wrongXs[0]!;
+    expect(actualSpanWrong / allInnerW).toBeLessThan(0.3);
   });
 });
 

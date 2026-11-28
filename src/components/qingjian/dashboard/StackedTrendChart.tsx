@@ -4,7 +4,7 @@ import { useId, useState, type KeyboardEvent } from "react";
 import { EmptyBlock } from "./EmptyBlock";
 import type { AccBalances, CpfTrendData, CpfTrendPoint } from "./cpfModel";
 import { CPF_COLORS } from "./cpfTheme";
-import { formatMoney, parsePointTime } from "./format";
+import { formatMoney, parseTrendPointTime } from "./format";
 import type { ChartRangeMode } from "./types";
 
 /** Evenly pick ~`count` indices from `length` points (inclusive ends). */
@@ -85,32 +85,34 @@ export function buildTwelveMonthXLabels(
 }
 
 /**
- * Sort trend points by parsed time for drawing order.
- * On equal timestamps, year (年底数) comes before month so the year hit stays reachable.
+ * Sort trend points by month-end time for drawing order.
+ * On equal timestamps, year (年底数) is drawn LAST so it is the top hover/focus target.
  */
 export function sortTrendPointsByTime(
   points: CpfTrendPoint[],
 ): CpfTrendPoint[] {
   return [...points].sort((a, b) => {
-    const ta = parsePointTime(a.t);
-    const tb = parsePointTime(b.t);
-    const aKey = ta == null || !Number.isFinite(ta) ? Number.POSITIVE_INFINITY : ta;
-    const bKey = tb == null || !Number.isFinite(tb) ? Number.POSITIVE_INFINITY : tb;
+    const ta = parseTrendPointTime(a.t);
+    const tb = parseTrendPointTime(b.t);
+    const aKey =
+      ta == null || !Number.isFinite(ta) ? Number.POSITIVE_INFINITY : ta;
+    const bKey =
+      tb == null || !Number.isFinite(tb) ? Number.POSITIVE_INFINITY : tb;
     if (aKey !== bKey) return aKey - bKey;
     if (a.grain !== b.grain) {
-      if (a.grain === "year") return -1;
-      if (b.grain === "year") return 1;
+      if (a.grain === "year") return 1;
+      if (b.grain === "year") return -1;
     }
     return a.t.localeCompare(b.t);
   });
 }
 
-/** Year-end instant matching `parsePointTime("YYYY")` (Dec 31, +08). */
+/** Year-end instant matching `parseTrendPointTime("YYYY")` (Dec 31, +08). */
 export function yearEndMs(year: number): number {
-  return parsePointTime(String(year)) ?? NaN;
+  return parseTrendPointTime(String(year)) ?? NaN;
 }
 
-/** Calendar year in the same +08 zone used by `parsePointTime`. */
+/** Calendar year in the same +08 zone used by `parseTrendPointTime`. */
 function calendarYearAt(ms: number): number {
   return Number(
     new Date(ms + 8 * 60 * 60 * 1000).toISOString().slice(0, 4),
@@ -147,8 +149,21 @@ export function buildYearXTicks(
   ) {
     return [];
   }
+  if (innerW <= 0) return [];
   const tSpan = tMax - tMin;
-  if (tSpan === 0 || innerW <= 0) return [];
+
+  const fallbackTick = (year: number, t: number, x: number): YearXTick => ({
+    year,
+    label: String(year),
+    x,
+    t,
+  });
+
+  // Single instant or no year-end inside range → still show at least one year label.
+  if (tSpan === 0) {
+    const year = calendarYearAt(tMin);
+    return [fallbackTick(year, tMin, padLeft + innerW / 2)];
+  }
 
   const yLo = calendarYearAt(tMin);
   const yHi = calendarYearAt(tMax);
@@ -158,7 +173,10 @@ export function buildYearXTicks(
     if (!Number.isFinite(t)) continue;
     if (t >= tMin && t <= tMax) candidates.push(y);
   }
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) {
+    const year = calendarYearAt((tMin + tMax) / 2);
+    return [fallbackTick(year, (tMin + tMax) / 2, padLeft + innerW / 2)];
+  }
 
   const minGap = opts?.minLabelGapPx ?? 72;
   const preferred = Math.max(1, opts?.step ?? 2);
@@ -374,7 +392,7 @@ function TrendSvg({
     (ordered.length === 0
       ? Math.max(guideMax * 0.3, 1)
       : Math.max(...totals, guideMax * 0.3, 1)) * 1.08;
-  const pointTimes = ordered.map((p) => parsePointTime(p.t));
+  const pointTimes = ordered.map((p) => parseTrendPointTime(p.t));
   const xAt = xPositionsForDates(pointTimes, PAD.left, innerW);
   const validTimes = pointTimes.filter(
     (t): t is number => t != null && Number.isFinite(t),
