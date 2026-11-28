@@ -91,12 +91,7 @@ export function CpfAccounts({
             <span className={"k-yr"}>{ytdChangeLabel(chgY[acc.key])}</span>
           </div>
         ))}
-        <TotalCard
-          total={total}
-          totalChgM={totalChgM}
-          chgY={chgY}
-          monthContribTotal={data.monthContribTotal}
-        />
+        <TotalCard total={total} totalChgM={totalChgM} chgY={chgY} />
       </div>
     </>
   );
@@ -106,12 +101,10 @@ function TotalCard({
   total,
   totalChgM,
   chgY,
-  monthContribTotal,
 }: {
   total: number;
   totalChgM: number;
   chgY: AccBalances;
-  monthContribTotal?: number;
 }) {
   return (
     <div className={"num numEm"}>
@@ -122,11 +115,6 @@ function TotalCard({
       </div>
       <b>{formatMoney(total)}</b>
       <span className={"k-chg"}>{momChangeLabel(totalChgM)}</span>
-      {monthContribTotal !== undefined ? (
-        <span className={"k-yr"}>
-          缴存 {monthContribTotal.toLocaleString("en-SG")}
-        </span>
-      ) : null}
       <span className={"k-yr"}>
         {ytdChangeLabel(chgY.OA + chgY.SA + chgY.MA)}
       </span>
