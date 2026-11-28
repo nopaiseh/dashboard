@@ -33,11 +33,7 @@ export function DashboardOverview({
         <ul className={"qj-boardGrid"}>
           {cards.map((card) => (
             <li key={card.category} className={"qj-boardGridItem"}>
-              <Link
-                href={card.href}
-                className={"qj-boardCard"}
-                aria-label={`${card.name}，${card.summary}`}
-              >
+              <Link href={card.href} className={"qj-boardCard"}>
                 <h2 className={"qj-boardCardTitle"}>{card.name}</h2>
                 <p className={"qj-boardCardSummary"}>{card.summary}</p>
                 {card.updatedLabel && card.summary !== card.updatedLabel ? (

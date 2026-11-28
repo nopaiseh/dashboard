@@ -3,7 +3,10 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/qingjian/AppShell";
 import { DashboardDetailHeader } from "@/components/qingjian/DashboardDetailHeader";
 import { DashboardView } from "@/components/qingjian/DashboardView";
-import { findSectionByCategory } from "@/components/qingjian/dashboard/boardSummary";
+import {
+  findSectionsByCategory,
+  sectionsHeadline,
+} from "@/components/qingjian/dashboard/boardSummary";
 import { loadDashboard } from "@/lib/read";
 import { loadShellData, withUiReadGuard } from "@/lib/ui/page-helpers";
 
@@ -13,14 +16,6 @@ export const instant = false;
 type PageProps = {
   params: Promise<{ category: string }>;
 };
-
-function sectionHeadline(
-  blocks: { block_type: string; payload: Record<string, unknown> }[],
-): string {
-  const hit = blocks.find((b) => b.block_type === "headline");
-  const text = hit?.payload.text;
-  return typeof text === "string" ? text : "";
-}
 
 export default async function DashboardCategoryPage({ params }: PageProps) {
   await connection();
@@ -32,8 +27,8 @@ export default async function DashboardCategoryPage({ params }: PageProps) {
   return withUiReadGuard(async () => {
     const { siteName, counts } = await loadShellData();
     const dashboard = await loadDashboard();
-    const section = findSectionByCategory(dashboard.sections, category);
-    if (!section) {
+    const matched = findSectionsByCategory(dashboard.sections, category);
+    if (matched.length === 0) {
       notFound();
     }
 
@@ -42,8 +37,8 @@ export default async function DashboardCategoryPage({ params }: PageProps) {
         <DashboardDetailHeader />
         <DashboardView
           data={{
-            headline: sectionHeadline(section.blocks),
-            sections: [section],
+            headline: sectionsHeadline(matched),
+            sections: matched,
           }}
         />
       </AppShell>

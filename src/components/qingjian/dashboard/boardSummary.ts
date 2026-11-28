@@ -1,4 +1,7 @@
-import type { DashboardSectionPublic } from "@/lib/dashboard/types";
+import type {
+  DashboardBlockPublic,
+  DashboardSectionPublic,
+} from "@/lib/dashboard/types";
 import { formatShortDate } from "@/lib/ui/format";
 import { categoryLabel } from "./labels";
 import { sortSectionsForView } from "./sortSections";
@@ -16,15 +19,20 @@ function firstLine(text: string): string {
   return text.split(/\n+/)[0]?.trim() ?? "";
 }
 
+/** Normalize category for grouping / matching. Do not decodeURIComponent — Next already decoded route params. */
+export function normalizeCategory(category: string): string {
+  return category.trim().toLowerCase();
+}
+
 /**
  * One-line board summary from title/conclusion blocks.
- * Prefers `cpf_conclusion` by block_key; then headline; then text title/body.
- * Returns null when none — callers fall back to last-updated copy.
+ * Prefers `cpf_conclusion` by block_key across the given blocks; then headline;
+ * then text title/body; then list title.
  */
-export function boardConclusionSummary(
-  section: DashboardSectionPublic,
+export function conclusionSummaryFromBlocks(
+  blocks: DashboardBlockPublic[],
 ): string | null {
-  const keyed = section.blocks.find(
+  const keyed = blocks.find(
     (b) => str(b.payload.block_key)?.trim() === "cpf_conclusion",
   );
   if (keyed) {
@@ -34,7 +42,7 @@ export function boardConclusionSummary(
     if (text) return firstLine(text);
   }
 
-  const headlines = section.blocks
+  const headlines = blocks
     .filter((b) => b.block_type === "headline")
     .sort((a, b) => a.sort_order - b.sort_order);
   for (const h of headlines) {
@@ -42,7 +50,7 @@ export function boardConclusionSummary(
     if (text) return firstLine(text);
   }
 
-  const texts = section.blocks
+  const texts = blocks
     .filter((b) => b.block_type === "text")
     .sort((a, b) => a.sort_order - b.sort_order);
   for (const t of texts) {
@@ -52,7 +60,7 @@ export function boardConclusionSummary(
     if (text) return firstLine(text);
   }
 
-  const lists = section.blocks
+  const lists = blocks
     .filter((b) => b.block_type === "list")
     .sort((a, b) => a.sort_order - b.sort_order);
   for (const l of lists) {
@@ -63,11 +71,35 @@ export function boardConclusionSummary(
   return null;
 }
 
+export function boardConclusionSummary(
+  section: DashboardSectionPublic,
+): string | null {
+  return conclusionSummaryFromBlocks(section.blocks);
+}
+
+/** Summary across a category group (e.g. several agents' CPF sections). */
+export function boardConclusionSummaryFromSections(
+  sections: DashboardSectionPublic[],
+): string | null {
+  return conclusionSummaryFromBlocks(sections.flatMap((s) => s.blocks));
+}
+
 /** Latest of section.updated_at and any block updated_at. */
 export function boardLastUpdatedIso(section: DashboardSectionPublic): string {
   let latest = section.updated_at;
   for (const b of section.blocks) {
     if (b.updated_at > latest) latest = b.updated_at;
+  }
+  return latest;
+}
+
+export function boardLastUpdatedIsoFromSections(
+  sections: DashboardSectionPublic[],
+): string {
+  let latest = "";
+  for (const s of sections) {
+    const iso = boardLastUpdatedIso(s);
+    if (iso > latest) latest = iso;
   }
   return latest;
 }
@@ -80,7 +112,33 @@ export function formatBoardUpdated(
   return short ? `更新于 ${short}` : "";
 }
 
+/** Headline text from matched sections only (not the global dashboard headline). */
+export function sectionsHeadline(sections: DashboardSectionPublic[]): string {
+  const headlines = sections
+    .flatMap((s) => s.blocks)
+    .filter((b) => b.block_type === "headline")
+    .sort((a, b) => a.sort_order - b.sort_order);
+  const text = headlines[0]?.payload.text;
+  return typeof text === "string" ? text : "";
+}
+
+/**
+ * Merge same-category (or CPF-pinned) sections so parseCpfModel can see
+ * `cpf_conclusion` and other keyed blocks across agent partitions.
+ */
+export function mergeSectionBlocks(
+  sections: DashboardSectionPublic[],
+): DashboardSectionPublic | null {
+  if (sections.length === 0) return null;
+  const first = sections[0]!;
+  return {
+    ...first,
+    blocks: sections.flatMap((s) => s.blocks),
+  };
+}
+
 export type BoardCardModel = {
+  /** Normalized category slug (unique card key). */
   category: string;
   href: string;
   name: string;
@@ -89,19 +147,43 @@ export type BoardCardModel = {
   updatedIso: string;
 };
 
+/** Group sections by normalized category; order follows sortSectionsForView. */
+export function groupSectionsByCategory(
+  sections: DashboardSectionPublic[],
+): Array<{ category: string; sections: DashboardSectionPublic[] }> {
+  const ordered = sortSectionsForView(sections);
+  const groups = new Map<string, DashboardSectionPublic[]>();
+  const order: string[] = [];
+  for (const section of ordered) {
+    const key = normalizeCategory(section.category);
+    if (!key) continue;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(section);
+    } else {
+      groups.set(key, [section]);
+      order.push(key);
+    }
+  }
+  return order.map((category) => ({
+    category,
+    sections: groups.get(category)!,
+  }));
+}
+
 export function buildBoardCards(
   sections: DashboardSectionPublic[],
   now: Date = new Date(),
 ): BoardCardModel[] {
-  return sortSectionsForView(sections).map((section) => {
-    const category = section.category.trim().toLowerCase() || section.category;
-    const updatedIso = boardLastUpdatedIso(section);
+  return groupSectionsByCategory(sections).map(({ category, sections: group }) => {
+    const updatedIso = boardLastUpdatedIsoFromSections(group);
     const updatedLabel = formatBoardUpdated(updatedIso, now);
-    const conclusion = boardConclusionSummary(section);
+    const conclusion = boardConclusionSummaryFromSections(group);
+    const labelSource = group[0]?.category ?? category;
     return {
       category,
       href: `/dashboard/${encodeURIComponent(category)}`,
-      name: categoryLabel(section.category),
+      name: categoryLabel(labelSource),
       summary: conclusion ?? updatedLabel,
       updatedLabel,
       updatedIso,
@@ -109,11 +191,14 @@ export function buildBoardCards(
   });
 }
 
-export function findSectionByCategory(
+/** All sections whose category matches (case-insensitive, trimmed). No URI decoding. */
+export function findSectionsByCategory(
   sections: DashboardSectionPublic[],
   categoryParam: string,
-): DashboardSectionPublic | undefined {
-  const needle = decodeURIComponent(categoryParam).trim().toLowerCase();
-  if (!needle) return undefined;
-  return sections.find((s) => s.category.trim().toLowerCase() === needle);
+): DashboardSectionPublic[] {
+  const needle = normalizeCategory(categoryParam);
+  if (!needle) return [];
+  return sections.filter(
+    (s) => normalizeCategory(s.category) === needle,
+  );
 }

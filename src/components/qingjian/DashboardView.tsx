@@ -1,6 +1,7 @@
 import type { DashboardReadResult } from "@/lib/dashboard/types";
 import { BlockRenderer } from "./dashboard/BlockRenderer";
 import { CpfSection } from "./dashboard/CpfSection";
+import { mergeSectionBlocks } from "./dashboard/boardSummary";
 import { parseCpfModel } from "./dashboard/parseCpfModel";
 import {
   PAGE_EMPTY_TEXT,
@@ -23,6 +24,10 @@ export function DashboardView({
 }) {
   const sections = sortSectionsForView(data.sections);
   const empty = isDashboardEmpty(data.headline, data.sections);
+  const cpfSections = sections.filter((s) => isPinnedCategory(s.category));
+  const otherSections = sections.filter((s) => !isPinnedCategory(s.category));
+  // Merge all CPF partitions so cpf_conclusion / keyed blocks are visible across agents.
+  const mergedCpf = mergeSectionBlocks(cpfSections);
 
   return (
     <div className={"qj-dash"}>
@@ -38,44 +43,37 @@ export function DashboardView({
           <p>{PAGE_EMPTY_TEXT}</p>
         </div>
       ) : (
-        sections.map((section) => {
-          // 公积金分区一律走 C2 九段（#24 schema 无 role/c2_layout 字段）。
-          if (isPinnedCategory(section.category)) {
-            const model = parseCpfModel(section, data.headline);
+        <>
+          {mergedCpf ? (
+            <CpfSection
+              key={mergedCpf.id}
+              model={parseCpfModel(mergedCpf, data.headline)}
+              sampleMode={sampleMode}
+            />
+          ) : null}
+          {otherSections.map((section) => {
+            const blocks = sortBlocksForView(section.blocks);
+            if (blocks.length === 0) return null;
             return (
-              <CpfSection
+              <section
                 key={section.id}
-                model={model}
-                sampleMode={sampleMode}
-              />
+                className={"qj-dashSection"}
+                aria-labelledby={`dash-sec-${section.id}`}
+              >
+                <header className={"qj-sectionHead qj-dashSectionHead"}>
+                  <h2 id={`dash-sec-${section.id}`}>
+                    {categoryLabel(section.category)}
+                  </h2>
+                </header>
+                <div className={"qj-dashBlocks"}>
+                  {blocks.map((block) => (
+                    <BlockRenderer key={block.id} block={block} />
+                  ))}
+                </div>
+              </section>
             );
-          }
-
-          const blocks = sortBlocksForView(section.blocks);
-          if (blocks.length === 0) return null;
-          return (
-            <section
-              key={section.id}
-              className={
-                isPinnedCategory(section.category)
-                  ? "qj-dashSection qj-dashSectionPinned"
-                  : "qj-dashSection"
-              }
-              aria-labelledby={`dash-sec-${section.id}`}
-            >
-              <header className={"qj-sectionHead qj-dashSectionHead"}>
-                <h2 id={`dash-sec-${section.id}`}>
-                  {categoryLabel(section.category)}
-                </h2>
-              </header>
-              <div className={"qj-dashBlocks"}>
-                {blocks.map((block) => (
-                  <BlockRenderer key={block.id} block={block} />
-                ))}
-              </div>
-            </section>
-          );
-        })
+          })}
+        </>
       )}
     </div>
   );
