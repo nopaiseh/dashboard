@@ -5,8 +5,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DashboardView } from "@/components/qingjian/DashboardView";
+import { BankLedgerPanel } from "@/components/qingjian/dashboard/BankLedgerPanel";
 import { BankOverview } from "@/components/qingjian/dashboard/BankOverview";
+import { BankProgressBar } from "@/components/qingjian/dashboard/BankProgressBar";
 import { BankSection } from "@/components/qingjian/dashboard/BankSection";
+import { computeTrendYDomain } from "@/components/qingjian/dashboard/BankTrend";
 import {
   BANK_EMPTY,
   BANK_NO_COMPARE,
@@ -24,9 +27,14 @@ import {
   splitBankConclusionText,
   splitBankConclusionTitle,
 } from "@/components/qingjian/dashboard/bankFormat";
+import { emptyBankViewModel } from "@/components/qingjian/dashboard/bankModel";
 import { buildSampleBankDashboard } from "@/components/qingjian/dashboard/fixtures/buildSampleBankBlocks";
 import { categoryLabel, isBankCategory } from "@/components/qingjian/dashboard/labels";
-import { parseBankModel } from "@/components/qingjian/dashboard/parseBankModel";
+import {
+  bankParserCoveredBlockKeys,
+  parseBankModel,
+} from "@/components/qingjian/dashboard/parseBankModel";
+import { BANK_BLOCK_KEYS } from "@/lib/bank-block-keys";
 import type {
   DashboardBlockPublic,
   DashboardSectionPublic,
@@ -49,6 +57,14 @@ describe("bank display rules (bankFormat)", () => {
     expect(formatBankMoney(0)).toBe("S$0.00");
     expect(formatBankMoney(1000)).toBe("S$1,000.00");
     expect(formatBankMoney(-5000)).toBe("−S$5,000.00");
+  });
+
+  it("formatBankMoney: 先四舍五入到分再判正负，避免 −0.004→−S$0.00", () => {
+    expect(formatBankMoney(-0.004)).toBe("S$0.00");
+    expect(formatBankMoney(0.004)).toBe("S$0.00");
+    expect(formatBankMoney(-0.006)).toBe("−S$0.01");
+    expect(formatBankMoney(0.006)).toBe("S$0.01");
+    expect(formatBankMoney(-0.004, 0)).toBe("S$0");
   });
 
   it("formatBankCompare: 缺→—；0 仍显示金额", () => {
@@ -177,6 +193,114 @@ describe("parseBankModel (FAKE blocks)", () => {
     });
     expect(model.groups[0]?.accounts[0]?.value).toBeNull();
   });
+
+  it("trend series points are sorted ascending by month (server order not trusted)", () => {
+    const block: DashboardBlockPublic = {
+      id: "trend-unsorted",
+      section_id: "s",
+      block_type: "chart_series",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      payload: {
+        block_key: "bank_trend_hsbc",
+        title: "HSBC FAKE",
+        account_key: "hsbc",
+        series: [
+          { t: "2027-03", v: 300, phase: "actual" },
+          { t: "2027-01", v: 100, phase: "actual" },
+          { t: "2027-02", v: 200, phase: "actual" },
+        ],
+        range_default: "12m",
+        unit: "S$",
+      },
+    };
+    const model = parseBankModel({
+      id: "s",
+      category: "bank",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      blocks: [block],
+    });
+    expect(model.trends[0]?.points.map((p) => p.t)).toEqual([
+      "2027-01",
+      "2027-02",
+      "2027-03",
+    ]);
+  });
+
+  it("ledger skips bad JSON items without throwing", () => {
+    const block: DashboardBlockPublic = {
+      id: "ledger-bad",
+      section_id: "s",
+      block_type: "list",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      payload: {
+        block_key: "bank_ledger",
+        title: "流水",
+        items: [
+          "NOT_JSON{{{",
+          JSON.stringify({
+            month: "2027-02",
+            in_total: 10,
+            out_total: 5,
+            lines: [{ kind: "in", category: "salary", amount: 10 }],
+          }),
+          "{broken",
+          JSON.stringify({ month: "nope" }),
+        ],
+      },
+    };
+    const section: DashboardSectionPublic = {
+      id: "s",
+      category: "bank",
+      sort_order: 0,
+      agent_id: null,
+      created_at: "2027-01-01T00:00:00.000Z",
+      updated_at: "2027-01-01T00:00:00.000Z",
+      blocks: [block],
+    };
+    expect(() => parseBankModel(section)).not.toThrow();
+    const model = parseBankModel(section);
+    expect(model.ledger).toHaveLength(1);
+    expect(model.ledger?.[0]?.month).toBe("2027-02");
+    const html = renderToStaticMarkup(
+      createElement(BankLedgerPanel, { model, sampleMode: true }),
+    );
+    expect(html).toContain("2027-02");
+    expect(html).not.toContain("NOT_JSON");
+  });
+
+  it("covers all 28 bank block_key whitelist slots from #35", () => {
+    expect(BANK_BLOCK_KEYS).toHaveLength(28);
+    const covered = bankParserCoveredBlockKeys();
+    expect(covered).toHaveLength(28);
+    expect(covered).toEqual([...BANK_BLOCK_KEYS].sort());
+  });
+});
+
+describe("bank trend Y domain", () => {
+  it("uses data min/max (including negatives); does not force 0 as floor", () => {
+    const pos = computeTrendYDomain([1200, 3400, 2800]);
+    expect(pos.yMin).toBeGreaterThan(0);
+    expect(pos.yMax).toBeGreaterThanOrEqual(3400);
+
+    const mixed = computeTrendYDomain([-5000, -1000, 2000]);
+    expect(mixed.yMin).toBeLessThanOrEqual(-5000);
+    expect(mixed.yMax).toBeGreaterThanOrEqual(2000);
+    expect(mixed.yMin).toBeLessThan(0);
+    expect(mixed.yMax).toBeGreaterThan(0);
+
+    const allNeg = computeTrendYDomain([-8000, -2000]);
+    expect(allNeg.yMax).toBeLessThanOrEqual(0);
+    expect(allNeg.yMin).toBeLessThanOrEqual(-8000);
+  });
 });
 
 describe("bank UI render (FAKE)", () => {
@@ -227,5 +351,55 @@ describe("bank UI render (FAKE)", () => {
     expect(html).toContain("role=\"tab\"");
     expect(html).toContain("role=\"tabpanel\"");
     expect(html).toContain("aria-selected=\"true\"");
+  });
+
+  it("ledger panel sorts months descending", () => {
+    const model = emptyBankViewModel();
+    model.ledger = [
+      {
+        month: "2027-01",
+        inTotal: 1,
+        outTotal: 0,
+        lines: [{ kind: "in", category: "salary", amount: 1 }],
+      },
+      {
+        month: "2027-03",
+        inTotal: 3,
+        outTotal: 0,
+        lines: [{ kind: "in", category: "salary", amount: 3 }],
+      },
+      {
+        month: "2027-02",
+        inTotal: 2,
+        outTotal: 0,
+        lines: [{ kind: "in", category: "salary", amount: 2 }],
+      },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(BankLedgerPanel, { model, sampleMode: true }),
+    );
+    const iMar = html.indexOf("2027-03");
+    const iFeb = html.indexOf("2027-02");
+    const iJan = html.indexOf("2027-01");
+    expect(iMar).toBeGreaterThanOrEqual(0);
+    expect(iFeb).toBeGreaterThan(iMar);
+    expect(iJan).toBeGreaterThan(iFeb);
+  });
+
+  it("progress bar exposes clamped aria-valuenow and real valuetext when >100%", () => {
+    const over = renderToStaticMarkup(
+      createElement(BankProgressBar, { progress: 120 }),
+    );
+    expect(over).toContain('role="progressbar"');
+    expect(over).toContain('aria-valuemin="0"');
+    expect(over).toContain('aria-valuemax="100"');
+    expect(over).toContain('aria-valuenow="100"');
+    expect(over).toContain('aria-valuetext="120%"');
+
+    const mid = renderToStaticMarkup(
+      createElement(BankProgressBar, { progress: 42 }),
+    );
+    expect(mid).toContain('aria-valuenow="42"');
+    expect(mid).toContain('aria-valuetext="42%"');
   });
 });

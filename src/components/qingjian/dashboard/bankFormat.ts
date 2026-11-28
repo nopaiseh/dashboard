@@ -28,11 +28,20 @@ export function formatBankMoney(
 ): string {
   const n = asBankNumber(value);
   if (n === null) return BANK_EMPTY;
-  const abs = Math.abs(n).toLocaleString("en-SG", {
+  // 先四舍五入到展示精度再判正负，避免 −0.004 →「−S$0.00」
+  const factor = 10 ** fractionDigits;
+  const rounded = Math.round(n * factor) / factor;
+  if (rounded === 0) {
+    return `S$${Number(0).toLocaleString("en-SG", {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    })}`;
+  }
+  const abs = Math.abs(rounded).toLocaleString("en-SG", {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   });
-  const sign = n < 0 ? "−" : "";
+  const sign = rounded < 0 ? "−" : "";
   return `${sign}S$${abs}`;
 }
 

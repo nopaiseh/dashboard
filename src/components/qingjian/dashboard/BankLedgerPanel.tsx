@@ -17,7 +17,10 @@ export function BankLedgerPanel({
   model: BankViewModel;
   sampleMode?: boolean;
 }) {
-  const months = model.ledger;
+  // 前端按月份倒序（服务端不保证顺序）
+  const months = model.ledger
+    ? [...model.ledger].sort((a, b) => b.month.localeCompare(a.month))
+    : null;
 
   return (
     <div className={"k-bankPanel"}>
@@ -49,8 +52,8 @@ export function BankLedgerPanel({
           </p>
         ) : (
           <ul className={"k-bankPl"}>
-            {model.assumptions.map((line) => (
-              <li key={line}>{line}</li>
+            {model.assumptions.map((line, i) => (
+              <li key={`assumption-${i}`}>{line}</li>
             ))}
           </ul>
         )}

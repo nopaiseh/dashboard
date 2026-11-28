@@ -444,16 +444,19 @@ function parseTrends(blocks: DashboardBlockPublic[]): BankTrendSeries[] {
     const p = clean(b.payload);
     const title = str(p.title)?.trim() || accountKey;
     const series = Array.isArray(p.series) ? p.series : [];
-    const points = series.flatMap((pt) => {
-      if (typeof pt !== "object" || pt === null) return [];
-      const row = pt as Record<string, unknown>;
-      const t = str(row.t)?.trim();
-      const v = asBankNumber(row.v);
-      const phase = str(row.phase);
-      if (!t || v === null) return [];
-      if (phase !== "actual" && phase !== "projected") return [];
-      return [{ t, v, phase: phase as "actual" | "projected" }];
-    });
+    const points = series
+      .flatMap((pt) => {
+        if (typeof pt !== "object" || pt === null) return [];
+        const row = pt as Record<string, unknown>;
+        const t = str(row.t)?.trim();
+        const v = asBankNumber(row.v);
+        const phase = str(row.phase);
+        if (!t || v === null) return [];
+        if (phase !== "actual" && phase !== "projected") return [];
+        return [{ t, v, phase: phase as "actual" | "projected" }];
+      })
+      // 服务端不保证顺序；画图前按月份升序
+      .sort((a, b) => a.t.localeCompare(b.t));
     const range = str(p.range_default);
     out.push({
       accountKey,
@@ -463,6 +466,26 @@ function parseTrends(blocks: DashboardBlockPublic[]): BankTrendSeries[] {
     });
   }
   return out;
+}
+
+/**
+ * 解析器会按 block_key 查找的白名单槽位（应与 BANK_BLOCK_KEYS 一致）。
+ * 供测试断言 #35 的 28 个 key 均被前端覆盖。
+ */
+export function bankParserCoveredBlockKeys(): BankBlockKey[] {
+  const keys = new Set<BankBlockKey>([
+    "bank_conclusion",
+    "bank_net",
+    "bank_liab",
+    "bank_todos",
+    "bank_alloc",
+    "bank_ledger",
+    "bank_assumptions",
+    ...(Object.keys(ACC_KEY_BY_BLOCK) as BankBlockKey[]),
+    ...PROG_KEYS,
+    ...(Object.keys(TREND_KEY_BY_BLOCK) as BankBlockKey[]),
+  ]);
+  return [...keys].sort((a, b) => a.localeCompare(b));
 }
 
 function parseLedger(

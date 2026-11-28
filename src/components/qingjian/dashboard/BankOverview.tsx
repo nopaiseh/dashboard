@@ -318,8 +318,8 @@ function LiabAndTodos({
             </p>
           ) : (
             <ul className={"k-bankPl k-bankTodo"}>
-              {todos.map((t) => (
-                <li key={t.title}>{t.title}</li>
+              {todos.map((t, i) => (
+                <li key={`todo-${i}-${t.title}`}>{t.title}</li>
               ))}
             </ul>
           )}
