@@ -7,7 +7,6 @@ import { BANK_BLOCK_KEYS } from "@/lib/bank-block-keys";
 import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
 import { parseBankBlockPayload } from "@/lib/dashboard/bank-validation";
 import { isBlockKeyAllowedForCategory } from "@/lib/dashboard/block-key-policy";
-import { normalizeDashboardCategories } from "@/lib/dashboard/category";
 import {
   containsSingaporeNricOrFin,
   isForbiddenDashboardIdentifierKey,
@@ -15,7 +14,10 @@ import {
 } from "@/lib/dashboard/nric-guard";
 import { amountsEqualInCents } from "@/lib/dashboard/money";
 import { parseDashboardBlockPayload } from "@/lib/dashboard/parse-payload";
-import { DASHBOARD_INVALID_PAYLOAD_ERROR } from "@/lib/dashboard/write-errors";
+import {
+  DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
+  DASHBOARD_INVALID_PAYLOAD_ERROR,
+} from "@/lib/dashboard/write-errors";
 import { encryptBlockPayload } from "@/lib/dashboard/crypto";
 import { resetFieldKeyringCache } from "@/lib/crypto/fields-core";
 import { backfillDashboardWriters } from "@/lib/dashboard/writers";
@@ -456,9 +458,52 @@ describe("upsert by block_key", () => {
     }));
   }
 
+  function bankSectionFrom() {
+    return {
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: {
+              id: SECTION_ID,
+              category: "bank",
+              sort_order: 0,
+              agent_id: AGENT_A,
+              created_at: "2026-01-01T00:00:00.000Z",
+              updated_at: "2026-01-01T00:00:00.000Z",
+            },
+            error: null,
+          }),
+        }),
+      }),
+    };
+  }
+
+  /** Column lookup + optional legacy NULL-key scan. */
+  function blocksFrom(opts: {
+    columnId?: string | null;
+    nullKeyRows?: Array<{ id: string; payload: string }>;
+  }) {
+    return {
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: opts.columnId ? { id: opts.columnId } : null,
+              error: null,
+            }),
+          }),
+          is: () =>
+            Promise.resolve({
+              data: opts.nullKeyRows ?? [],
+              error: null,
+            }),
+        }),
+      }),
+    };
+  }
+
   it("creates then replaces via PUT (FAKE payload)", async () => {
     mockAuth();
-    let call = 0;
     const enc1 = encryptBlockPayload(BLOCK_ID, FAKE_BANK_ACC_PAYLOAD);
     const enc2 = encryptBlockPayload(BLOCK_ID, {
       ...FAKE_BANK_ACC_PAYLOAD,
@@ -472,65 +517,31 @@ describe("upsert by block_key", () => {
             return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
           }
           if (table === "dashboard_sections") {
-            return {
-              select: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({
-                    data: {
-                      id: SECTION_ID,
-                      category: "bank",
-                      sort_order: 0,
-                      agent_id: AGENT_A,
-                      created_at: "2026-01-01T00:00:00.000Z",
-                      updated_at: "2026-01-01T00:00:00.000Z",
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
-            };
+            return bankSectionFrom();
           }
-          // existing key lookup
-          return {
-            select: () => ({
-              eq: () => ({
-                eq: () => ({
-                  maybeSingle: async () => {
-                    call += 1;
-                    if (call === 1) {
-                      return { data: null, error: null };
-                    }
-                    return { data: { id: BLOCK_ID }, error: null };
-                  },
-                }),
-              }),
-            }),
-          };
+          return blocksFrom({ columnId: null, nullKeyRows: [] });
         },
         rpc: async (name: string, args: Record<string, unknown>) => {
           expect(name).toBe("upsert_dashboard_block_by_key");
           expect(args.p_block_key).toBe("bank_acc_hsbc");
-          const inserted = args.p_id !== BLOCK_ID || call === 1;
-          // After first create, second call uses existing BLOCK_ID
           const id = (args.p_id as string) ?? BLOCK_ID;
           return {
             data: {
-              inserted: call <= 1,
+              inserted: true,
               block: {
-                id: call <= 1 ? id : BLOCK_ID,
+                id,
                 section_id: SECTION_ID,
                 block_type: "metric",
                 sort_order: 0,
                 agent_id: AGENT_A,
                 block_key: "bank_acc_hsbc",
-                payload: call <= 1 ? enc1 : enc2,
+                payload: enc1,
                 created_at: "2026-01-01T00:00:00.000Z",
                 updated_at: "2026-01-01T00:00:00.000Z",
               },
             },
             error: null,
           };
-          void inserted;
         },
       }),
     }));
@@ -563,7 +574,6 @@ describe("upsert by block_key", () => {
     vi.resetModules();
     setEnv();
     mockAuth();
-    call = 1;
     vi.doMock("@/lib/supabase/server", () => ({
       getServiceClient: () => ({
         from: (table: string) => {
@@ -571,36 +581,9 @@ describe("upsert by block_key", () => {
             return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
           }
           if (table === "dashboard_sections") {
-            return {
-              select: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({
-                    data: {
-                      id: SECTION_ID,
-                      category: "bank",
-                      sort_order: 0,
-                      agent_id: AGENT_A,
-                      created_at: "2026-01-01T00:00:00.000Z",
-                      updated_at: "2026-01-01T00:00:00.000Z",
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
-            };
+            return bankSectionFrom();
           }
-          return {
-            select: () => ({
-              eq: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({
-                    data: { id: BLOCK_ID },
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
-          };
+          return blocksFrom({ columnId: BLOCK_ID });
         },
         rpc: async () => ({
           data: {
@@ -647,6 +630,220 @@ describe("upsert by block_key", () => {
     expect(replaceRes.status).toBe(200);
   });
 
+  it("legacy NULL block_key: unique decrypt match patches + backfills column", async () => {
+    mockAuth();
+    const LEGACY_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const legacyEnc = encryptBlockPayload(LEGACY_ID, {
+      ...FAKE_BANK_ACC_PAYLOAD,
+      value: 12.34,
+    });
+    const updatedEnc = encryptBlockPayload(LEGACY_ID, {
+      ...FAKE_BANK_ACC_PAYLOAD,
+      value: 56.78,
+    });
+    let patchArgs: Record<string, unknown> | null = null;
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          return blocksFrom({
+            columnId: null,
+            nullKeyRows: [{ id: LEGACY_ID, payload: legacyEnc }],
+          });
+        },
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          expect(name).toBe("apply_agent_dashboard_block_patch");
+          patchArgs = args;
+          return {
+            data: {
+              block: {
+                id: LEGACY_ID,
+                section_id: SECTION_ID,
+                block_type: "metric",
+                sort_order: 0,
+                agent_id: AGENT_A,
+                block_key: "bank_acc_hsbc",
+                payload: updatedEnc,
+                created_at: "2026-01-01T00:00:00.000Z",
+                updated_at: "2026-01-02T00:00:00.000Z",
+              },
+            },
+            error: null,
+          };
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: { ...FAKE_BANK_ACC_PAYLOAD, value: 56.78 },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(patchArgs).toMatchObject({
+      p_block_id: LEGACY_ID,
+      p_touch_block_key: true,
+      p_block_key: "bank_acc_hsbc",
+      p_touch_payload: true,
+    });
+    const body = (await res.json()) as {
+      block: { id: string; payload: { value: number } };
+    };
+    expect(body.block.id).toBe(LEGACY_ID);
+    expect(body.block.payload.value).toBe(56.78);
+  });
+
+  it("legacy NULL block_key: multiple decrypt matches → 409 without content", async () => {
+    mockAuth();
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const encA = encryptBlockPayload(A, FAKE_BANK_ACC_PAYLOAD);
+    const encB = encryptBlockPayload(B, FAKE_BANK_ACC_PAYLOAD);
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          return blocksFrom({
+            columnId: null,
+            nullKeyRows: [
+              { id: A, payload: encA },
+              { id: B, payload: encB },
+            ],
+          });
+        },
+        rpc: async () => {
+          throw new Error("rpc must not run on multi-match conflict");
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: FAKE_BANK_ACC_PAYLOAD,
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: DASHBOARD_BLOCK_KEY_CONFLICT_ERROR,
+    });
+  });
+
+  it("legacy NULL block_key: decrypt failure skipped → creates new row", async () => {
+    mockAuth();
+    const BAD_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    let rpcName: string | null = null;
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          return blocksFrom({
+            columnId: null,
+            nullKeyRows: [{ id: BAD_ID, payload: "not-a-v1-envelope" }],
+          });
+        },
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          rpcName = name;
+          expect(name).toBe("upsert_dashboard_block_by_key");
+          expect(args.p_id).not.toBe(BAD_ID);
+          return {
+            data: {
+              inserted: true,
+              block: {
+                id: args.p_id,
+                section_id: SECTION_ID,
+                block_type: "metric",
+                sort_order: 0,
+                agent_id: AGENT_A,
+                block_key: "bank_acc_hsbc",
+                payload: args.p_payload,
+                created_at: "2026-01-01T00:00:00.000Z",
+                updated_at: "2026-01-01T00:00:00.000Z",
+              },
+            },
+            error: null,
+          };
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: FAKE_BANK_ACC_PAYLOAD,
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+    expect(res.status).toBe(201);
+    expect(rpcName).toBe("upsert_dashboard_block_by_key");
+  });
+
   it("rejects CPF key upsert into bank section with identical 400 body", async () => {
     mockAuth();
     vi.doMock("@/lib/supabase/server", () => ({
@@ -687,7 +884,7 @@ describe("upsert by block_key", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             block_type: "metric",
-            payload: { title: "OA", value: 1, block: "S$" },
+            payload: { title: "OA", value: 1, unit: "S$" },
           }),
         },
       ),

@@ -55,3 +55,24 @@ export function sectionHasBlockKeyConflict(
   }
   return false;
 }
+
+/**
+ * Among rows with NULL plaintext `block_key`, find ids whose decrypted
+ * payload carries `blockKey`. Decrypt failures are skipped (never logged).
+ */
+export function collectLegacyBlockKeyMatches(
+  nullKeyBlocks: ReadonlyArray<{ id: string; payload: string }>,
+  blockKey: string,
+): string[] {
+  const matches: string[] = [];
+  for (const row of nullKeyBlocks) {
+    const { payload, decrypt_failed } = decryptBlockPayload(row);
+    if (decrypt_failed) {
+      continue;
+    }
+    if (payload.block_key === blockKey) {
+      matches.push(row.id);
+    }
+  }
+  return matches;
+}

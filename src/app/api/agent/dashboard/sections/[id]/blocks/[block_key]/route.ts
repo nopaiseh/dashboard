@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
+import { collectLegacyBlockKeyMatches } from "@/lib/dashboard/block-key";
 import { isBlockKeyAllowedForCategory } from "@/lib/dashboard/block-key-policy";
 import {
   decryptBlockPayload,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/dashboard/write-errors";
 import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
+  isPgConflict,
   isPgForbidden,
   isPgNotFound,
 } from "@/lib/pg-errors";
@@ -49,6 +51,10 @@ function toPublicBlock(row: DashboardBlockRow): DashboardBlockPublic {
  * PUT /api/agent/dashboard/sections/:id/blocks/:block_key
  * Upsert by (section_id, block_key): replace payload if exists, else create.
  * Auth, category allow-list, validation, and rate limits match other write routes.
+ *
+ * Legacy rows (block_key column NULL, key only inside encrypted payload): when
+ * the column miss, decrypt NULL-key siblings; one match → patch + backfill
+ * column; multiple → 409 without echoing content.
  */
 export async function PUT(request: Request, context: RouteContext) {
   await requireRequest();
@@ -120,7 +126,7 @@ export async function PUT(request: Request, context: RouteContext) {
     return dashboardInvalidPayloadResponse();
   }
 
-  // Resolve row id before encrypt so AAD matches (create vs replace).
+  // Column hit first.
   const { data: existingKeyRow, error: existingError } = await supabase
     .from("dashboard_blocks")
     .select("id")
@@ -132,10 +138,84 @@ export async function PUT(request: Request, context: RouteContext) {
     return jsonError(500, "failed to load section blocks");
   }
 
-  const blockId =
+  let blockId: string | null =
     existingKeyRow && typeof existingKeyRow.id === "string"
       ? existingKeyRow.id
-      : randomUUID();
+      : null;
+
+  // Column miss → recover legacy NULL block_key rows via payload decrypt.
+  if (blockId === null) {
+    const { data: nullKeyRows, error: nullKeyError } = await supabase
+      .from("dashboard_blocks")
+      .select("id, payload")
+      .eq("section_id", sectionId)
+      .is("block_key", null);
+
+    if (nullKeyError) {
+      return jsonError(500, "failed to load section blocks");
+    }
+
+    const matches = collectLegacyBlockKeyMatches(
+      (nullKeyRows ?? []) as Array<{ id: string; payload: string }>,
+      blockKey,
+    );
+
+    if (matches.length > 1) {
+      return dashboardBlockKeyConflictResponse();
+    }
+
+    if (matches.length === 1) {
+      const legacyId = matches[0]!;
+      const encryptedPayload = encryptBlockPayload(legacyId, payloadParsed.data);
+      const { data, error } = await supabase.rpc(
+        "apply_agent_dashboard_block_patch",
+        {
+          p_block_id: legacyId,
+          p_agent_id: auth.agent.agentId,
+          p_touch_block_type: true,
+          p_block_type: parsed.data.block_type,
+          p_touch_sort_order: true,
+          p_sort_order: parsed.data.sort_order ?? 0,
+          p_touch_payload: true,
+          p_payload: encryptedPayload,
+          p_touch_block_key: true,
+          p_block_key: blockKey,
+        },
+      );
+
+      if (error) {
+        console.error("apply_agent_dashboard_block_patch failed", {
+          sectionId,
+          code: (error as { code?: string }).code ?? "unknown",
+        });
+        if ((error as { code?: string }).code === "23505") {
+          return dashboardBlockKeyConflictResponse();
+        }
+        if (isPgConflict(error)) {
+          return jsonError(409, "conflict");
+        }
+        if (isPgForbidden(error)) {
+          return jsonError(403, "forbidden");
+        }
+        if (isPgNotFound(error)) {
+          return jsonError(404, "block not found");
+        }
+        return jsonError(500, "failed to upsert block");
+      }
+
+      const patched = data as { block?: DashboardBlockRow } | null;
+      if (!patched?.block) {
+        return jsonError(500, "failed to upsert block");
+      }
+
+      return jsonOkNoStore({ block: toPublicBlock(patched.block) }, { status: 200 });
+    }
+  }
+
+  // No legacy match (or column hit): atomic upsert by key column.
+  if (blockId === null) {
+    blockId = randomUUID();
+  }
   const encryptedPayload = encryptBlockPayload(blockId, payloadParsed.data);
 
   const { data, error } = await supabase.rpc("upsert_dashboard_block_by_key", {

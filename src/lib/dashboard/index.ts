@@ -25,6 +25,7 @@ export {
   stringContainsLongDigitRun,
 } from "@/lib/dashboard/nric-guard";
 export {
+  collectLegacyBlockKeyMatches,
   readPayloadBlockKey,
   sectionHasBlockKeyConflict,
 } from "@/lib/dashboard/block-key";
