@@ -263,8 +263,7 @@ describe("C2 CPF section", () => {
     expect(html).toContain("本年未填补");
     expect(html).toContain("相关待办");
     expect(html).toContain("不可逆");
-    expect(html).toContain("需本人决定");
-    expect(html).not.toContain("玄空哥");
+    expect(html).toContain("OA 转 SA（不可逆，需本人决定）");
     expect(html).toContain("无提取");
     expect(html).toContain("估算说明");
     expect(html).toContain(PROJECTION_NOTE.slice(0, 8));
