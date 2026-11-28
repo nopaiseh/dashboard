@@ -25,7 +25,14 @@ const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AGENT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function setEnv(vars: Record<string, string | undefined>) {
-  for (const name of ["FIELD_ENCRYPTION_KEY", "NODE_ENV"]) {
+  for (const name of [
+    "FIELD_ENCRYPTION_KEY",
+    "FIELD_ENCRYPTION_KEY_V1",
+    "FIELD_ENCRYPTION_KEY_V2",
+    "FIELD_ENCRYPTION_KEY_CURRENT",
+    "FIELD_ENCRYPTION_KEYS",
+    "NODE_ENV",
+  ]) {
     delete process.env[name];
   }
   for (const [k, v] of Object.entries(vars)) {
@@ -52,12 +59,12 @@ describe("Cache-Control: no-store", () => {
   });
 });
 
-describe("dashboard payload rejects non-v1 plaintext", () => {
-  it("assertDashboardStoredPayload rejects plaintext", () => {
+describe("dashboard payload envelope versions", () => {
+  it("assertDashboardStoredPayload rejects non-envelope plaintext", () => {
     expect(() => assertDashboardStoredPayload("secret title")).toThrow(
       FieldEncryptionError,
     );
-    expect(() => assertDashboardStoredPayload("v2:aa:bb:cc")).toThrow(
+    expect(() => assertDashboardStoredPayload("not-an-envelope")).toThrow(
       FieldEncryptionError,
     );
   });
@@ -65,7 +72,44 @@ describe("dashboard payload rejects non-v1 plaintext", () => {
   it("allows empty string and valid v1 envelope", () => {
     expect(() => assertDashboardStoredPayload("")).not.toThrow();
     const enc = encryptBlockPayload(BLOCK_ID, { text: "hi" });
+    expect(enc.startsWith("v1:")).toBe(true);
     expect(() => assertDashboardStoredPayload(enc)).not.toThrow();
+  });
+
+  it("accepts a valid v2 envelope when v2 key is in the keyring", () => {
+    const KEY_V2 = Buffer.alloc(32, 2).toString("base64");
+    setEnv({
+      FIELD_ENCRYPTION_KEY_V1: KEY_V1,
+      FIELD_ENCRYPTION_KEY_V2: KEY_V2,
+      FIELD_ENCRYPTION_KEY_CURRENT: "2",
+      NODE_ENV: "test",
+    });
+    const enc = encryptBlockPayload(BLOCK_ID, { text: "v2 hi" });
+    expect(enc.startsWith("v2:")).toBe(true);
+    expect(() => assertDashboardStoredPayload(enc)).not.toThrow();
+    expect(decryptBlockPayloadStrict({ id: BLOCK_ID, payload: enc })).toEqual({
+      text: "v2 hi",
+    });
+  });
+
+  it("treats unknown envelope version as decrypt failure", () => {
+    const KEY_V2 = Buffer.alloc(32, 2).toString("base64");
+    setEnv({
+      FIELD_ENCRYPTION_KEY_V1: KEY_V1,
+      FIELD_ENCRYPTION_KEY_V2: KEY_V2,
+      FIELD_ENCRYPTION_KEY_CURRENT: "2",
+      NODE_ENV: "test",
+    });
+    const enc = encryptBlockPayload(BLOCK_ID, { text: "only-v2" });
+    setEnv({
+      FIELD_ENCRYPTION_KEY: KEY_V1,
+      NODE_ENV: "test",
+    });
+    const result = decryptBlockPayload({ id: BLOCK_ID, payload: enc });
+    expect(result.decrypt_failed).toBe(true);
+    expect(() =>
+      decryptBlockPayloadStrict({ id: BLOCK_ID, payload: enc }),
+    ).toThrow(/unknown_key_version|no decryption key|version/);
   });
 
   it("decryptBlockPayload marks plaintext as decrypt_failed", () => {
@@ -83,7 +127,7 @@ describe("dashboard payload rejects non-v1 plaintext", () => {
         id: BLOCK_ID,
         payload: "legacy plaintext",
       }),
-    ).toThrow(/v1 envelope|legacy_plaintext/);
+    ).toThrow(/versioned envelope|legacy_plaintext/);
   });
 });
 

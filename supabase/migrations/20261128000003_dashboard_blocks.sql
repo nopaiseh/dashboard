@@ -1,9 +1,10 @@
 -- 玄机阁：通用 dashboard 区块（Plan C 一行标题 + 目标并入）。
 -- 可在新 app 部署前安全执行：只加表/触发器/RPC，把 goals 改为只读；不删 goals，不改已有枚举。
 -- goals 表保留一版只读；验证后另 PR 再删。
--- Preview 可能跳过；合并到 main 是首次真实执行 → 整文件显式事务。
-
-BEGIN;
+-- Do NOT wrap this file in BEGIN/COMMIT: Supabase already runs each migration
+-- in a transaction; nested COMMIT breaks that protection
+-- (https://supabase.com/kb/troubleshooting/partial-migrations-and-schema-inconsistencies-from-embedded-transactions-13ae82).
+-- CI applies with `psql --single-transaction` so local/CI still test atomically.
 
 CREATE TYPE public.dashboard_block_type AS ENUM (
   'headline',
@@ -52,12 +53,12 @@ CREATE TABLE public.dashboard_blocks (
   sort_order integer NOT NULL DEFAULT 0,
   -- 明文：写入该块的姐妹；迁移遗留可为 NULL
   agent_id uuid REFERENCES public.agents (id),
-  -- 应用层 AES-256-GCM 信封；无遗留明文。'' 或 v1:… 信封。
+  -- 应用层 AES-256-GCM 信封；无遗留明文。'' 或 v{digits}:… 信封。
   payload text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT dashboard_blocks_payload_envelope CHECK (
-    payload = '' OR payload LIKE 'v1:%'
+    payload = '' OR payload ~ '^v[0-9]+:'
   )
 );
 
@@ -369,11 +370,12 @@ BEGIN
       );
   END;
 
+  -- Owner-run migration: actor_type = user (not a sister write).
   INSERT INTO public.dashboard_block_events (
     block_id, actor_type, agent_id, action
   )
   VALUES (
-    v_block.id, 'agent', p_block_agent_id, 'create'
+    v_block.id, 'user', p_block_agent_id, 'create'
   )
   RETURNING * INTO v_event;
 
@@ -460,8 +462,6 @@ GRANT SELECT ON TABLE public.goals TO service_role;
 COMMENT ON TABLE public.dashboard_sections IS
   'Dashboard areas/categories; plaintext: category, sort_order, agent_id, timestamps.';
 COMMENT ON TABLE public.dashboard_blocks IS
-  'Dashboard blocks; plaintext: block_type, sort_order, agent_id, timestamps; payload encrypted (v1 envelope or empty).';
+  'Dashboard blocks; plaintext: block_type, sort_order, agent_id, timestamps; payload encrypted (v{N}: envelope or empty).';
 COMMENT ON TABLE public.goals IS
   'DEPRECATED read-only: migrated to dashboard_blocks (progress). Drop after verification.';
-
-COMMIT;

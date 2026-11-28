@@ -1,7 +1,7 @@
 /**
  * Dashboard block payload encryption helpers.
- * Reuses items v1 AES-256-GCM envelopes with AAD entity `dashboard_blocks`.
- * New tables: no legacy plaintext — only '' or a valid v1 envelope.
+ * Reuses items AES-256-GCM envelopes with AAD entity `dashboard_blocks`.
+ * New tables: no legacy plaintext — only '' or a valid `v{digits}:` envelope.
  * Never log plaintext payloads.
  */
 
@@ -17,6 +17,9 @@ import {
 export const DASHBOARD_BLOCKS_ENTITY = "dashboard_blocks";
 export const DASHBOARD_PAYLOAD_COLUMN = "payload";
 
+/** Matches DB CHECK: '' or envelope prefix v{digits}: */
+const DASHBOARD_ENVELOPE_PREFIX_RE = /^v[0-9]+:/;
+
 export function blockPayloadFieldContext(blockId: string) {
   return {
     itemId: blockId,
@@ -27,13 +30,17 @@ export function blockPayloadFieldContext(blockId: string) {
 
 /**
  * Dashboard payloads have no plaintext legacy path.
- * Allowed: empty string, or a structurally valid envelope starting with `v1:`.
+ * Allowed: empty string, or a structurally valid envelope with `v{digits}:` prefix.
+ * Key lookup by envelope version is handled by decryptField / the keyring.
  */
 export function assertDashboardStoredPayload(stored: string): void {
   if (stored === "") return;
-  if (!stored.startsWith("v1:") || !isEncryptedEnvelope(stored)) {
+  if (
+    !DASHBOARD_ENVELOPE_PREFIX_RE.test(stored) ||
+    !isEncryptedEnvelope(stored)
+  ) {
     throw new FieldEncryptionError(
-      "dashboard payload is not a v1 envelope",
+      "dashboard payload is not a versioned envelope",
       "legacy_plaintext_rejected",
     );
   }
@@ -50,7 +57,8 @@ export function encryptBlockPayload(
 
 /**
  * Decrypt payload to a plain object.
- * Config errors rethrow; ciphertext / non-v1 failure → empty object + decrypt_failed.
+ * Config errors rethrow; ciphertext / non-envelope / unknown key version →
+ * empty object + decrypt_failed.
  */
 export function decryptBlockPayload(block: {
   id: string;

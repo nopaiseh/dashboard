@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentFromRequest } from "@/lib/agent-service";
 import { planCreateSection } from "@/lib/dashboard/logic";
-import { clientIp, jsonError, jsonOk } from "@/lib/http";
+import { jsonError, jsonOk } from "@/lib/http";
 import { getServiceClient } from "@/lib/supabase/server";
 import { createDashboardSectionSchema } from "@/lib/validation";
 import { requireRequest } from "@/lib/require-request";
 
 export async function POST(request: Request) {
   await requireRequest();
-  void clientIp(request);
   const supabase = getServiceClient();
   const auth = await resolveAgentFromRequest(
     supabase,

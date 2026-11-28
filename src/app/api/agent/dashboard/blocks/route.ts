@@ -10,7 +10,7 @@ import type {
   DashboardBlockRow,
   DashboardSectionRow,
 } from "@/lib/dashboard/types";
-import { clientIp, jsonError, jsonOkNoStore } from "@/lib/http";
+import { jsonError, jsonOkNoStore } from "@/lib/http";
 import {
   isPgForbidden,
   isPgNotFound,
@@ -39,7 +39,6 @@ function toPublicBlock(row: DashboardBlockRow): DashboardBlockPublic {
 
 export async function POST(request: Request) {
   await requireRequest();
-  void clientIp(request);
   const supabase = getServiceClient();
   const auth = await resolveAgentFromRequest(
     supabase,

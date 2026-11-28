@@ -78,7 +78,7 @@
 |------|----------------------------------------|
 | `category`、`block_type`、`sort_order`、`agent_id`、时间戳 | 标题、数值、正文、一行标题、列表、进度、图表序列等 |
 
-AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环）。服务端派生值接口：`runDerivedCompute`（内存解密→计算→返回；不落库/不缓存/不打明文日志）。
+AAD：`dashboard_blocks:{id}:payload:v{N}`（与 items 共用密钥环；按信封版本查密钥）。`payload` 仅允许 `''` 或 `^v[0-9]+:` 前缀（无遗留明文）。服务端派生值接口：`runDerivedCompute`（内存解密→计算→返回；不落库/不缓存/不打明文日志）。
 
 ### goals → blocks 迁移（应用侧脚本）
 
@@ -99,7 +99,7 @@ npm run migrate-goals                 # dry-run
 npm run migrate-goals -- --execute    # 幂等写入 progress 块；结束后校验行数并试解密
 ```
 
-写入走 RPC `migrate_dashboard_progress_block`（分区 + 区块 + 审计同事务）。块 id 由 `goals.id` 确定性派生；重跑跳过已存在块。`due_at` 规范化为 `toISOString()`。`goals` 表本迁移已改为只读，**本 PR 不删除**；验证后另 PR 删除。
+写入走 RPC `migrate_dashboard_progress_block`（分区 + 区块 + 审计同事务；审计 `actor_type=user`，因由阁主在应用侧执行）。块 id 由 `goals.id` 确定性派生；重跑跳过已存在块。`due_at` 规范化为 `toISOString()`。`goals` 表本迁移已改为只读，**本 PR 不删除**；验证后另 PR 删除。
 
 ## 防护
 

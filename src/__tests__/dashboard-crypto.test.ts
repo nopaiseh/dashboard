@@ -18,7 +18,10 @@ const BLOCK_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 function setEnv(vars: Record<string, string | undefined>) {
   for (const name of [
     "FIELD_ENCRYPTION_KEY",
+    "FIELD_ENCRYPTION_KEY_V1",
+    "FIELD_ENCRYPTION_KEY_V2",
     "FIELD_ENCRYPTION_KEY_CURRENT",
+    "FIELD_ENCRYPTION_KEYS",
     "FIELD_ENCRYPTION_STRICT",
     "NODE_ENV",
   ]) {
@@ -98,11 +101,27 @@ describe("dashboard block payload encryption", () => {
     expect(result).toBe(2000);
   });
 
-  it("rejects non-v1 stored values (no plaintext legacy)", () => {
+  it("rejects non-envelope stored values (no plaintext legacy)", () => {
     const result = decryptBlockPayload({
       id: BLOCK_ID,
       payload: '{"title":"leak"}',
     });
     expect(result.decrypt_failed).toBe(true);
+  });
+
+  it("round-trips a v2 envelope with keyring v2", () => {
+    const KEY_V2 = Buffer.alloc(32, 2).toString("base64");
+    setEnv({
+      FIELD_ENCRYPTION_KEY_V1: KEY_V1,
+      FIELD_ENCRYPTION_KEY_V2: KEY_V2,
+      FIELD_ENCRYPTION_KEY_CURRENT: "2",
+      NODE_ENV: "test",
+    });
+    const payload = { title: "v2 round-trip", progress: 0.1 };
+    const enc = encryptBlockPayload(BLOCK_ID, payload);
+    expect(enc.startsWith("v2:")).toBe(true);
+    expect(decryptBlockPayload({ id: BLOCK_ID, payload: enc }).payload).toEqual(
+      payload,
+    );
   });
 });
