@@ -185,7 +185,28 @@ export const stepUpOptionsSchema = z.union([
       action: z.literal("create_agent"),
     })
     .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("migrate_goals_plan"),
+    })
+    .strict(),
+  z
+    .object({
+      purpose: z.literal("step_up"),
+      action: z.literal("migrate_goals_execute"),
+    })
+    .strict(),
 ]);
+
+export const migrateGoalsWebSchema = z
+  .object({
+    action: z.enum(["plan", "execute"]),
+    assertion: webauthnCredentialPayloadSchema,
+    challenge_id: z.string().uuid(),
+    binding: z.string().min(1).max(4096),
+  })
+  .strict();
 
 const agentSlugSchema = z
   .string()

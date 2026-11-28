@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseMigrateGoalsArgs } from "@/lib/dashboard/migrate-goals-cli";
 import {
   normalizeDueAt,
@@ -7,6 +7,8 @@ import {
   type LegacyGoalRow,
 } from "@/lib/dashboard/migrate-goals-plan";
 import { blockIdForGoal } from "@/lib/dashboard/ids";
+import { encryptBlockPayload } from "@/lib/dashboard/crypto";
+import { resetFieldKeyringCache } from "@/lib/crypto/fields-core";
 
 const GOAL: LegacyGoalRow = {
   id: "33333333-3333-4333-8333-333333333333",
@@ -20,6 +22,8 @@ const GOAL: LegacyGoalRow = {
   status: "active",
   updated_at: "2026-01-01T00:00:00.000Z",
 };
+
+const KEY_V1 = Buffer.alloc(32, 1).toString("base64");
 
 describe("migrate goals CLI", () => {
   it("defaults to dry-run", () => {
@@ -92,5 +96,164 @@ describe("migrate goals plan idempotency", () => {
     if (plan.action === "upsert") {
       expect(plan.section.category).toBe("general");
     }
+  });
+});
+
+describe("migrate goals shared module", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    process.env.FIELD_ENCRYPTION_KEY = KEY_V1;
+    resetFieldKeyringCache();
+  });
+
+  function mockSupabase(opts: {
+    goals: LegacyGoalRow[];
+    existingBlockIds?: Set<string>;
+    rpc?: (args: Record<string, unknown>) => {
+      data: { status: string } | null;
+      error: { code?: string } | null;
+    };
+  }) {
+    const existing = new Set(opts.existingBlockIds ?? []);
+    const rpcCalls: Record<string, unknown>[] = [];
+    let writes = 0;
+
+    const client = {
+      from: (table: string) => {
+        if (table === "goals") {
+          return {
+            select: (
+              _cols: string,
+              opts2?: { count?: string; head?: boolean },
+            ) => {
+              if (opts2?.head && opts2?.count === "exact") {
+                return Promise.resolve({
+                  count: opts.goals.length,
+                  error: null,
+                });
+              }
+              const result = {
+                data: opts.goals.map((g) =>
+                  _cols === "id" ? { id: g.id } : g,
+                ),
+                error: null,
+              };
+              const ordered = {
+                range: async (from: number, to: number) => ({
+                  data: opts.goals.slice(from, to + 1),
+                  error: null,
+                }),
+                then: (
+                  resolve: (v: typeof result) => void,
+                  reject?: (e: unknown) => void,
+                ) => Promise.resolve(result).then(resolve, reject),
+              };
+              return {
+                order: () => ordered,
+              };
+            },
+          };
+        }
+        if (table === "dashboard_blocks") {
+          return {
+            select: (cols: string) => ({
+              in: async (_col: string, ids: string[]) => {
+                if (cols === "id") {
+                  return {
+                    data: ids
+                      .filter((id) => existing.has(id))
+                      .map((id) => ({ id })),
+                    error: null,
+                  };
+                }
+                // id, payload for verify
+                return {
+                  data: ids
+                    .filter((id) => existing.has(id))
+                    .map((id) => {
+                      const goal = opts.goals.find(
+                        (g) => blockIdForGoal(g.id) === id,
+                      );
+                      const plan = goal
+                        ? planGoalMigration(goal, new Set())
+                        : null;
+                      const payload =
+                        plan && plan.action === "upsert"
+                          ? encryptBlockPayload(id, plan.block.payload)
+                          : "";
+                      return { id, payload };
+                    }),
+                  error: null,
+                };
+              },
+            }),
+          };
+        }
+        return {};
+      },
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        expect(name).toBe("migrate_dashboard_progress_block");
+        rpcCalls.push(args);
+        writes += 1;
+        const blockId = String(args.p_block_id);
+        if (existing.has(blockId)) {
+          return { data: { status: "already_migrated" }, error: null };
+        }
+        if (opts.rpc) {
+          const result = opts.rpc(args);
+          if (result.data?.status === "inserted") {
+            existing.add(blockId);
+          }
+          return result;
+        }
+        existing.add(blockId);
+        return { data: { status: "inserted" }, error: null };
+      },
+    };
+
+    return { client, rpcCalls, getWrites: () => writes, existing };
+  }
+
+  it("dry run makes no writes", async () => {
+    const { client, getWrites } = mockSupabase({ goals: [GOAL] });
+    const { runGoalsMigration } = await import("@/lib/dashboard/migrate-goals");
+    const counts = await runGoalsMigration(
+      client as never,
+      { dryRun: true },
+    );
+    expect(counts.scanned).toBe(1);
+    expect(counts.wouldUpsert).toBe(1);
+    expect(counts.inserted).toBe(0);
+    expect(getWrites()).toBe(0);
+  });
+
+  it("execute is idempotent on second run", async () => {
+    const { client, getWrites, existing } = mockSupabase({ goals: [GOAL] });
+    const { runGoalsMigration, verifyGoalsMigration } = await import(
+      "@/lib/dashboard/migrate-goals"
+    );
+
+    const first = await runGoalsMigration(client as never, { dryRun: false });
+    expect(first.inserted).toBe(1);
+    expect(getWrites()).toBe(1);
+
+    const second = await runGoalsMigration(client as never, { dryRun: false });
+    expect(second.skippedMigrated).toBe(1);
+    expect(second.inserted).toBe(0);
+    expect(getWrites()).toBe(1);
+
+    const verify = await verifyGoalsMigration(client as never);
+    expect(verify.ok).toBe(true);
+    expect(verify.decryptOk).toBe(1);
+    expect(existing.has(blockIdForGoal(GOAL.id))).toBe(true);
+  });
+
+  it("CLI script still resolves shared module exports", async () => {
+    const mod = await import("@/lib/dashboard/migrate-goals");
+    expect(typeof mod.runGoalsMigration).toBe("function");
+    expect(typeof mod.planGoalsMigration).toBe("function");
+    expect(typeof mod.executeGoalsMigration).toBe("function");
+    expect(typeof mod.verifyGoalsMigration).toBe("function");
+    expect(mod.MIGRATE_GOALS_WEB_ENABLED).toBe(true);
   });
 });

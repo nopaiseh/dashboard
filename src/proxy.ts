@@ -43,6 +43,16 @@ function isPublic(pathname: string): boolean {
   );
 }
 
+/** One-time admin paths: unauthenticated → 404 (do not redirect to /login). */
+function isAdminPath(pathname: string): boolean {
+  return (
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    pathname === "/api/admin" ||
+    pathname.startsWith("/api/admin/")
+  );
+}
+
 function withSecurity(
   request: NextRequest,
   res: NextResponse,
@@ -109,6 +119,29 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!authed) {
+    if (isAdminPath(pathname)) {
+      if (pathname.startsWith("/api/")) {
+        return withSecurity(
+          request,
+          NextResponse.json(
+            { error: "not found" },
+            {
+              status: 404,
+              headers: { "Cache-Control": "no-store" },
+            },
+          ),
+          nonce,
+        );
+      }
+      return withSecurity(
+        request,
+        new NextResponse(null, {
+          status: 404,
+          headers: { "Cache-Control": "no-store" },
+        }),
+        nonce,
+      );
+    }
     if (pathname.startsWith("/api/")) {
       return withSecurity(
         request,
@@ -124,6 +157,9 @@ export async function proxy(request: NextRequest) {
   }
 
   const response = withSecurity(request, nextWithNonce(request, nonce), nonce);
+  if (isAdminPath(pathname)) {
+    response.headers.set("Cache-Control", "no-store");
+  }
 
   // 滑动续期在 proxy 写 cookie（页面内 jar.set 会被 Next 拒绝）
   if (token) {

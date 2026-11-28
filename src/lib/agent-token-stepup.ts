@@ -11,7 +11,9 @@ export const AGENT_TOKEN_STEPUP_TYP = "agent_token_stepup";
 export type AgentTokenStepUpAction =
   | "issue_agent_token"
   | "revoke_agent_token"
-  | "create_agent";
+  | "create_agent"
+  | "migrate_goals_plan"
+  | "migrate_goals_execute";
 
 export interface AgentTokenStepUpBinding {
   challengeId: string;
