@@ -26,15 +26,16 @@ export function normalizeCategory(category: string): string {
 
 /**
  * One-line board summary from title/conclusion blocks.
- * Prefers `cpf_conclusion` by block_key across the given blocks; then headline;
+ * Prefers `cpf_conclusion` / `bank_conclusion` by block_key; then headline;
  * then text title/body; then list title.
  */
 export function conclusionSummaryFromBlocks(
   blocks: DashboardBlockPublic[],
 ): string | null {
-  const keyed = blocks.find(
-    (b) => str(b.payload.block_key)?.trim() === "cpf_conclusion",
-  );
+  const keyed = blocks.find((b) => {
+    const key = str(b.payload.block_key)?.trim();
+    return key === "cpf_conclusion" || key === "bank_conclusion";
+  });
   if (keyed) {
     const title = str(keyed.payload.title)?.trim();
     const text = str(keyed.payload.text)?.trim();

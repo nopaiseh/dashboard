@@ -1,11 +1,13 @@
 /** Category display labels; unknown categories fall back to raw slug. */
 const CATEGORY_LABELS: Record<string, string> = {
   cpf: "公积金",
+  bank: "银行",
   travel: "旅行",
   home: "家居",
 };
 
 export const PINNED_CATEGORY = "cpf";
+export const BANK_CATEGORY = "bank";
 
 export const PROJECTION_NOTE = "按现行利率计息，未计入利率调整";
 
@@ -20,6 +22,11 @@ export function categoryLabel(category: string): string {
 
 export function isPinnedCategory(category: string): boolean {
   return category.trim().toLowerCase() === PINNED_CATEGORY;
+}
+
+/** 银行看板走方案 C 组合布局（非通用 BlockRenderer）。 */
+export function isBankCategory(category: string): boolean {
+  return category.trim().toLowerCase() === BANK_CATEGORY;
 }
 
 export function chartEventLabel(kind: string, fallback?: string): string {
