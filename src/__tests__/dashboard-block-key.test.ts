@@ -18,7 +18,6 @@ const OTHER_BLOCK_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 const CONFLICT_BODY = { error: DASHBOARD_BLOCK_KEY_CONFLICT_ERROR };
-const INVALID_BODY = { error: DASHBOARD_INVALID_PAYLOAD_ERROR };
 
 function setEnv(vars: Record<string, string | undefined>) {
   for (const name of [
@@ -200,7 +199,15 @@ function cpfSection() {
       }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual(INVALID_BODY);
+    const unknownBody = await res.json();
+    expect(unknownBody.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(Array.isArray(unknownBody.issues)).toBe(true);
+    expect(
+      unknownBody.issues.some(
+        (i: { path: string; code: string }) => i.path === "block_key",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(unknownBody)).not.toContain("cpf_not_real");
   });
 
   it("POST returns 400 for non-string block_key", async () => {
@@ -232,7 +239,14 @@ function cpfSection() {
       }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual(INVALID_BODY);
+    const nonStringBody = await res.json();
+    expect(nonStringBody.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(Array.isArray(nonStringBody.issues)).toBe(true);
+    expect(
+      nonStringBody.issues.some(
+        (i: { path: string }) => i.path === "block_key",
+      ),
+    ).toBe(true);
   });
 
   it("POST returns 409 when another block in the section already has the key", async () => {

@@ -1,6 +1,6 @@
 /**
  * Strict zod schemas for bank dashboard block payloads.
- * All amounts are numbers (±10_000_000); unit is fixed "S$".
+ * All amounts are numbers (±10_000_000); unit is a fixed whitelist.
  * List items remain JSON strings (parsed here for structure checks).
  * FAKE fixtures only — never real balances / account numbers / NRIC.
  */
@@ -43,13 +43,20 @@ export const BANK_NOTE_MAX = 200;
 export const BANK_MILESTONES_MAX = 8;
 export const BANK_TODOS_MAX = 50;
 
+/**
+ * Fixed whitelist for bank `unit` fields (metric / progress / trend / net).
+ * Exported for frontend reuse — do not accept arbitrary strings.
+ */
+export const BANK_UNITS = ["S$", "月"] as const;
+export type BankUnit = (typeof BANK_UNITS)[number];
+
 const bankAmount = z
   .number()
   .finite()
   .min(DASHBOARD_AMOUNT_MIN)
   .max(DASHBOARD_AMOUNT_MAX);
 
-const bankUnit = z.literal("S$");
+const bankUnit = z.enum(BANK_UNITS);
 
 const bankDate = z
   .string()
@@ -406,15 +413,20 @@ export function expectedBankBlockType(
   return "list";
 }
 
+export type BankPayloadParseResult =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; error?: z.ZodError };
+
 /**
  * Strict-parse a bank payload for the given block_type + block_key.
  * `block_key` must already be a bank key and should match payload.block_key.
+ * Zod failures include `error` so write routes can return capped issues.
  */
 export function parseBankBlockPayload(
   blockType: string,
   payload: unknown,
   blockKey: string,
-): { ok: true; data: Record<string, unknown> } | { ok: false } {
+): BankPayloadParseResult {
   if (!isBankBlockKey(blockKey)) {
     return { ok: false };
   }
@@ -461,7 +473,7 @@ export function parseBankBlockPayload(
 
   const parsed = schema.safeParse(record);
   if (!parsed.success) {
-    return { ok: false };
+    return { ok: false, error: parsed.error };
   }
   return { ok: true, data: parsed.data as Record<string, unknown> };
 }

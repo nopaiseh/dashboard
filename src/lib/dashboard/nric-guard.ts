@@ -3,6 +3,8 @@
  * Never log a matched value or parsed embedded JSON.
  */
 
+import { BANK_LEDGER_MONTH_JSON_MAX } from "@/lib/dashboard/bank-validation";
+
 /** Match after separator normalization (no word-boundary — separators already stripped). */
 const SINGAPORE_NRIC_OR_FIN = /[STFGM]\d{7}[A-Z]/i;
 
@@ -53,9 +55,17 @@ export const MAX_EMBEDDED_JSON_DEPTH = 5;
 
 /**
  * Reject JSON-looking strings longer than this (DoS guard; fail closed).
- * Aligned with BODY_MAX.
+ * Aligned with BODY_MAX. bank_ledger month strings use
+ * {@link MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH} instead.
  */
 export const MAX_EMBEDDED_JSON_STRING_LENGTH = 10_000;
+
+/**
+ * Cap for bank_ledger month JSON strings (matches ledger schema month max).
+ * Still runs the full NRIC / sensitive-pattern scan when under this cap.
+ */
+export const MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH =
+  BANK_LEDGER_MONTH_JSON_MAX;
 
 /** Normalize object keys for forbidden-name comparison. */
 export function normalizeDashboardIdentifierKey(key: string): string {
@@ -123,7 +133,11 @@ export function looksLikeJsonContainer(raw: string): boolean {
 export function containsSingaporeNricOrFin(value: unknown): boolean {
   const seen = new WeakSet<object>();
 
-  function walk(node: unknown, jsonDepth: number): boolean {
+  function walk(
+    node: unknown,
+    jsonDepth: number,
+    maxJsonStringLength: number,
+  ): boolean {
     if (typeof node === "string") {
       if (looksLikeJsonContainer(node)) {
         const trimmed = node.trim();
@@ -131,12 +145,12 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
         if (jsonDepth >= MAX_EMBEDDED_JSON_DEPTH) {
           return true;
         }
-        if (trimmed.length > MAX_EMBEDDED_JSON_STRING_LENGTH) {
+        if (trimmed.length > maxJsonStringLength) {
           return true;
         }
         try {
           const parsed: unknown = JSON.parse(trimmed);
-          if (walk(parsed, jsonDepth + 1)) {
+          if (walk(parsed, jsonDepth + 1, maxJsonStringLength)) {
             return true;
           }
         } catch {
@@ -155,20 +169,26 @@ export function containsSingaporeNricOrFin(value: unknown): boolean {
 
     if (Array.isArray(node)) {
       for (const item of node) {
-        if (walk(item, jsonDepth)) return true;
+        if (walk(item, jsonDepth, maxJsonStringLength)) return true;
       }
       return false;
     }
 
-    for (const [key, child] of Object.entries(
-      node as Record<string, unknown>,
-    )) {
+    const record = node as Record<string, unknown>;
+    // bank_ledger months are stored as large JSON strings; raise the unwrap
+    // cap to the ledger schema limit while still scanning full content.
+    const childMaxJsonLength =
+      record.block_key === "bank_ledger"
+        ? MAX_BANK_LEDGER_EMBEDDED_JSON_STRING_LENGTH
+        : maxJsonStringLength;
+
+    for (const [key, child] of Object.entries(record)) {
       if (isForbiddenDashboardIdentifierKey(key)) return true;
       if (stringContainsBlockedIdentifier(key)) return true;
-      if (walk(child, jsonDepth)) return true;
+      if (walk(child, jsonDepth, childMaxJsonLength)) return true;
     }
     return false;
   }
 
-  return walk(value, 0);
+  return walk(value, 0, MAX_EMBEDDED_JSON_STRING_LENGTH);
 }

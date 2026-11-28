@@ -157,12 +157,59 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/items/ITEM_UUID/result-rea
 
 ### `block_key` 按分区白名单
 
-- `category` 规范化后为 `bank`：只接受 `BANK_BLOCK_KEYS`（见 `src/lib/bank-block-keys.ts`，28 个，如 `bank_conclusion`、`bank_acc_hsbc`、`bank_prog_emergency`、`bank_net`、`bank_ledger`、`bank_todos`…）。银行区块另走严格 zod（金额 number、`unit` 固定 `"S$"`、等式校验等）。
+- `category` 规范化后为 `bank`：只接受 `BANK_BLOCK_KEYS`（见 `src/lib/bank-block-keys.ts`，28 个，如 `bank_conclusion`、`bank_acc_hsbc`、`bank_prog_emergency`、`bank_net`、`bank_ledger`、`bank_todos`…）。银行区块另走严格 zod（金额 number、`unit` 白名单、等式校验等；见下）。
 - `category` 为 `cpf`：只接受 `CPF_BLOCK_KEYS`。
 - 其他分类：维持原状（若带 `block_key` 仍按 CPF 白名单）。
 - 交叉写入（CPF key → bank 分区，或反之）→ `400`（`invalid payload`，不回显命中内容）。
 
 明文列 `dashboard_blocks.block_key` + 唯一索引 `(section_id, block_key) WHERE block_key IS NOT NULL`（本迁移新增）用于 upsert 原子性；加密 payload 内仍镜像同一 key。
+
+### 银行区块字段（以 `bank-validation.ts` 为准）
+
+金额一律 **number**（有限、±10_000_000）。`unit` 固定白名单 **`"S$" | "月"`**（常量 `BANK_UNITS`；禁止任意字符串）。
+
+**progress**（`bank_prog_*`）必填：
+
+| 字段 | 说明 |
+|------|------|
+| `block_key` | 须与路径/白名单一致 |
+| `title` | 非空，≤标题上限 |
+| `account_key` | 银行账户键枚举 |
+| `kind` | `savings` \| `floor` \| `budget` \| `streak` \| `room` |
+| `value` / `target` | 金额 |
+| `unit` | `"S$"` 或 `"月"` |
+| `progress` | number，≥ 0（可超过 100） |
+| `due` | `YYYY-MM` |
+| `status` | `on_track` \| `ahead` \| `behind` \| `no_target` |
+| `status_text` | 字符串，≤40 |
+| `milestones` | **必填数组**（可为 `[]`）；每项 `{ t, amount }`，最多 8 |
+| `label` / `note` | 字符串（note ≤200） |
+| `monthly_needed` | **仅当 `kind: "savings"` 时必填**；其他 kind 可省略 |
+
+**bank_net**（metric）：**不接受 `title`**。必填 `block_key`、`value`、`cash_total`、`liab_total`、`label`、`unit`；且 `value` 必须等于 `cash_total - liab_total`（按分比较）。
+
+**bank_todos** 列表项：`info` 若出现必须是 **boolean**（另有可选 `overdue` / `irreversible` boolean）。
+
+**bank_ledger**：每月一条 JSON 字符串，单月最多约 200 行、JSON 最长 32k；隐私扫描对 ledger 月字符串亦按 32k 上限（其它嵌入 JSON 仍 10k）。
+
+### 写接口 400 `issues`
+
+zod 校验失败时返回：
+
+```json
+{
+  "error": "invalid payload",
+  "issues": [
+    { "path": "title", "code": "unrecognized_keys", "message": "多余字段" }
+  ]
+}
+```
+
+- `path`：zod 点分路径；`unrecognized_keys` 会把多余键名拼进 path（如 `title`、`payload.foo`）。
+- `code`：zod issue code（如 `unrecognized_keys`、`invalid_type`、`invalid_value`）。
+- `message`：服务端固定中文（`多余字段` / `缺少必填字段` / `类型不对` / `不在允许的取值内` / `超出长度上限` / `格式不对` / 兜底 `校验未通过`）。**从不**回显 zod 默认文案，也不含 `received` / `input` / `expected` 或提交值。
+- `issues` 最多 20 条。
+- 隐私拦截（NRIC / 禁用键名 / 长数字串）仍只返回 `{ "error": "invalid payload" }`，不带 `issues`、不回显命中内容。
 
 ### POST `/api/agent/dashboard/sections` — 新建分区
 
@@ -198,22 +245,29 @@ curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
   }'
 ```
 
-进度块示例：
+银行 progress 块示例（FAKE；`milestones` 可为空数组；`kind: "savings"` 时须带 `monthly_needed`）：
 
 ```bash
-curl -sS -X POST 'https://desk.nopaiseh.com/api/agent/dashboard/blocks' \
+curl -sS -X PUT 'https://desk.nopaiseh.com/api/agent/dashboard/sections/SECTION_UUID/blocks/bank_prog_emergency' \
   -H 'Authorization: Bearer '"$SISTER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
-    "section_id": "SECTION_UUID",
     "block_type": "progress",
     "payload": {
-      "title": "OA 余额",
-      "target": "100k",
-      "metric": "SGD",
-      "progress": 0.55,
-      "due_at": null,
-      "status": "active"
+      "block_key": "bank_prog_emergency",
+      "title": "FAKE emergency",
+      "account_key": "gxs",
+      "kind": "floor",
+      "value": 100,
+      "target": 50,
+      "unit": "S$",
+      "progress": 200,
+      "due": "2026-12",
+      "status": "ahead",
+      "status_text": "超标",
+      "milestones": [],
+      "label": "FAKE",
+      "note": "FAKE note"
     }
   }'
 ```

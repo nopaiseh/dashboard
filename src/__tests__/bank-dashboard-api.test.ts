@@ -8,6 +8,7 @@ import { CPF_BLOCK_KEYS } from "@/lib/cpf-block-keys";
 import {
   BANK_LEDGER_LIST_ITEMS_MAX,
   BANK_LEDGER_MONTH_JSON_MAX,
+  BANK_UNITS,
   parseBankBlockPayload,
 } from "@/lib/dashboard/bank-validation";
 import { isBlockKeyAllowedForCategory } from "@/lib/dashboard/block-key-policy";
@@ -410,6 +411,60 @@ describe("bank strict field validation", () => {
       parseBankBlockPayload(
         "metric",
         { ...FAKE_BANK_ACC_PAYLOAD, unit: "SGD" },
+        "bank_acc_hsbc",
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("accepts unit whitelist S$ and 月; rejects any other value", () => {
+    expect(BANK_UNITS).toEqual(["S$", "月"]);
+    const progBase = {
+      block_key: "bank_prog_emergency" as const,
+      title: "FAKE emergency",
+      account_key: "gxs" as const,
+      kind: "floor" as const,
+      value: 100,
+      target: 50,
+      progress: 200,
+      due: "2026-12",
+      status: "ahead" as const,
+      status_text: "超标",
+      milestones: [] as [],
+      label: "FAKE",
+      note: "FAKE note",
+    };
+    expect(
+      parseBankBlockPayload(
+        "progress",
+        { ...progBase, unit: "S$" },
+        "bank_prog_emergency",
+      ).ok,
+    ).toBe(true);
+    expect(
+      parseBankBlockPayload(
+        "progress",
+        { ...progBase, unit: "月" },
+        "bank_prog_emergency",
+      ).ok,
+    ).toBe(true);
+    expect(
+      parseBankBlockPayload(
+        "progress",
+        { ...progBase, unit: "USD" },
+        "bank_prog_emergency",
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseBankBlockPayload(
+        "progress",
+        { ...progBase, unit: "SGD" },
+        "bank_prog_emergency",
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseBankBlockPayload(
+        "metric",
+        { ...FAKE_BANK_ACC_PAYLOAD, unit: "任意" },
         "bank_acc_hsbc",
       ).ok,
     ).toBe(false);
@@ -1095,6 +1150,409 @@ describe("upsert by block_key", () => {
       ),
       {
         params: Promise.resolve({ id: SECTION_ID, block_key: "cpf_acc_oa" }),
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: DASHBOARD_INVALID_PAYLOAD_ERROR,
+    });
+  });
+});
+
+describe("dashboard write 400 issues (zod, no value echo)", () => {
+  function mockAuth() {
+    vi.doMock("@/lib/require-request", () => ({
+      requireRequest: async () => undefined,
+    }));
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: { agentId: AGENT_A, tokenHash: "hash" },
+      }),
+    }));
+  }
+
+  function bankSectionFrom() {
+    return {
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: {
+              id: SECTION_ID,
+              category: "bank",
+              sort_order: 0,
+              agent_id: AGENT_A,
+              created_at: "2026-01-01T00:00:00.000Z",
+              updated_at: "2026-01-01T00:00:00.000Z",
+            },
+            error: null,
+          }),
+        }),
+      }),
+    };
+  }
+
+  it("bank_net with extra title → 400 issues path + unrecognized_keys", async () => {
+    mockAuth();
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          throw new Error("should not reach blocks");
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_net`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: {
+              block_key: "bank_net",
+              title: "FAKE should not be here",
+              value: 50,
+              cash_total: 100,
+              liab_total: 50,
+              label: "FAKE net",
+              unit: "S$",
+            },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({ id: SECTION_ID, block_key: "bank_net" }),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(Array.isArray(body.issues)).toBe(true);
+    const titleIssue = body.issues.find(
+      (i: { path: string; code: string }) =>
+        i.path === "title" && i.code === "unrecognized_keys",
+    );
+    expect(titleIssue).toMatchObject({
+      path: "title",
+      code: "unrecognized_keys",
+      message: "多余字段",
+    });
+    expect(JSON.stringify(body)).not.toContain("FAKE should not be here");
+  });
+
+  it("enum mismatch unit does not echo the submitted value", async () => {
+    mockAuth();
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          throw new Error("should not reach blocks");
+        },
+      }),
+    }));
+
+    const SECRET_UNIT = "XYZ_SECRET";
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: { ...FAKE_BANK_ACC_PAYLOAD, unit: SECRET_UNIT },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const raw = await res.text();
+    expect(raw).not.toContain(SECRET_UNIT);
+    const body = JSON.parse(raw) as {
+      error: string;
+      issues: Array<{ path: string; code: string; message: string }>;
+    };
+    expect(body.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(body.issues.some((i) => i.path === "unit")).toBe(true);
+    expect(
+      body.issues.some((i) => i.message === "不在允许的取值内"),
+    ).toBe(true);
+  });
+
+  it("wrong-type numeric field does not echo the distinctive fake value", async () => {
+    mockAuth();
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return bankSectionFrom();
+          }
+          throw new Error("should not reach blocks");
+        },
+      }),
+    }));
+
+    // Distinctive fake string without 9+ digit runs (privacy guard).
+    const DISTINCTIVE = "TYPE_MISMATCH_FAKE_VALUE";
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_acc_hsbc`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "metric",
+            payload: { ...FAKE_BANK_ACC_PAYLOAD, value: DISTINCTIVE },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_acc_hsbc",
+        }),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const raw = await res.text();
+    expect(raw).not.toContain(DISTINCTIVE);
+    const body = JSON.parse(raw) as {
+      error: string;
+      issues?: Array<{ path: string; code: string; message: string }>;
+    };
+    expect(body.error).toBe(DASHBOARD_INVALID_PAYLOAD_ERROR);
+    expect(Array.isArray(body.issues)).toBe(true);
+    expect(
+      body.issues!.some(
+        (i) => i.path === "value" && i.message === "类型不对",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("bank_ledger PUT privacy size cap", () => {
+  function mockAuth() {
+    vi.doMock("@/lib/require-request", () => ({
+      requireRequest: async () => undefined,
+    }));
+    vi.doMock("@/lib/agent-service", () => ({
+      resolveAgentFromRequest: async () => ({
+        ok: true,
+        agent: { agentId: AGENT_A, tokenHash: "hash" },
+      }),
+    }));
+  }
+
+  function fakeLedgerMonth(lineCount: number): string {
+    // Compact 200-row fixtures sit under 10k; use subscription + varied
+    // integer amounts so length exceeds the legacy 10k privacy unwrap cap
+    // without creating 9+ digit runs in the raw JSON string.
+    const lines = Array.from({ length: lineCount }, (_, i) => ({
+      kind: i % 2 === 0 ? ("in" as const) : ("out" as const),
+      category: "subscription" as const,
+      amount: 1000 + i,
+    }));
+    const in_total = lines
+      .filter((l) => l.kind === "in")
+      .reduce((s, l) => s + l.amount, 0);
+    const out_total = lines
+      .filter((l) => l.kind === "out")
+      .reduce((s, l) => s + l.amount, 0);
+    return JSON.stringify({
+      month: "2026-11",
+      in_total,
+      out_total,
+      lines,
+    });
+  }
+
+  it("PUT accepts a realistic ~200-row fake ledger month", async () => {
+    mockAuth();
+    const month = fakeLedgerMonth(BANK_LEDGER_LIST_ITEMS_MAX);
+    expect(month.length).toBeGreaterThan(10_000);
+    expect(month.length).toBeLessThanOrEqual(BANK_LEDGER_MONTH_JSON_MAX);
+    expect(
+      containsSingaporeNricOrFin({
+        block_type: "list",
+        payload: { block_key: "bank_ledger", items: [month] },
+      }),
+    ).toBe(false);
+
+    const enc = encryptBlockPayload(BLOCK_ID, {
+      block_key: "bank_ledger",
+      items: [month],
+    });
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "bank",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: null, error: null }),
+                }),
+                is: () => Promise.resolve({ data: [], error: null }),
+              }),
+            }),
+          };
+        },
+        rpc: async () => ({
+          data: {
+            inserted: true,
+            block: {
+              id: BLOCK_ID,
+              section_id: SECTION_ID,
+              block_type: "list",
+              sort_order: 0,
+              agent_id: AGENT_A,
+              block_key: "bank_ledger",
+              payload: enc,
+              created_at: "2026-01-01T00:00:00.000Z",
+              updated_at: "2026-01-01T00:00:00.000Z",
+            },
+          },
+          error: null,
+        }),
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_ledger`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "list",
+            payload: { block_key: "bank_ledger", items: [month] },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_ledger",
+        }),
+      },
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("PUT rejects a ledger month over the 32k privacy/schema cap", async () => {
+    mockAuth();
+    const huge = `{${"a".repeat(BANK_LEDGER_MONTH_JSON_MAX + 1)}}`;
+    expect(huge.length).toBeGreaterThan(BANK_LEDGER_MONTH_JSON_MAX);
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      getServiceClient: () => ({
+        from: (table: string) => {
+          if (table === "dashboard_writers") {
+            return mockDashboardWritersFrom({ bank: AGENT_A, cpf: AGENT_A });
+          }
+          if (table === "dashboard_sections") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: SECTION_ID,
+                      category: "bank",
+                      sort_order: 0,
+                      agent_id: AGENT_A,
+                      created_at: "2026-01-01T00:00:00.000Z",
+                      updated_at: "2026-01-01T00:00:00.000Z",
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          throw new Error("should not reach blocks after privacy/schema reject");
+        },
+      }),
+    }));
+
+    const { PUT } = await import(
+      "@/app/api/agent/dashboard/sections/[id]/blocks/[block_key]/route"
+    );
+    const res = await PUT(
+      new Request(
+        `http://localhost/api/agent/dashboard/sections/${SECTION_ID}/blocks/bank_ledger`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            block_type: "list",
+            payload: { block_key: "bank_ledger", items: [huge] },
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          id: SECTION_ID,
+          block_key: "bank_ledger",
+        }),
       },
     );
     expect(res.status).toBe(400);
